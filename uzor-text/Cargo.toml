@@ -9,6 +9,8 @@ homepage.workspace = true
 description = "Pretext-pattern text layout engine for uzor — greedy word-wrap, rich multi-run spans, InlineBox, and a mixed-run baseline pass over the cosmic-text shaper (Arc 2 Phase 1+2; kinetics/ascii/hyphenation land in later phases)."
 
 [dependencies]
+# `book::coverage`: missing-glyph report reads each font's cmap.
+ttf-parser = "0.25"
 # `shaper` is a hard, always-on dependency feature here (not an optional
 # passthrough of this crate's own) — `CosmicShaper::headless()` calls
 # `uzor::shaper::measure_glyphs_wrapped` directly, so cosmic-text is
@@ -46,5 +48,4 @@ png = "0.17"
 # transitively by cosmic-text/rustybuzz/fontdue/swash), so this adds no new
 # supply-chain surface, only a direct dependency edge on an already-vetted
 # version.
-ttf-parser = "0.25"
 uzor-fonts = { workspace = true }

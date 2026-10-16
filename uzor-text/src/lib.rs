@@ -24,6 +24,7 @@
 //! implementation diverges from the design doc's own sketch.
 
 pub mod ascii;
+pub mod book;
 pub mod draw;
 pub mod kinetics;
 pub mod layout;
