@@ -8,6 +8,8 @@ pub mod button;
 pub mod checkbox;
 pub mod chevron;
 pub mod clock;
+pub mod critter;
+pub mod session_pill;
 pub mod close_button;
 pub mod drag_handle;
 pub mod color_swatch;

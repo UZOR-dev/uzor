@@ -278,7 +278,9 @@ impl<P: DockPanel> DockState<P> {
             self.panel_rects.insert(leaf_id, rect);
 
             // Panel header (for single-tab panels only)
-            if rect.width >= 1.0 && rect.height >= 1.0 && leaf.tab_count() <= 1 {
+            if rect.width >= 1.0 && rect.height >= 1.0 && leaf.tab_count() <= 1
+                && leaf.active_panel().map_or(true, |p| p.shows_header())
+            {
                 self.panel_headers.insert(leaf_id, PanelRect::new(
                     rect.x, rect.y, rect.width, self.header_height,
                 ));
@@ -308,7 +310,9 @@ impl<P: DockPanel> DockState<P> {
         self.tab_bars.clear();
         self.panel_rects.insert(leaf_id, area);
         if let Some(leaf) = self.tree.leaf(leaf_id) {
-            if area.width >= 1.0 && area.height >= 1.0 && leaf.tab_count() <= 1 {
+            if area.width >= 1.0 && area.height >= 1.0 && leaf.tab_count() <= 1
+                && leaf.active_panel().map_or(true, |p| p.shows_header())
+            {
                 self.panel_headers.insert(leaf_id, PanelRect::new(
                     area.x, area.y, area.width, self.header_height,
                 ));

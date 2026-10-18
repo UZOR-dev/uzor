@@ -14,6 +14,7 @@
 
 pub mod blackbox_panel;
 pub mod chrome;
+pub mod composer;
 pub mod context_menu;
 pub mod dropdown;
 pub mod modal;

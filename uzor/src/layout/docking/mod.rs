@@ -78,4 +78,11 @@ pub trait DockPanel: Clone + Send + Sync {
     fn pin(&self) -> Pin {
         Pin::Free
     }
+
+    /// Whether a single-tab leaf showing this panel gets a header strip.
+    /// `false` gives the panel its whole leaf rect (an app surface that
+    /// draws its own top bar). Default `true`.
+    fn shows_header(&self) -> bool {
+        true
+    }
 }
