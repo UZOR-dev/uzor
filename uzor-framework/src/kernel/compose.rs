@@ -316,6 +316,7 @@ impl<S: Spec> Kernel<S> {
         view.captured = input.captured;
         view.clicked = iview.clicked(win).to_vec();
         view.scroll = iview.pending_scroll(win);
+        (view.pointer, view.button_down) = iview.pointer(win);
         view.open_overlays = self
             .overlays
             .view()

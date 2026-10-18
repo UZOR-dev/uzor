@@ -171,6 +171,8 @@ pub struct VisualView<S: Spec> {
     pub(crate) focused: Option<WidgetId>,
     pub(crate) clicked: Vec<(WidgetId, u8)>,
     pub(crate) scroll: (f64, f64),
+    pub(crate) pointer: Option<(f64, f64)>,
+    pub(crate) button_down: bool,
     pub(crate) captured: bool,
     pub(crate) open_overlays: Vec<S::Overlay>,
 }
@@ -184,6 +186,8 @@ impl<S: Spec> Default for VisualView<S> {
             focused: None,
             clicked: Vec::new(),
             scroll: (0.0, 0.0),
+            pointer: None,
+            button_down: false,
             captured: false,
             open_overlays: Vec::new(),
         }
@@ -244,6 +248,16 @@ impl<S: Spec> VisualView<S> {
     /// Scroll delta accumulated for this frame, in lines.
     pub fn scroll(&self) -> (f64, f64) {
         self.scroll
+    }
+
+    /// Last pointer position in window coordinates, if known.
+    pub fn pointer(&self) -> Option<(f64, f64)> {
+        self.pointer
+    }
+
+    /// A pointer button is held.
+    pub fn button_down(&self) -> bool {
+        self.button_down
     }
 
     /// The pointer is captured by a widget or an engine.

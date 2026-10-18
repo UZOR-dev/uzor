@@ -24,6 +24,7 @@ features = [
     "CanvasRenderingContext2d",
     "DomMatrix",
     "HtmlCanvasElement",
+    "ImageData",
     "OffscreenCanvas",
     "OffscreenCanvasRenderingContext2d",
     "Path2d",

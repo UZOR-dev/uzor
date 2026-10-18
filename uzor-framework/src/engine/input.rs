@@ -634,7 +634,8 @@ impl PerWindowInput {
         match input {
             PointerInput::Moved { pos, .. } => {
                 self.pointer.pos = Some((pos.x, pos.y));
-                (false, self.content_target(self.pointer.pos))
+                // A held drag repaints so hooks see the moving pointer.
+                (self.pointer.button_down.is_some(), self.content_target(self.pointer.pos))
             }
             PointerInput::Down { pos, button, .. } => {
                 self.pointer.pos = Some((pos.x, pos.y));
@@ -1659,6 +1660,12 @@ impl<'a> InputEngineView<'a> {
     /// moves it into the coordinator's frame input.
     pub fn pending_scroll(&self, win: WindowId) -> (f64, f64) {
         self.w(win).map_or((0.0, 0.0), |w| w.pointer.scroll)
+    }
+
+    /// Last pointer position in window coordinates and whether a button is
+    /// held (embedded surfaces that forward raw pointer events need both).
+    pub fn pointer(&self, win: WindowId) -> (Option<(f64, f64)>, bool) {
+        self.w(win).map_or((None, false), |w| (w.pointer.pos, w.pointer.button_down.is_some()))
     }
 }
 

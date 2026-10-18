@@ -5,7 +5,7 @@ use uzor::core::types::Rect as UzorRect;
 use uzor::render::{
     BatchPainter, BlendMode as UzorBlendMode,
     Effects, GradientPainter, Masking, OffscreenTarget, OffscreenTargetDesc, OffscreenTargetId,
-    Painter, RenderContext, RenderContextExt,
+    ImagePainter, Painter, RenderContext, RenderContextExt,
     ShapeHelpers, TextBounds, TextMetrics, TextRenderer,
     TextAlign, TextBaseline,
 };
@@ -481,6 +481,10 @@ impl BatchPainter for Canvas2dRenderContext {}
 // `tiny_skia::Pixmap`), so `draw_cached_target` replays with a single
 // `drawImage` call, no re-rendering.
 impl RenderContext for Canvas2dRenderContext {
+    fn image_painter(&mut self) -> Option<&mut dyn ImagePainter> {
+        Some(self)
+    }
+
     fn dpr(&self) -> f64 { self.dpr }
 
     fn supports_offscreen_targets(&self) -> bool {
@@ -563,4 +567,46 @@ impl RenderContext for Canvas2dRenderContext {
 
 impl RenderContextExt for Canvas2dRenderContext {
     type BlurImage = ();
+}
+
+// ---------------------------------------------------------------------------
+// ImagePainter: raw RGBA via a scratch OffscreenCanvas + drawImage, so the
+// current transform, clip and alpha apply (putImageData would ignore them).
+// ---------------------------------------------------------------------------
+
+impl ImagePainter for Canvas2dRenderContext {
+    fn draw_image(&mut self, _image_id: &str, _x: f64, _y: f64, _w: f64, _h: f64) -> bool {
+        false
+    }
+
+    fn draw_image_rgba(&mut self, data: &[u8], img_width: u32, img_height: u32, x: f64, y: f64, width: f64, height: f64) {
+        if img_width == 0 || img_height == 0 || width <= 0.0 || height <= 0.0 {
+            return;
+        }
+        if data.len() < (img_width as usize) * (img_height as usize) * 4 {
+            return;
+        }
+        let Ok(canvas) = OffscreenCanvas::new(img_width, img_height) else { return };
+        let Some(c2) = canvas
+            .get_context("2d")
+            .ok()
+            .flatten()
+            .and_then(|c| c.dyn_into::<OffscreenCanvasRenderingContext2d>().ok())
+        else {
+            return;
+        };
+        let n = (img_width as usize) * (img_height as usize) * 4;
+        let Ok(img) = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
+            wasm_bindgen::Clamped(&data[..n]),
+            img_width,
+            img_height,
+        ) else {
+            return;
+        };
+        let _ = c2.put_image_data(&img, 0.0, 0.0);
+        let _ = match &self.ctx {
+            Canvas2dCtx::Root(c) => c.draw_image_with_offscreen_canvas_and_dw_and_dh(&canvas, x, y, width, height),
+            Canvas2dCtx::Recording(c) => c.draw_image_with_offscreen_canvas_and_dw_and_dh(&canvas, x, y, width, height),
+        };
+    }
 }
