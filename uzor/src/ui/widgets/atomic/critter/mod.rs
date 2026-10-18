@@ -111,7 +111,9 @@ pub fn draw_critter(ctx: &mut dyn RenderContext, rect: Rect, view: &CritterView)
     let ry = if view.off { 0.72 } else { 6.0 };
     for cx in [23.0, 41.0] {
         ctx.begin_path();
-        ctx.ellipse(cx, view.eye_y, 4.0, ry, -12f64.to_radians(), 0.0, std::f64::consts::TAU);
+        // Upright: in the HQ web page the idle blink animation's `transform`
+        // replaces the SVG `rotate(-12)` attribute, so eyes render untilted.
+        ctx.ellipse(cx, view.eye_y, 4.0, ry, 0.0, 0.0, std::f64::consts::TAU);
         ctx.fill();
     }
     ctx.restore();

@@ -89,6 +89,8 @@ pub struct Runtime<S: Spec, A: App<Spec = S>> {
     now: Seconds,
     /// The last pass moved an engine revision or produced intents.
     last_pass_changed: bool,
+    /// A paint asked for another tick (see [`Runtime::take_paint_wants_tick`]).
+    paint_wants_tick: bool,
 }
 
 impl<S: Spec, A: App<Spec = S>> Runtime<S, A> {
@@ -128,6 +130,7 @@ impl<S: Spec, A: App<Spec = S>> Runtime<S, A> {
             cmds,
             now: Seconds::ZERO,
             last_pass_changed: false,
+            paint_wants_tick: false,
         };
         (runtime, handle)
     }
@@ -201,7 +204,16 @@ impl<S: Spec, A: App<Spec = S>> Runtime<S, A> {
         let out = self
             .kernel
             .compose(self.now, req.window, &mut self.app, ctx);
+        self.paint_wants_tick |= out.wants_frame || !out.commands.is_empty();
         self.cmds.extend(out.commands);
+    }
+
+    /// A paint since the last call asked for more work (a hook's
+    /// `request_frame`, declared commands, clicks to deliver). The tick's
+    /// `wake` predates the paint, so hosts check this after painting and
+    /// tick again instead of going idle.
+    pub fn take_paint_wants_tick(&mut self) -> bool {
+        std::mem::take(&mut self.paint_wants_tick)
     }
 
     /// The last published snapshot (same read as the handle's).

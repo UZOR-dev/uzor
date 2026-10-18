@@ -639,6 +639,10 @@ impl PerWindowInput {
             PointerInput::Down { pos, button, .. } => {
                 self.pointer.pos = Some((pos.x, pos.y));
                 self.pointer.button_down = Some(button);
+                // A release no frame has evaluated yet belongs to the previous
+                // gesture; carried into this press it would click whatever is
+                // under the pointer now.
+                self.pointer.clicked = None;
                 let target = self.content_target(self.pointer.pos);
                 let changed = self.pressed != target;
                 self.pressed.clone_from(&target);
@@ -650,9 +654,11 @@ impl PerWindowInput {
                 self.pointer.button_down = None;
                 self.pointer.clicked = Some(button);
                 let target = self.content_target(self.pointer.pos);
-                let released = self.pressed.take().is_some();
-                let sel_changed = self.release_select(win, target.as_ref(), fx);
-                (released | sel_changed, target)
+                let _ = self.pressed.take();
+                let _ = self.release_select(win, target.as_ref(), fx);
+                // Always repaint on release: only a frame evaluates the click
+                // (`pointer.clicked`), on any cadence.
+                (true, target)
             }
             PointerInput::Entered
             | PointerInput::Left

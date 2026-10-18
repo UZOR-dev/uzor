@@ -33,6 +33,10 @@ use super::{Kernel, Phase};
 pub(crate) struct ComposeOut<S: Spec> {
     /// Commands declared by the window's hooks, in declaration order.
     pub commands: Vec<AppCommand<S>>,
+    /// This compose invalidated its window again (a hook's `request_frame`,
+    /// or clicks the app reads next compose): the host must tick once more
+    /// even though the tick's wake was computed before this paint.
+    pub wants_frame: bool,
 }
 
 impl<S: Spec> Kernel<S> {
@@ -48,6 +52,7 @@ impl<S: Spec> Kernel<S> {
         self.clock.begin(Phase::Compose);
         let mut out = ComposeOut {
             commands: Vec::new(),
+            wants_frame: false,
         };
         let mut hook_ops: Vec<HookOp<S>> = Vec::new();
 
@@ -218,6 +223,13 @@ impl<S: Spec> Kernel<S> {
         // `EndFrame`: this frame's registrations evaluate (hover, clicks).
         let fx = self.input.apply(InputOp::EndFrame { win, now });
         self.conduct_input(now, fx);
+        // Clicks evaluated here are read by the app on the NEXT compose; on a
+        // dirty-driven cadence nothing else would schedule it until the next
+        // input event, so a click would surface one interaction late.
+        if !self.input.view().clicked(win).is_empty() {
+            self.invalidate(win, None, InvalidateBits::ALL);
+            out.wants_frame = true;
+        }
 
         // Scope members: an overlay opens its scope with an empty member
         // list (blocking all focus); once its body composed, the members
@@ -270,7 +282,10 @@ impl<S: Spec> Kernel<S> {
         // to the runtime for the next settle pass's drain.
         for op in hook_ops {
             match op {
-                HookOp::RequestFrame => self.invalidate(win, None, InvalidateBits::ALL),
+                HookOp::RequestFrame => {
+                    self.invalidate(win, None, InvalidateBits::ALL);
+                    out.wants_frame = true;
+                }
                 HookOp::ImeArea(rect) => {
                     let fx = self.windows.apply(WindowOp::Enqueue {
                         win,

@@ -337,7 +337,10 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
             return;
         }
 
-        el.set_control_flow(match out.wake {
+        // A paint that asked for another frame (or declared commands) must not
+        // park the loop on the pre-paint wake.
+        let wake = if self.runtime.take_paint_wants_tick() { Wake::Immediate } else { out.wake };
+        el.set_control_flow(match wake {
             Wake::Idle => ControlFlow::Wait,
             Wake::Immediate => ControlFlow::Poll,
             Wake::At(t) => {

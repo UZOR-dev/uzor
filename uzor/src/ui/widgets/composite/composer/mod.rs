@@ -1,9 +1,11 @@
 //! Message composer: rounded box with a text area, `+` attach on the left,
 //! mic and a round send button on the right. Draw returns the hit rects.
+//! Metrics and colours follow the HQ web composer (`#box.one`).
 
 use crate::input::core::coordinator::LayerId;
 use crate::input::{InputCoordinator, Sense, WidgetKind};
-use crate::render::{RenderContext, TextAlign, TextBaseline};
+use crate::render::{RenderContext, TextAlign};
+use crate::ui::css_text::{fill_text_css, INTER};
 use crate::types::{Rect, WidgetId};
 use crate::ui::widgets::atomic::session_pill::path_round_rect;
 
@@ -48,21 +50,104 @@ pub struct ComposerHits {
     pub send: Rect,
 }
 
-/// Height of the composer box.
-pub const COMPOSER_HEIGHT: f64 = 96.0;
+/// Look of the composer. [`ComposerStyle::default`] is the HQ web composer
+/// (`#box.one` in hatchery-hq-web style.css): 44px pill, 7px padding, 28px
+/// round buttons, 8px gaps, Inter 14.5px.
+#[derive(Clone, Debug)]
+pub struct ComposerStyle {
+    /// Box height (one-line mode).
+    pub height: f64,
+    /// Max box width.
+    pub max_width: f64,
+    /// Min side margin.
+    pub side: f64,
+    /// Space under the box.
+    pub bottom: f64,
+    /// Corner radius.
+    pub radius: f64,
+    /// Inner padding (inside the 1px border).
+    pub pad: f64,
+    /// Gap between parts.
+    pub gap: f64,
+    /// Button diameter.
+    pub btn: f64,
+    /// Box fill / border / focused border.
+    pub bg: &'static str,
+    /// Border.
+    pub border: &'static str,
+    /// Border while the text has focus.
+    pub border_focus: &'static str,
+    /// Text font.
+    pub font: &'static str,
+    /// Text size in px (matches `font`).
+    pub font_px: f64,
+    /// Text colour.
+    pub text: &'static str,
+    /// Placeholder colour.
+    pub placeholder: &'static str,
+    /// Caret colour.
+    pub caret: &'static str,
+    /// Round grey button fill / hover / glyph.
+    pub btn_bg: &'static str,
+    /// Grey button hover.
+    pub btn_hover: &'static str,
+    /// Grey button glyph.
+    pub btn_fg: &'static str,
+    /// Send fill / hover.
+    pub send_bg: &'static str,
+    /// Send hover.
+    pub send_hover: &'static str,
+}
 
-/// Lay out a composer centred at the bottom of `area`, max 760 wide.
-pub fn composer_layout(area: Rect) -> ComposerHits {
-    let w = (area.width - 32.0).min(760.0).max(120.0);
-    let frame = Rect::new(area.x + (area.width - w) / 2.0, area.y + area.height - COMPOSER_HEIGHT - 16.0, w, COMPOSER_HEIGHT);
-    let by = frame.y + frame.height - 10.0 - 32.0;
-    ComposerHits {
-        frame,
-        text: Rect::new(frame.x + 16.0, frame.y + 12.0, frame.width - 32.0, 28.0),
-        attach: Rect::new(frame.x + 10.0, by, 32.0, 32.0),
-        mic: Rect::new(frame.x + frame.width - 10.0 - 32.0 - 8.0 - 32.0, by, 32.0, 32.0),
-        send: Rect::new(frame.x + frame.width - 10.0 - 32.0, by, 32.0, 32.0),
+impl Default for ComposerStyle {
+    fn default() -> Self {
+        Self {
+            height: 44.0,
+            max_width: 780.0,
+            side: 16.0,
+            bottom: 16.0,
+            radius: 22.0,
+            pad: 7.0,
+            gap: 8.0,
+            btn: 28.0,
+            bg: "#1f1f1f",
+            border: "#353535",
+            border_focus: "#404040",
+            font: "14.5px Inter, sans-serif",
+            font_px: 14.5,
+            text: "#f5f5f5",
+            placeholder: "#5e5e66",
+            caret: "#f5f5f5",
+            btn_bg: "#282828",
+            btn_hover: "#323232",
+            btn_fg: "#f5f5f5",
+            send_bg: "#116dd2",
+            send_hover: "#1884fc",
+        }
     }
+}
+
+/// Height of the default composer box.
+pub const COMPOSER_HEIGHT: f64 = 44.0;
+
+/// Lay out a composer at the bottom of `area` (HQ: `#composer` padding
+/// `6px max(16px, (100% - 780px)/2) 16px`).
+pub fn composer_layout_styled(area: Rect, st: &ComposerStyle) -> ComposerHits {
+    let side = st.side.max((area.width - st.max_width) / 2.0);
+    let w = (area.width - 2.0 * side).max(120.0);
+    let frame = Rect::new(area.x + side, area.y + area.height - st.bottom - st.height, w, st.height);
+    let inner = 1.0 + st.pad;
+    let by = frame.y + inner;
+    let attach = Rect::new(frame.x + inner, by, st.btn, st.btn);
+    let send = Rect::new(frame.x + frame.width - inner - st.btn, by, st.btn, st.btn);
+    let mic = Rect::new(send.x - st.gap - st.btn, by, st.btn, st.btn);
+    let tx = attach.x + st.btn + st.gap;
+    ComposerHits { frame, text: Rect::new(tx, frame.y + 1.0, (mic.x - st.gap - tx).max(10.0), st.height - 2.0), attach, mic, send }
+}
+
+/// [`composer_layout_styled`] with the default style.
+pub fn composer_layout(area: Rect) -> ComposerHits {
+    composer_layout_styled(area, &ComposerStyle::default())
 }
 
 fn round_btn(ctx: &mut dyn RenderContext, r: Rect, fill: &str) {
@@ -72,21 +157,45 @@ fn round_btn(ctx: &mut dyn RenderContext, r: Rect, fill: &str) {
     ctx.fill();
 }
 
-/// Paint the composer (light theme). Returns the caret x of every char
-/// boundary of `view.text` (feed it to the text-field store for hit-testing).
-pub fn draw_composer(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &ComposerView<'_>) -> Vec<f64> {
-    path_round_rect(ctx, hits.frame, 24.0);
-    ctx.set_fill_color("#ffffff");
+/// Maps a 24-unit SVG viewBox onto a `size` square centred in `r`.
+struct Svg {
+    x: f64,
+    y: f64,
+    k: f64,
+}
+
+impl Svg {
+    fn new(r: Rect, size: f64) -> Self {
+        // Browsers snap an inline <svg> box to whole pixels.
+        Self { x: (r.x + (r.width - size) / 2.0).round(), y: (r.y + (r.height - size) / 2.0).round(), k: size / 24.0 }
+    }
+    fn m(&self, ctx: &mut dyn RenderContext, x: f64, y: f64) {
+        ctx.move_to(self.x + x * self.k, self.y + y * self.k);
+    }
+    fn l(&self, ctx: &mut dyn RenderContext, x: f64, y: f64) {
+        ctx.line_to(self.x + x * self.k, self.y + y * self.k);
+    }
+}
+
+/// Paint the composer. Returns the caret x of every char boundary of
+/// `view.text` (feed it to the text-field store for hit-testing).
+pub fn draw_composer_styled(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &ComposerView<'_>, st: &ComposerStyle) -> Vec<f64> {
+    let f = hits.frame;
+    // Border as an outer fill + inner fill (crisp 1px on every backend).
+    path_round_rect(ctx, f, st.radius);
+    ctx.set_fill_color(if view.cursor.is_some() { st.border_focus } else { st.border });
     ctx.fill();
-    ctx.set_stroke_color("#e4e4e7");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke();
-    ctx.set_font("15px sans-serif");
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    let (t, c) = if view.text.is_empty() { (view.placeholder, "#9a9aa2") } else { (view.text, "#18181b") };
+    path_round_rect(ctx, Rect::new(f.x + 1.0, f.y + 1.0, f.width - 2.0, f.height - 2.0), st.radius - 1.0);
+    ctx.set_fill_color(st.bg);
+    ctx.fill();
+
+    ctx.set_font(st.font);
+    let cy = f.y + f.height / 2.0;
+    let (t, c) = if view.text.is_empty() { (view.placeholder, st.placeholder) } else { (view.text, st.text) };
     ctx.set_fill_color(c);
-    ctx.fill_text(t, hits.text.x, hits.text.y + hits.text.height / 2.0);
+    // textarea line box: 3px padding, line-height 1.45, centred in the box.
+    let lh = st.font_px * 1.45;
+    fill_text_css(ctx, t, hits.text.x, cy - lh / 2.0, st.font_px, lh, INTER, TextAlign::Left);
     let mut positions = vec![hits.text.x];
     let mut acc = String::new();
     for ch in view.text.chars() {
@@ -95,42 +204,51 @@ pub fn draw_composer(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &Co
     }
     if let Some(c) = view.cursor {
         let x = positions.get(c).copied().unwrap_or(*positions.last().unwrap_or(&hits.text.x));
-        ctx.set_fill_color("#1d77f2");
-        // Pixel-snapped 2px caret (thin sub-pixel fills trip tiny-skia 0.11).
-        ctx.fill_rect(x.round(), (hits.text.y + 5.0).round(), 2.0, (hits.text.height - 10.0).round());
+        ctx.set_fill_color(st.caret);
+        // Pixel-snapped caret (thin sub-pixel fills trip tiny-skia 0.11).
+        ctx.fill_rect(x.round(), (cy - 9.0).round(), 1.0, 18.0);
     }
     let hov = |p| view.hovered == Some(p);
-    round_btn(ctx, hits.attach, if hov(ComposerPart::Attach) { "#e9e9ec" } else { "#f2f2f4" });
-    round_btn(ctx, hits.mic, if hov(ComposerPart::Mic) { "#e9e9ec" } else { "#f2f2f4" });
-    round_btn(ctx, hits.send, if hov(ComposerPart::Send) { "#3388ff" } else { "#1d77f2" });
-    // + glyph
-    let (ax, ay) = (hits.attach.x + 16.0, hits.attach.y + 16.0);
-    ctx.set_stroke_color("#52525b");
-    ctx.set_stroke_width(2.0);
+    round_btn(ctx, hits.attach, if hov(ComposerPart::Attach) { st.btn_hover } else { st.btn_bg });
+    round_btn(ctx, hits.mic, if hov(ComposerPart::Mic) { st.btn_hover } else { st.btn_bg });
+    round_btn(ctx, hits.send, if hov(ComposerPart::Send) { st.send_hover } else { st.send_bg });
     ctx.set_line_cap("round");
-    ctx.begin_path();
-    ctx.move_to(ax, ay - 6.0); ctx.line_to(ax, ay + 6.0);
-    ctx.move_to(ax - 6.0, ay); ctx.line_to(ax + 6.0, ay);
-    ctx.stroke();
-    // mic glyph
-    let (mx, my) = (hits.mic.x + 16.0, hits.mic.y + 16.0);
-    path_round_rect(ctx, Rect::new(mx - 3.0, my - 8.0, 6.0, 10.0), 3.0);
-    ctx.stroke();
-    ctx.begin_path();
-    ctx.arc(mx, my - 1.0, 6.0, 0.0, std::f64::consts::PI);
-    ctx.move_to(mx, my + 5.0); ctx.line_to(mx, my + 8.0);
-    ctx.stroke();
-    // send arrow
-    let (sx, sy) = (hits.send.x + 16.0, hits.send.y + 16.0);
-    ctx.set_stroke_color("#ffffff");
-    ctx.set_stroke_width(2.4);
     ctx.set_line_join("round");
+    // + : <path d="M12 5v14M5 12h14"/> 18px, stroke 2
+    let g = Svg::new(hits.attach, 18.0);
+    ctx.set_stroke_color(st.btn_fg);
+    ctx.set_stroke_width(2.0 * g.k);
     ctx.begin_path();
-    ctx.move_to(sx, sy + 6.0); ctx.line_to(sx, sy - 6.0);
-    ctx.move_to(sx - 5.0, sy - 1.0); ctx.line_to(sx, sy - 6.0); ctx.line_to(sx + 5.0, sy - 1.0);
+    g.m(ctx, 12.0, 5.0); g.l(ctx, 12.0, 19.0);
+    g.m(ctx, 5.0, 12.0); g.l(ctx, 19.0, 12.0);
+    ctx.stroke();
+    // mic: <rect x=9 y=3 w=6 h=11 rx=3/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/> 17px
+    let g = Svg::new(hits.mic, 17.0);
+    ctx.set_stroke_width(2.0 * g.k);
+    path_round_rect(ctx, Rect::new(g.x + 9.0 * g.k, g.y + 3.0 * g.k, 6.0 * g.k, 11.0 * g.k), 3.0 * g.k);
+    ctx.stroke();
+    ctx.begin_path();
+    ctx.arc(g.x + 12.0 * g.k, g.y + 11.0 * g.k, 7.0 * g.k, 0.0, std::f64::consts::PI);
+    ctx.stroke();
+    ctx.begin_path();
+    g.m(ctx, 12.0, 18.0); g.l(ctx, 12.0, 21.0);
+    ctx.stroke();
+    // send: <path d="M12 19V5M6 11l6-6 6 6"/> 17px, stroke 2.4, white
+    let g = Svg::new(hits.send, 17.0);
+    ctx.set_stroke_color("#ffffff");
+    ctx.set_stroke_width(2.4 * g.k);
+    ctx.begin_path();
+    g.m(ctx, 12.0, 19.0); g.l(ctx, 12.0, 5.0);
+    g.m(ctx, 6.0, 11.0); g.l(ctx, 12.0, 5.0); g.l(ctx, 18.0, 11.0);
     ctx.stroke();
     ctx.set_line_cap("butt");
+    ctx.set_line_join("miter");
     positions
+}
+
+/// [`draw_composer_styled`] with the default style.
+pub fn draw_composer(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &ComposerView<'_>) -> Vec<f64> {
+    draw_composer_styled(ctx, hits, view, &ComposerStyle::default())
 }
 
 /// Declare the composer's click rects under `id_prefix` + `-attach|-mic|-send|-text`.
@@ -145,9 +263,12 @@ mod tests {
     use super::*;
     #[test]
     fn layout_bottom_centred() {
-        let h = composer_layout(Rect::new(0.0, 0.0, 1000.0, 800.0));
-        assert_eq!(h.frame.width, 760.0);
-        assert!(h.send.x > h.mic.x && h.mic.x > h.attach.x);
-        assert_eq!(h.frame.y + h.frame.height, 784.0);
+        // HQ web at 1100x680: main column x=259 w=841 -> #box 289.5,620 780x44.
+        let h = composer_layout(Rect::new(259.0, 0.0, 841.0, 680.0));
+        assert_eq!((h.frame.x, h.frame.y, h.frame.width, h.frame.height), (289.5, 620.0, 780.0, 44.0));
+        assert_eq!((h.attach.x, h.attach.y), (297.5, 628.0));
+        assert_eq!(h.mic.x, 997.5);
+        assert_eq!(h.send.x, 1033.5);
+        assert_eq!(h.text.x, 333.5);
     }
 }

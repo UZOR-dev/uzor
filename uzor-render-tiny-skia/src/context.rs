@@ -527,27 +527,26 @@ fn box_blur_pixmap(pm: &mut Pixmap, radius: u32) {
     let h = pm.height() as usize;
     let r = radius as usize;
     let klen = 2 * r + 1;
+    if w == 0 || h == 0 {
+        return;
+    }
 
     let data = pm.data_mut();
+    // The window slides over the ORIGINAL samples: read from a copy of the
+    // line, write blurred values in place (an in-place read underflows `sum`).
+    let mut line: Vec<u8> = Vec::with_capacity(w.max(h));
 
-    // Horizontal pass — operate channel-by-channel (RGBA = 4 channels)
+    // Horizontal pass
     for row in 0..h {
         for ch in 0..4usize {
             let base = row * w;
-            // Sliding window sum
-            let mut sum = 0u32;
-            // Prime the window for first pixel
-            for k in 0..klen {
-                let col = k.saturating_sub(r).min(w.saturating_sub(1));
-                sum += data[(base + col) * 4 + ch] as u32;
-            }
-            // Left side: window not yet full on the left
+            line.clear();
+            line.extend((0..w).map(|c| data[(base + c) * 4 + ch]));
+            let at = |i: usize| line[i.min(w - 1)] as u32;
+            let mut sum: u32 = (0..klen).map(|k| at(k.saturating_sub(r))).sum();
             for col in 0..w {
-                let add_col = (col + r).min(w.saturating_sub(1));
-                let sub_col = col.saturating_sub(r + 1).min(w.saturating_sub(1));
                 if col > 0 {
-                    sum = sum + data[(base + add_col) * 4 + ch] as u32
-                        - data[(base + sub_col) * 4 + ch] as u32;
+                    sum = sum + at(col + r) - at(col.saturating_sub(r + 1));
                 }
                 data[(base + col) * 4 + ch] = (sum / klen as u32) as u8;
             }
@@ -557,17 +556,13 @@ fn box_blur_pixmap(pm: &mut Pixmap, radius: u32) {
     // Vertical pass
     for col in 0..w {
         for ch in 0..4usize {
-            let mut sum = 0u32;
-            for k in 0..klen {
-                let row = k.saturating_sub(r).min(h.saturating_sub(1));
-                sum += data[(row * w + col) * 4 + ch] as u32;
-            }
+            line.clear();
+            line.extend((0..h).map(|rw| data[(rw * w + col) * 4 + ch]));
+            let at = |i: usize| line[i.min(h - 1)] as u32;
+            let mut sum: u32 = (0..klen).map(|k| at(k.saturating_sub(r))).sum();
             for row in 0..h {
-                let add_row = (row + r).min(h.saturating_sub(1));
-                let sub_row = row.saturating_sub(r + 1).min(h.saturating_sub(1));
                 if row > 0 {
-                    sum = sum + data[(add_row * w + col) * 4 + ch] as u32
-                        - data[(sub_row * w + col) * 4 + ch] as u32;
+                    sum = sum + at(row + r) - at(row.saturating_sub(r + 1));
                 }
                 data[(row * w + col) * 4 + ch] = (sum / klen as u32) as u8;
             }

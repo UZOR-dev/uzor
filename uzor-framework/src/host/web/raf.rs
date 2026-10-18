@@ -226,7 +226,7 @@ impl<S: Spec, A: App<Spec = S>> RafDriver<S, A> {
             self.stop();
             return;
         }
-        let force = self.needs_tick || kicked;
+        let force = self.needs_tick || kicked || self.runtime.take_paint_wants_tick();
         self.needs_tick = false;
         if force {
             self.ensure_scheduled();
