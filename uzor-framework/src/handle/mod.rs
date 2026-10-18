@@ -111,6 +111,17 @@ impl<S: Spec> Handle<S> {
         Ok(())
     }
 
+    /// Ask for a repaint of `win` from outside a hook (network data,
+    /// background work): an [`AppCommand::Cadence`] invalidate plus a wake.
+    /// The host then paints on demand instead of polling every frame.
+    pub fn request_repaint(&self, win: crate::WindowId) -> Result<(), HandleError> {
+        self.dispatch(AppCommand::Cadence(crate::CadenceCmd::Invalidate {
+            win,
+            region: None,
+            bits: uzor::render::InvalidateBits::ALL,
+        }))
+    }
+
     /// The last published snapshot: lock-free, at most one tick old.
     pub fn snapshot(&self) -> Arc<VisualSnapshot<S>> {
         self.snap.load_full()

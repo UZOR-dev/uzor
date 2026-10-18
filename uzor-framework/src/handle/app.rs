@@ -74,12 +74,20 @@ pub trait App: 'static {
 /// Startup door: commands only.
 pub struct InitCx<'a, S: Spec> {
     pub(crate) out: &'a mut Vec<AppCommand<S>>,
+    pub(crate) handle: &'a super::Handle<S>,
 }
 
 impl<'a, S: Spec> InitCx<'a, S> {
     /// Enqueue a command, applied from the first tick on.
     pub fn command(&mut self, cmd: AppCommand<S>) {
         self.out.push(cmd);
+    }
+
+    /// The app's own [`Handle`](super::Handle): keep a clone to dispatch
+    /// commands or [`request_repaint`](super::Handle::request_repaint) from
+    /// background work on any host (native, web, headless).
+    pub fn handle(&self) -> super::Handle<S> {
+        self.handle.clone()
     }
 }
 

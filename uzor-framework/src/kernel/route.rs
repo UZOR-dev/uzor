@@ -3,6 +3,7 @@
 //! names appended as the event crosses module boundaries, asserted
 //! `len() <= 3` by the hop-count tests.
 
+use uzor::render::InvalidateBits;
 use uzor::input::{KeyboardShortcut, MouseButton};
 
 use crate::types::bus::{
@@ -175,6 +176,11 @@ impl<S: Spec> Kernel<S> {
             InputEffect::Content { target, .. } => Some(target.clone()),
             _ => None,
         });
+        if fx.iter().any(|e| matches!(e, InputEffect::Content { changed: true, .. })) {
+            // Hover / press / click moved: content hooks must see it now,
+            // also on `TickRate::Dirty` windows.
+            self.invalidate(win, None, InvalidateBits::MATERIAL);
+        }
         self.conduct_input(
             now,
             fx.into_iter()
@@ -248,6 +254,11 @@ impl<S: Spec> Kernel<S> {
             InputEffect::Content { target, .. } => Some(target.clone()),
             _ => None,
         });
+        if fx.iter().any(|e| matches!(e, InputEffect::Content { changed: true, .. })) {
+            // Hover / press / click moved: content hooks must see it now,
+            // also on `TickRate::Dirty` windows.
+            self.invalidate(win, None, InvalidateBits::MATERIAL);
+        }
         self.conduct_input(
             now,
             fx.into_iter()

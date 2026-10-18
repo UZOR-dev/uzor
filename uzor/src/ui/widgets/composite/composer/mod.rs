@@ -16,6 +16,8 @@ pub struct ComposerView<'a> {
     pub placeholder: &'a str,
     /// Hovered part, if any.
     pub hovered: Option<ComposerPart>,
+    /// Caret (char index) when the text line has focus.
+    pub cursor: Option<usize>,
 }
 
 /// Clickable parts.
@@ -70,8 +72,9 @@ fn round_btn(ctx: &mut dyn RenderContext, r: Rect, fill: &str) {
     ctx.fill();
 }
 
-/// Paint the composer (light theme).
-pub fn draw_composer(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &ComposerView<'_>) {
+/// Paint the composer (light theme). Returns the caret x of every char
+/// boundary of `view.text` (feed it to the text-field store for hit-testing).
+pub fn draw_composer(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &ComposerView<'_>) -> Vec<f64> {
     path_round_rect(ctx, hits.frame, 24.0);
     ctx.set_fill_color("#ffffff");
     ctx.fill();
@@ -84,6 +87,18 @@ pub fn draw_composer(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &Co
     let (t, c) = if view.text.is_empty() { (view.placeholder, "#9a9aa2") } else { (view.text, "#18181b") };
     ctx.set_fill_color(c);
     ctx.fill_text(t, hits.text.x, hits.text.y + hits.text.height / 2.0);
+    let mut positions = vec![hits.text.x];
+    let mut acc = String::new();
+    for ch in view.text.chars() {
+        acc.push(ch);
+        positions.push(hits.text.x + ctx.measure_text(&acc));
+    }
+    if let Some(c) = view.cursor {
+        let x = positions.get(c).copied().unwrap_or(*positions.last().unwrap_or(&hits.text.x));
+        ctx.set_fill_color("#1d77f2");
+        // Pixel-snapped 2px caret (thin sub-pixel fills trip tiny-skia 0.11).
+        ctx.fill_rect(x.round(), (hits.text.y + 5.0).round(), 2.0, (hits.text.height - 10.0).round());
+    }
     let hov = |p| view.hovered == Some(p);
     round_btn(ctx, hits.attach, if hov(ComposerPart::Attach) { "#e9e9ec" } else { "#f2f2f4" });
     round_btn(ctx, hits.mic, if hov(ComposerPart::Mic) { "#e9e9ec" } else { "#f2f2f4" });
@@ -115,6 +130,7 @@ pub fn draw_composer(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &Co
     ctx.move_to(sx - 5.0, sy - 1.0); ctx.line_to(sx, sy - 6.0); ctx.line_to(sx + 5.0, sy - 1.0);
     ctx.stroke();
     ctx.set_line_cap("butt");
+    positions
 }
 
 /// Declare the composer's click rects under `id_prefix` + `-attach|-mic|-send|-text`.

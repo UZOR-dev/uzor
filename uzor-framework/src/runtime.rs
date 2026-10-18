@@ -113,7 +113,7 @@ impl<S: Spec, A: App<Spec = S>> Runtime<S, A> {
         });
         let mut cmds = Vec::new();
         {
-            let mut cx = InitCx { out: &mut cmds };
+            let mut cx = InitCx { out: &mut cmds, handle: &handle };
             app.init(&mut cx);
         }
         for spec in cfg.windows {

@@ -8,6 +8,7 @@ pub mod button;
 pub mod checkbox;
 pub mod chevron;
 pub mod clock;
+pub mod bubble;
 pub mod critter;
 pub mod session_pill;
 pub mod close_button;

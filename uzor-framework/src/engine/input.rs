@@ -1417,7 +1417,7 @@ impl InputEngine {
             InputOp::Deliver { win, input } => match windows.get_mut(&win) {
                 Some(w) => {
                     let (changed, target) = w.deliver(win, input, &mut fx);
-                    fx.push(InputEffect::Content { win, target });
+                    fx.push(InputEffect::Content { win, target, changed });
                     changed
                 }
                 None => false,
@@ -1425,7 +1425,8 @@ impl InputEngine {
             InputOp::Wheel { win, input } => {
                 if let Some(w) = windows.get_mut(&win) {
                     let target = w.wheel(input);
-                    fx.push(InputEffect::Content { win, target });
+                    let changed = target.is_some();
+                    fx.push(InputEffect::Content { win, target, changed });
                 }
                 false
             }

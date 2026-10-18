@@ -438,6 +438,9 @@ pub enum InputEffect {
         win: WindowId,
         /// The widget, if any.
         target: Option<WidgetId>,
+        /// Hover / press / click state moved (the window needs a repaint
+        /// even on a dirty-driven cadence).
+        changed: bool,
     },
     /// Key step 1 did not consume the key: route on (overlay Escape,
     /// keymap, focused widget, unhandled). Absent = consumed.
