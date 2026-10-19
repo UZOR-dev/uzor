@@ -1287,7 +1287,15 @@ impl TextRenderer for TinySkiaCpuRenderContext {
         let font      = get_font_w(font_info.family, font_info.weight, font_info.bold, font_info.italic);
         let px        = font_info.size;
 
-        let total_w = measure_text_width(text, &font_info) as f32;
+        // Pen positions from the shaper (GPOS kerning), the same source `measure_text`
+        // uses, so drawn runs line up with measured ones; per-char fontdue advances
+        // only when the shaper merged clusters (ligatures) or failed.
+        let shaped = uzor::shaper::measure_glyphs(text, &font_css_string(&font_info));
+        let shaped = (shaped.len() == text.chars().count() && shaped.iter().all(|g| g.cluster.chars().count() == 1)).then_some(shaped);
+        let total_w = match &shaped {
+            Some(g) => g.last().map(|g| g.x_offset + g.advance).unwrap_or(0.0) as f32,
+            None => measure_text_width(text, &font_info) as f32,
+        };
         let x_off   = match self.text_align {
             TextAlign::Center => -(total_w / 2.0),
             TextAlign::Right  => -total_w,
@@ -1330,6 +1338,7 @@ impl TextRenderer for TinySkiaCpuRenderContext {
         let sy = self.transform.sy;
 
         let mut pen_x = (x as f32 + x_off) * sx + tx;
+        let     pen_x0 = pen_x;
         let     pen_y = (y as f32 + y_off) * sy + ty;
 
         // Glyphs are rasterized at `render_scale` (clamped to >= 1x so small
@@ -1339,7 +1348,10 @@ impl TextRenderer for TinySkiaCpuRenderContext {
         // advances get scaled twice (glyph bitmap at Nx, pen walk at N*sx).
         let render_scale = sx.max(sy).max(1.0);
 
-        for ch in text.chars() {
+        for (ci, ch) in text.chars().enumerate() {
+            if let Some(g) = &shaped {
+                pen_x = pen_x0 + g[ci].x_offset as f32 * sx;
+            }
             let render_px = px * render_scale;
             // Cached post-fallback glyph (see [`rasterize_cached`]'s own
             // doc — same NerdFont → … → NotoEmoji chain as before, paid
