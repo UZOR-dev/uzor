@@ -380,6 +380,8 @@ pub enum DropIntent {
         target: WidgetId,
         /// The files.
         files: Vec<DroppedFile>,
+        /// Pointer at the drop, window coords (if the host knows it).
+        pos: Option<(f64, f64)>,
     },
     /// Files were dropped where no widget is (the window itself).
     Window {
@@ -387,6 +389,8 @@ pub enum DropIntent {
         win: WindowId,
         /// The files.
         files: Vec<DroppedFile>,
+        /// Pointer at the drop, window coords (if the host knows it).
+        pos: Option<(f64, f64)>,
     },
     /// A drag with a file is over the window (show a drop affordance).
     Hovering {

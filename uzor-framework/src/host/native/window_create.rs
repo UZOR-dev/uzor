@@ -132,6 +132,7 @@ pub fn create_window(
         mapper: WinitMapper::new(dpr),
         decorations: spec.decorations,
         maximized: None,
+        dnd_hover: None,
         transparent: spec.transparent,
     })
 }

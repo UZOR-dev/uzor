@@ -1372,8 +1372,14 @@ impl TextRenderer for TinySkiaCpuRenderContext {
                 for col in 0..gw {
                     let px_coord = gx0 + col;
                     if px_coord < 0 || px_coord >= pw { continue; }
-                    let coverage = bitmap[(row * gw + col) as usize];
+                    let mut coverage = bitmap[(row * gw + col) as usize];
                     if coverage == 0 { continue; }
+                    // The raster blit honours the clip like path fills do.
+                    if let Some(m) = &self.current_clip {
+                        let mv = m.data()[py_coord as usize * stride + px_coord as usize];
+                        if mv == 0 { continue; }
+                        coverage = ((coverage as u16 * mv as u16 + 127) / 255) as u8;
+                    }
 
                     let dst_idx = py_coord as usize * stride + px_coord as usize;
                     let dst_off = dst_idx * 4;
@@ -1474,6 +1480,11 @@ impl Masking for TinySkiaCpuRenderContext {
         let Some(path) = self.take_path() else { return };
         let w = self.pixmap.width();
         let h = self.pixmap.height();
+        // Canvas semantics: a clip intersects the current one (restore pops it).
+        if let Some(m) = self.current_clip.as_mut() {
+            m.intersect_path(&path, FillRule::Winding, true, self.transform);
+            return;
+        }
         if let Some(mut mask) = Mask::new(w, h) {
             mask.fill_path(&path, FillRule::Winding, true, self.transform);
             self.current_clip = Some(mask);

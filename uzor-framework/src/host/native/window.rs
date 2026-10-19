@@ -34,6 +34,8 @@ pub struct NativeWindow {
     pub decorations: bool,
     /// Last maximized state echoed to the framework.
     pub maximized: Option<bool>,
+    /// An OS file drag is over the window (pointer polled: X11 sends no motion).
+    pub dnd_hover: Option<(f64, f64)>,
     /// Spawned transparent: frames clear to fully transparent.
     pub transparent: bool,
 }

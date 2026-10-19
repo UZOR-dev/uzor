@@ -262,6 +262,9 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
                 log::warn!("paint failed: {e}");
             }
             flush_x11(&nw.window);
+            if std::env::var_os("UZOR_TRACE_PAINT").is_some() {
+                eprintln!("[paint] {:?} t={:.3}", req.window, self.now().get());
+            }
             // Report render facts.
             let m = *self.hub.metrics();
             let info = RenderInfo {
@@ -336,6 +339,25 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
             return;
         }
 
+        // OS file drag: the pointer is grabbed by the drag source, so no
+        // CursorMoved arrives; query it so drops (and the hover) target the
+        // widget under the pointer.
+        match &ev {
+            WindowEvent::HoveredFile(_) | WindowEvent::DroppedFile(_) => {
+                if let Some(p) = query_pointer(&nw.window) {
+                    nw.dnd_hover = matches!(ev, WindowEvent::HoveredFile(_)).then_some(p);
+                    let pos = crate::Point::new(p.0, p.1);
+                    self.push(framework_id, InputEvent::Pointer(PointerInput::Moved { pos, mods: Default::default() }));
+                } else {
+                    nw.dnd_hover = None;
+                }
+            }
+            WindowEvent::HoveredFileCancelled => nw.dnd_hover = None,
+            _ => {}
+        }
+        let Some(nw) = self.windows.get_mut(&id) else {
+            return;
+        };
         let events = nw.mapper.map(&ev);
         for e in events {
             self.push(framework_id, e);
@@ -365,6 +387,10 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         self.drain_tray();
+        let (moved, dnd) = dnd_moves(self.windows.values_mut());
+        for (id, p) in moved {
+            self.push(id, InputEvent::Pointer(PointerInput::Moved { pos: crate::Point::new(p.0, p.1), mods: Default::default() }));
+        }
         let out = self.runtime.tick(self.now());
         self.execute_all(el, out.window_commands);
         self.paint_due(out.frames);
@@ -391,7 +417,58 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
                 }
             }
         });
+        if dnd && !matches!(wake, Wake::Immediate) {
+            el.set_control_flow(ControlFlow::WaitUntil(Instant::now() + std::time::Duration::from_millis(40)));
+        }
     }
+}
+
+/// While a file drag hovers a window, follow the pointer (X11 DnD sends no
+/// motion to the target window): moved windows, and whether any drag is active.
+fn dnd_moves<'a>(windows: impl Iterator<Item = &'a mut super::window::NativeWindow>) -> (Vec<(crate::WindowId, (f64, f64))>, bool) {
+    let mut moved = Vec::new();
+    let mut any = false;
+    for nw in windows {
+        let Some(last) = nw.dnd_hover else { continue };
+        any = true;
+        if let Some(p) = query_pointer(&nw.window) {
+            if p != last {
+                nw.dnd_hover = Some(p);
+                moved.push((nw.id, p));
+            }
+        }
+    }
+    (moved, any)
+}
+
+/// Pointer position in the window's logical px (X11 XQueryPointer), if available.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn query_pointer(window: &winit::window::Window) -> Option<(f64, f64)> {
+    use std::sync::OnceLock;
+    use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
+    static XLIB: OnceLock<Option<x11_dl::xlib::Xlib>> = OnceLock::new();
+    let xlib = XLIB.get_or_init(|| x11_dl::xlib::Xlib::open().ok()).as_ref()?;
+    let RawDisplayHandle::Xlib(dh) = window.display_handle().ok()?.as_raw() else { return None };
+    let d = dh.display?.as_ptr().cast();
+    let win = match window.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Xlib(w) => w.window,
+        RawWindowHandle::Xcb(w) => w.window.get() as _,
+        _ => return None,
+    };
+    let (mut root, mut child) = (0, 0);
+    let (mut rx, mut ry, mut wx, mut wy, mut mask) = (0, 0, 0, 0, 0);
+    // SAFETY: winit's live display + window; XQueryPointer only reads.
+    let ok = unsafe { (xlib.XQueryPointer)(d, win, &mut root, &mut child, &mut rx, &mut ry, &mut wx, &mut wy, &mut mask) };
+    if ok == 0 {
+        return None;
+    }
+    let k = window.scale_factor();
+    Some((wx as f64 / k, wy as f64 / k))
+}
+
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn query_pointer(_window: &winit::window::Window) -> Option<(f64, f64)> {
+    None
 }
 
 /// Prefer a fixed backend when set; otherwise autodetection.

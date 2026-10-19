@@ -468,11 +468,8 @@ impl<S: Spec> Kernel<S> {
                 return;
             }
         };
-        let target = self
-            .input
-            .view()
-            .coordinator(win)
-            .and_then(|c| c.pointer_pos())
+        let pos = self.input.view().coordinator(win).and_then(|c| c.pointer_pos());
+        let target = pos
             .and_then(|(x, y)| {
                 self.input
                     .view()
@@ -480,8 +477,8 @@ impl<S: Spec> Kernel<S> {
                     .and_then(|c| c.hit_test_now(x, y))
             });
         match target {
-            Some(target) => self.outbox.intents.push(Intent::Drop(DropIntent::Files { win, target, files: vec![file] })),
-            None => self.outbox.intents.push(Intent::Drop(DropIntent::Window { win, files: vec![file] })),
+            Some(target) => self.outbox.intents.push(Intent::Drop(DropIntent::Files { win, target, files: vec![file], pos })),
+            None => self.outbox.intents.push(Intent::Drop(DropIntent::Window { win, files: vec![file], pos })),
         }
     }
 
