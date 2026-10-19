@@ -220,6 +220,23 @@ struct SelectableText {
     lines: Vec<SelectionLine>,
 }
 
+/// The compose-phase sink a hook reports its selectable plain text into (the `Widgets`
+/// face): the DOM's "every text node is selectable" made explicit — a widget reported here
+/// gets press-drag / double / triple-click selection and Ctrl+C copy from the input engine.
+#[derive(Clone, Debug, Default)]
+pub struct Selectables(HashMap<WidgetId, SelectableText>);
+
+impl Selectables {
+    /// Report one selectable text widget for this frame: its text and, per wrapped line,
+    /// the char range, origin and glyph boundaries (`SelectionLine`).
+    pub fn report(&mut self, widget: impl Into<WidgetId>, text: impl Into<String>, lines: Vec<SelectionLine>) {
+        self.0.insert(widget.into(), SelectableText { text: text.into(), lines });
+    }
+    fn contains_key(&self, w: &WidgetId) -> bool {
+        self.0.contains_key(w)
+    }
+}
+
 /// A press that began on a selectable widget: the selection drag anchor.
 #[derive(Clone, Debug)]
 struct PressSel {
@@ -285,7 +302,7 @@ struct PerWindowInput {
     // reported set (read by pointer ops); the compose door fills
     // `reported` and EndFrame swaps them.
     selectables: HashMap<WidgetId, SelectableText>,
-    reported: HashMap<WidgetId, SelectableText>,
+    reported: Selectables,
     selections: Vec<(WidgetId, TextSelection)>,
     press_sel: Option<PressSel>,
     drag_ended: bool,
@@ -316,7 +333,7 @@ impl PerWindowInput {
             ime_allowed: false,
             pending_paste: None,
             selectables: HashMap::new(),
-            reported: HashMap::new(),
+            reported: Selectables::default(),
             selections: Vec::new(),
             press_sel: None,
             drag_ended: false,
@@ -952,7 +969,7 @@ impl PerWindowInput {
             }
             changed = true;
         }
-        self.selectables = fresh;
+        self.selectables = fresh.0;
 
         changed
     }
@@ -1554,10 +1571,10 @@ impl InputEngine {
     pub fn compose_parts(
         &mut self,
         win: WindowId,
-    ) -> Option<(&mut InputCoordinator, &mut uzor::app_context::StateRegistry)> {
+    ) -> Option<(&mut InputCoordinator, &mut uzor::app_context::StateRegistry, &mut Selectables)> {
         self.windows
             .get_mut(&win)
-            .map(|w| (&mut w.coord, &mut w.states))
+            .map(|w| (&mut w.coord, &mut w.states, &mut w.reported))
     }
 
     /// Compose-phase door (T2): report one selectable plain-text widget's
@@ -1576,13 +1593,7 @@ impl InputEngine {
         lines: Vec<SelectionLine>,
     ) {
         if let Some(w) = self.windows.get_mut(&win) {
-            w.reported.insert(
-                widget,
-                SelectableText {
-                    text: text.into(),
-                    lines,
-                },
-            );
+            w.reported.report(widget, text, lines);
         }
     }
 

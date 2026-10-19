@@ -132,6 +132,7 @@ fn compose(
         widgets: Widgets {
             coord: &mut coord,
             states: &mut states,
+            selectables: &mut Default::default(),
             layer: LayerId::main(),
         },
         view: visual,
@@ -468,6 +469,7 @@ fn button_builder_bind_count_sees_last_frame_click() {
         widgets: Widgets {
             coord: &mut coord,
             states: &mut states,
+            selectables: &mut Default::default(),
             layer: LayerId::main(),
         },
         view: &visual,

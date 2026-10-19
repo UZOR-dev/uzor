@@ -177,6 +177,7 @@ pub struct VisualView<S: Spec> {
     pub(crate) context: Option<(f64, f64)>,
     pub(crate) captured: bool,
     pub(crate) open_overlays: Vec<S::Overlay>,
+    pub(crate) selections: Vec<(WidgetId, uzor::input::text::TextSelection)>,
 }
 
 // Manual impl: a derive would demand `S: Default` of the marker type.
@@ -194,6 +195,7 @@ impl<S: Spec> Default for VisualView<S> {
             context: None,
             captured: false,
             open_overlays: Vec::new(),
+            selections: Vec::new(),
         }
     }
 }
@@ -279,6 +281,12 @@ impl<S: Spec> VisualView<S> {
         self.captured
     }
 
+    /// The plain-text selection of a selectable widget (reported through
+    /// [`Widgets::selectables`]), to paint its highlight.
+    pub fn selection(&self, id: &WidgetId) -> Option<uzor::input::text::TextSelection> {
+        self.selections.iter().find_map(|(w, s)| (w == id).then_some(*s))
+    }
+
     /// This overlay is open in the window.
     pub fn overlay_open(&self, id: S::Overlay) -> bool {
         self.open_overlays.contains(&id)
@@ -302,6 +310,8 @@ pub struct Widgets<'a> {
     pub coord: &'a mut InputCoordinator,
     /// Per-widget persistent typed state (scroll offsets, expand flags).
     pub states: &'a mut StateRegistry,
+    /// Selectable plain text of this frame (select by drag / double / triple click, copy).
+    pub selectables: &'a mut crate::Selectables,
     /// The layer this hook's widgets register into (panel-local or the
     /// overlay's own).
     pub layer: LayerId,

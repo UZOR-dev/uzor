@@ -65,6 +65,7 @@ fn compose(body: impl FnOnce(&mut PanelCx<'_, Demo>)) {
         widgets: Widgets {
             coord: &mut coord,
             states: &mut states,
+            selectables: &mut Default::default(),
             layer: LayerId::main(),
         },
         view: &visual,

@@ -55,6 +55,7 @@ pub mod types;
 pub mod widgets;
 
 /// `view!` JSX-like DSL — re-exported from `uzor-framework-macros` (brief M1).
+pub use engine::input::Selectables;
 pub use uzor_framework_macros::view;
 
 pub use handle::{

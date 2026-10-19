@@ -130,7 +130,7 @@ impl<S: Spec> Kernel<S> {
                     };
                     let mut hooks = HookOps::default();
                     {
-                        let Some((coord, states)) = self.input.compose_parts(win) else {
+                        let Some((coord, states, selectables)) = self.input.compose_parts(win) else {
                             break;
                         };
                         let mut cx = PanelCx {
@@ -145,6 +145,7 @@ impl<S: Spec> Kernel<S> {
                             widgets: Widgets {
                                 coord,
                                 states,
+                                selectables,
                                 layer: LayerId::main(),
                             },
                             view: &view,
@@ -170,7 +171,7 @@ impl<S: Spec> Kernel<S> {
             let layer = overlay_layer(ov.slot);
             let mut hooks = HookOps::default();
             {
-                let Some((coord, states)) = self.input.compose_parts(win) else {
+                let Some((coord, states, selectables)) = self.input.compose_parts(win) else {
                     break;
                 };
                 // Layers are per-frame in the coordinator: the stack is
@@ -216,6 +217,7 @@ impl<S: Spec> Kernel<S> {
                     widgets: Widgets {
                         coord,
                         states,
+                        selectables,
                         layer,
                     },
                     view: &view,
@@ -366,6 +368,7 @@ impl<S: Spec> Kernel<S> {
         view.scroll_precise = iview.pending_scroll_precise(win);
         (view.pointer, view.button_down) = iview.pointer(win);
         view.context = iview.context_click(win);
+        view.selections = iview.selections(win).map(<[_]>::to_vec).unwrap_or_default();
         view.open_overlays = self
             .overlays
             .view()
