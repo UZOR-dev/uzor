@@ -212,9 +212,15 @@ pub fn wrap_spans(ctx: &mut dyn RenderContext, spans: &[Span], max_w: f64, st: &
     }
     let mut lines: Vec<Vec<Piece>> = vec![Vec::new()];
     let mut x = 0.0;
+    // Some backends trim spaces when measuring: measure runs with spaces between two
+    // fixed glyphs so their advance is counted.
     let mut measure = |ctx: &mut dyn RenderContext, si: usize, t: &str| {
         ctx.set_font(&font(st, spans[si].weight, st.px));
-        ctx.measure_text(t)
+        if t.starts_with(' ') || t.ends_with(' ') {
+            ctx.measure_text(&format!("x{t}x")) - ctx.measure_text("xx")
+        } else {
+            ctx.measure_text(t)
+        }
     };
     for (si, t, sp, nl) in toks {
         if nl {
