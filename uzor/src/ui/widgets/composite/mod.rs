@@ -13,6 +13,7 @@
 //!   stays in `input`; those modules re-export the consume items.
 
 pub mod blackbox_panel;
+pub mod chat_thread;
 pub mod chrome;
 pub mod composer;
 pub mod context_menu;
