@@ -248,3 +248,19 @@ mod tests {
         assert_eq!((r.x, r.y.round()), (100.0, 41.0));
     }
 }
+
+/// The `✕` close glyph as two strokes centred on `(cx, cy)` (text fonts often
+/// lack U+2715; this matches its 14px rendering: ~8px arms, 1.4px stroke).
+pub fn draw_close_glyph(ctx: &mut dyn RenderContext, cx: f64, cy: f64, size: f64, color: &str) {
+    let h = size * 0.29;
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(size * 0.1);
+    ctx.set_line_cap("round");
+    ctx.begin_path();
+    ctx.move_to(cx - h, cy - h);
+    ctx.line_to(cx + h, cy + h);
+    ctx.move_to(cx + h, cy - h);
+    ctx.line_to(cx - h, cy + h);
+    ctx.stroke();
+    ctx.set_line_cap("butt");
+}
