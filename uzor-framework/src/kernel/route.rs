@@ -256,11 +256,11 @@ impl<S: Spec> Kernel<S> {
             InputEffect::Content { target, .. } => Some(target.clone()),
             _ => None,
         });
-        if fx.iter().any(|e| matches!(e, InputEffect::Content { changed: true, .. })) {
-            // Hover / press / click moved: content hooks must see it now,
-            // also on `TickRate::Dirty` windows.
-            self.invalidate(win, None, InvalidateBits::MATERIAL);
-        }
+        // Hover moved, or a wheel delta waits in the hook view (scroll
+        // containers read it at compose): content hooks must see it now,
+        // also on `TickRate::Dirty` windows.
+        let _ = &input;
+        self.invalidate(win, None, InvalidateBits::MATERIAL);
         self.conduct_input(
             now,
             fx.into_iter()
@@ -334,11 +334,11 @@ impl<S: Spec> Kernel<S> {
             InputEffect::Content { target, .. } => Some(target.clone()),
             _ => None,
         });
-        if fx.iter().any(|e| matches!(e, InputEffect::Content { changed: true, .. })) {
-            // Hover / press / click moved: content hooks must see it now,
-            // also on `TickRate::Dirty` windows.
-            self.invalidate(win, None, InvalidateBits::MATERIAL);
-        }
+        // Hover moved, or a wheel delta waits in the hook view (scroll
+        // containers read it at compose): content hooks must see it now,
+        // also on `TickRate::Dirty` windows.
+        let _ = &input;
+        self.invalidate(win, None, InvalidateBits::MATERIAL);
         self.conduct_input(
             now,
             fx.into_iter()

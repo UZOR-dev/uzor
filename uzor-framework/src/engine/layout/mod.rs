@@ -226,6 +226,12 @@ pub enum SessionKind {
 /// One live pointer session of a window.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Session {
+    /// A press on the chrome drag zone: the OS move starts once the pointer
+    /// travels (so a second press of a double-click still reaches us; an
+    /// immediate OS drag grabs the pointer and eats it).
+    DragPending {
+        grab: Point,
+    },
     Splitter(splitter::SplitDrag),
     Tab {
         leaf: LeafId,
@@ -278,6 +284,7 @@ impl Session {
             Session::FloatingResize { id, .. } => SessionKind::FloatingResize(id),
             Session::Click(hit) => SessionKind::Click(hit),
             Session::MicroMove { .. } => SessionKind::MicroMove,
+            Session::DragPending { .. } => SessionKind::Click(LayoutHit::Chrome(uzor::widgets::composite::chrome::ChromeHit::Drag)),
         }
     }
 }
@@ -311,8 +318,12 @@ struct WindowLayout<P: DockPanel> {
 }
 
 /// Two drag-zone presses within this time and distance are a double-click.
-const DOUBLE_PRESS_S: f64 = 0.45;
+/// Generous: press times are stamped when the kernel processes the event,
+/// which a slow (software-presented) frame can delay.
+const DOUBLE_PRESS_S: f64 = 0.6;
 const DOUBLE_PRESS_PX: f64 = 5.0;
+/// Travel that turns a drag-zone press into an OS window move.
+const DRAG_SLOP_PX: f64 = 3.0;
 
 impl<P: DockPanel> WindowLayout<P> {
     fn new(caps: HostCaps, viewport: Rect, policy: &LayoutPolicy) -> Self {
@@ -835,6 +846,15 @@ fn pointer<P: DockPanel>(
                 return;
             };
             let next = match session {
+                Session::DragPending { grab } => {
+                    if (pos.x - grab.x).abs() > DRAG_SLOP_PX || (pos.y - grab.y).abs() > DRAG_SLOP_PX {
+                        w.session = None;
+                        w.drag_press = None;
+                        chrome::press(win, uzor::widgets::composite::chrome::ChromeHit::Drag, fx);
+                        return;
+                    }
+                    session
+                }
                 Session::Splitter(d) => Session::Splitter(splitter::drag(w, d, pos, &ctx.policy)),
                 Session::Tab { .. } | Session::Header { .. } => {
                     let next = dock::drag_move(w, session, pos);
@@ -894,7 +914,7 @@ fn press<P: DockPanel>(
                 None
             } else {
                 w.drag_press = Some((w.now, pos));
-                chrome::press(win, uzor::widgets::composite::chrome::ChromeHit::Drag, fx)
+                Some(Session::DragPending { grab: pos })
             }
         }
         LayoutHit::Chrome(part) => chrome::press(win, part, fx),
@@ -975,6 +995,7 @@ fn end_session<P: DockPanel>(
         return;
     };
     match (session, release) {
+        (Session::DragPending { .. }, _) => {}
         (Session::Splitter(_), _) => {}
         (Session::Tab { .. } | Session::Header { .. }, Some(pos)) => {
             if dock::is_live_drag(&session) {

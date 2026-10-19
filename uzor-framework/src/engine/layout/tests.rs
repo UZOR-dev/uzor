@@ -1376,8 +1376,10 @@ fn hit_test_gives_exactly_one_consistent_hit_per_point() {
 #[test]
 fn chrome_and_bezel_presses_become_window_commands_and_actions() {
     let (mut e, _, _) = furnished();
-    // Drag zone: the OS takes the gesture at once, no capture.
+    // Drag zone: the OS takes the gesture once the pointer travels, no capture.
     let fx = down(&mut e, 500.0, 16.0);
+    assert!(!fx.iter().any(|f| matches!(f, LayoutEffect::Window { cmd: WindowCommand::DragWindow, .. })));
+    let fx = e.apply(LayoutOp::Pointer { win: W, now: Seconds(0.0), event: DockPointer::Move(Point::new(510.0, 16.0)) });
     assert!(fx.iter().any(|f| matches!(
         f,
         LayoutEffect::Window {
@@ -1568,11 +1570,18 @@ fn floating_controls_hit_above_content_with_a_drag_band() {
     };
     let max = |fx: &LayoutEffects| fx.iter().any(|f| matches!(f, LayoutEffect::Chrome { action: uzor::widgets::composite::chrome::ChromeAction::MaximizeRestore, .. }));
     let drag = |fx: &LayoutEffects| fx.iter().any(|f| matches!(f, LayoutEffect::Window { cmd: WindowCommand::DragWindow, .. }));
+    let up = |e: &mut E, t: f64, x: f64| {
+        e.apply(LayoutOp::Pointer { win: W, now: Seconds(t), event: DockPointer::Up(Point::new(x, 20.0)) })
+    };
     let f1 = at(&mut e, 10.0, 500.0);
-    assert!(drag(&f1) && !max(&f1));
+    assert!(!drag(&f1) && !max(&f1), "a press alone waits for travel");
+    up(&mut e, 10.1, 500.0);
     let f2 = at(&mut e, 10.3, 501.0);
     assert!(max(&f2) && !drag(&f2), "double-press toggles maximize");
+    up(&mut e, 10.4, 501.0);
     let f3 = at(&mut e, 20.0, 500.0);
+    let mv = e.apply(LayoutOp::Pointer { win: W, now: Seconds(20.1), event: DockPointer::Move(Point::new(520.0, 24.0)) });
+    assert!(drag(&mv), "travel starts the OS move");
     let f4 = at(&mut e, 21.0, 500.0);
     assert!(!max(&f3) && !max(&f4), "slow presses are two drags");
 }

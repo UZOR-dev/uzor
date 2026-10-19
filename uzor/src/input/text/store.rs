@@ -41,9 +41,17 @@ pub struct TextFieldConfig {
     /// Whether to mask input display (password field).
     /// The store still holds the real text — masking is a renderer concern.
     pub masked: bool,
+    /// Shift+Enter inserts a newline instead of submitting (chat composers).
+    pub multiline: bool,
 }
 
 impl TextFieldConfig {
+    /// This config with Shift+Enter inserting a newline.
+    pub fn multiline(mut self) -> Self {
+        self.multiline = true;
+        self
+    }
+
     /// Plain editable text field.
     pub fn text() -> Self {
         Self {
@@ -52,6 +60,7 @@ impl TextFieldConfig {
             char_filter: None,
             max_len: None,
             masked: false,
+            multiline: false,
         }
     }
 
@@ -63,6 +72,7 @@ impl TextFieldConfig {
             char_filter: None,
             max_len: None,
             masked: true,
+            multiline: false,
         }
     }
 
@@ -79,6 +89,7 @@ impl TextFieldConfig {
             char_filter: None,
             max_len: None,
             masked: false,
+            multiline: false,
         }
     }
 
@@ -90,6 +101,7 @@ impl TextFieldConfig {
             char_filter: None,
             max_len: None,
             masked: false,
+            multiline: false,
         }
     }
 
@@ -101,6 +113,7 @@ impl TextFieldConfig {
             char_filter: None,
             max_len: None,
             masked: false,
+            multiline: false,
         }
     }
 
@@ -1023,7 +1036,7 @@ fn apply_key(state: &mut TextFieldState, key: KeyPress) -> bool {
                 state.delete_selection();
             }
             for ch in text.chars() {
-                if ch.is_control() {
+                if ch.is_control() && !(ch == '\n' && state.config.multiline) {
                     continue;
                 }
                 if let Some(filter) = state.config.char_filter {

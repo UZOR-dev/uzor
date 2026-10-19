@@ -195,9 +195,13 @@ impl<S: Spec> Kernel<S> {
                 // clicks must not fall through to the dock) and a plain
                 // token-colored box.
                 coord.register_on_layer(ov_host_id(ov.slot), ov.rect, Sense::CLICK, &layer);
-                let css = tokens.semantic.surface_floating.to_css();
-                render.set_fill_color(&css);
-                render.fill_rect(ov.rect.x, ov.rect.y, ov.rect.width, ov.rect.height);
+                // `Custom` overlays paint their whole rect (rounded cards,
+                // shadows): no square box under them.
+                if !matches!(model, OverlayModel::Custom) {
+                    let css = tokens.semantic.surface_floating.to_css();
+                    render.set_fill_color(&css);
+                    render.fill_rect(ov.rect.x, ov.rect.y, ov.rect.width, ov.rect.height);
+                }
 
                 let mut cx = OverlayCx {
                     window: win,

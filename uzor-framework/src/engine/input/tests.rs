@@ -1591,3 +1591,22 @@ fn clicking_a_label_does_not_blur_a_focused_field() {
         .is_some_and(|t| t.focused().is_some()));
     assert_eq!(sel(&e, "lbl"), Some(TextSelection::caret(0)));
 }
+
+#[test]
+fn shift_enter_newline_only_in_multiline_fields() {
+    let mut e = engine();
+    frame(&mut e, 0.5, |c| {
+        field(c, "a", rect_a(), TextFieldConfig::text().multiline());
+        field(c, "b", rect_b(), TextFieldConfig::text());
+    });
+    focus(&mut e, 1.0, FocusOp::Set(id("a")));
+    typ(&mut e, 1.0, "x");
+    let fx = key(&mut e, 1.1, KeyCode::Enter, shift());
+    assert!(!fx.iter().any(|f| matches!(f, InputEffect::Text(TextIntent::Submitted { .. }))));
+    typ(&mut e, 1.1, "y");
+    assert_eq!(text(&e, "a"), "x\ny");
+    // A single-line field submits on Shift+Enter.
+    focus(&mut e, 1.2, FocusOp::Set(id("b")));
+    let fx = key(&mut e, 1.3, KeyCode::Enter, shift());
+    assert!(fx.contains(&InputEffect::Text(TextIntent::Submitted { win: W, field: id("b") })));
+}

@@ -1118,7 +1118,14 @@ impl PerWindowInput {
         let text_before = self.coord.text_fields().text(&field).to_owned();
         let changed_text = |action: &TextAction| matches!(action, TextAction::TextChanged(_));
         let mut changed = false;
+        let multiline = self.coord.text_fields().field_state(&field).is_some_and(|s| s.config.multiline);
+        let edit = match edit {
+            Edit::Newline if multiline => Edit::Key(KeyPress::Paste("\n".into())),
+            Edit::Newline => Edit::Submit,
+            e => e,
+        };
         match edit {
+            Edit::Newline => {}
             Edit::Key(kp) => changed = changed_text(&self.coord.on_key(kp)),
             Edit::Char(c) => changed = changed_text(&self.coord.on_char(c)),
             Edit::Text(s) => {
@@ -1322,6 +1329,8 @@ enum Edit {
     Char(char),
     Text(String),
     Submit,
+    /// Shift+Enter: a newline in a multiline field, else a submit.
+    Newline,
     Copy,
     Cut,
     Paste,
@@ -1351,6 +1360,7 @@ fn editing_chord(input: &KeyInput) -> Option<Edit> {
         KeyCode::End => Edit::Key(KeyPress::End),
         KeyCode::Backspace => Edit::Char('\x08'),
         KeyCode::Delete => Edit::Key(KeyPress::Delete),
+        KeyCode::Enter if m.shift => Edit::Newline,
         KeyCode::Enter => Edit::Submit,
         // Other Ctrl / Cmd chords belong to the keymap; Ctrl+Alt is AltGr
         // on some layouts and does produce text.
