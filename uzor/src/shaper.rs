@@ -46,6 +46,12 @@ fn font_system() -> &'static Mutex<FontSystem> {
             f::ROBOTO_ITALIC,
             f::ROBOTO_BOLD_ITALIC,
             f::PT_ROOT_UI_VF,
+            f::INTER_400,
+            f::INTER_500,
+            f::INTER_550,
+            f::INTER_600,
+            f::INTER_650,
+            f::INTER_700,
             f::JETBRAINS_MONO_REGULAR,
             f::JETBRAINS_MONO_BOLD,
             f::SOURCE_SERIF_4_REGULAR,
@@ -207,6 +213,7 @@ pub fn shape_glyph_runs(text: &str, font: &str) -> Vec<GlyphSegment> {
         FontFamily::Roboto        => "Roboto",
         FontFamily::PtRootUi      => "PT Root UI",
         FontFamily::JetBrainsMono => "JetBrains Mono",
+        FontFamily::Inter => "Inter",
         FontFamily::SourceSerif4 => "Source Serif 4",
     };
 
@@ -221,11 +228,7 @@ pub fn shape_glyph_runs(text: &str, font: &str) -> Vec<GlyphSegment> {
 
     let attrs = Attrs::new()
         .family(Family::Name(family_name))
-        .weight(if info.bold {
-            cosmic_text::Weight::BOLD
-        } else {
-            cosmic_text::Weight::NORMAL
-        })
+        .weight(cosmic_text::Weight(info.weight))
         .style(if info.italic {
             cosmic_text::Style::Italic
         } else {
@@ -466,6 +469,7 @@ fn text_to_path_uncached(text: &str, font: &str) -> String {
         FontFamily::Roboto      => "Roboto",
         FontFamily::PtRootUi    => "PT Root UI",
         FontFamily::JetBrainsMono => "JetBrains Mono",
+        FontFamily::Inter => "Inter",
         FontFamily::SourceSerif4 => "Source Serif 4",
     };
 
@@ -484,11 +488,7 @@ fn text_to_path_uncached(text: &str, font: &str) -> String {
 
     let attrs = Attrs::new()
         .family(Family::Name(family_name))
-        .weight(if info.bold {
-            cosmic_text::Weight::BOLD
-        } else {
-            cosmic_text::Weight::NORMAL
-        })
+        .weight(cosmic_text::Weight(info.weight))
         .style(if info.italic {
             cosmic_text::Style::Italic
         } else {
@@ -578,6 +578,7 @@ fn shape_uncached(text: &str, font: &str) -> Vec<GlyphMetric> {
         FontFamily::Roboto      => "Roboto",
         FontFamily::PtRootUi    => "PT Root UI",
         FontFamily::JetBrainsMono => "JetBrains Mono",
+        FontFamily::Inter => "Inter",
         FontFamily::SourceSerif4 => "Source Serif 4",
     };
 
@@ -592,11 +593,7 @@ fn shape_uncached(text: &str, font: &str) -> Vec<GlyphMetric> {
 
     let attrs = Attrs::new()
         .family(Family::Name(family_name))
-        .weight(if info.bold {
-            cosmic_text::Weight::BOLD
-        } else {
-            cosmic_text::Weight::NORMAL
-        })
+        .weight(cosmic_text::Weight(info.weight))
         .style(if info.italic {
             cosmic_text::Style::Italic
         } else {
@@ -663,6 +660,7 @@ fn measure_glyphs_wrapped_uncached(text: &str, font: &str, max_width: f64) -> Ve
         FontFamily::Roboto      => "Roboto",
         FontFamily::PtRootUi    => "PT Root UI",
         FontFamily::JetBrainsMono => "JetBrains Mono",
+        FontFamily::Inter => "Inter",
         FontFamily::SourceSerif4 => "Source Serif 4",
     };
 
@@ -682,11 +680,7 @@ fn measure_glyphs_wrapped_uncached(text: &str, font: &str, max_width: f64) -> Ve
 
     let attrs = Attrs::new()
         .family(Family::Name(family_name))
-        .weight(if info.bold {
-            cosmic_text::Weight::BOLD
-        } else {
-            cosmic_text::Weight::NORMAL
-        })
+        .weight(cosmic_text::Weight(info.weight))
         .style(if info.italic {
             cosmic_text::Style::Italic
         } else {

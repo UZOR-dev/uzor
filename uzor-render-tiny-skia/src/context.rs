@@ -76,8 +76,24 @@ fn make_font(bytes: &[u8]) -> fontdue::Font {
 /// Delegates family → bytes resolution to `uzor::fonts::font_bytes` and caches
 /// the decoded `fontdue::Font` locally so each slot is constructed at most
 /// once per process.
+/// [`get_font`] with the CSS weight: Inter gets its nearest static weight.
+fn get_font_w(family: FontFamily, weight: u16, bold: bool, italic: bool) -> &'static fontdue::Font {
+    if family == FontFamily::Inter {
+        static INTER: [OnceLock<fontdue::Font>; 6] = [const { OnceLock::new() }; 6];
+        let ws = uzor_fonts_weights();
+        let i = ws.iter().enumerate().min_by_key(|(_, &x)| (x as i32 - weight as i32).abs()).map(|(i, _)| i).unwrap_or(0);
+        return INTER[i].get_or_init(|| make_font(fonts::font_bytes_weighted(family, ws[i], italic)));
+    }
+    get_font(family, bold, italic)
+}
+
+fn uzor_fonts_weights() -> [u16; 6] {
+    fonts::INTER_WEIGHTS
+}
+
 fn get_font(family: FontFamily, bold: bool, italic: bool) -> &'static fontdue::Font {
     match family {
+        FontFamily::Inter => get_font_w(family, if bold { 700 } else { 400 }, bold, italic),
         FontFamily::PtRootUi => FONT_PT_ROOT_UI
             .get_or_init(|| make_font(fonts::font_bytes(family, bold, italic))),
         FontFamily::JetBrainsMono => {
@@ -209,6 +225,7 @@ fn font_css_string(info: &FontInfo) -> String {
         FontFamily::Roboto => "Roboto",
         FontFamily::PtRootUi => "PT Root UI",
         FontFamily::JetBrainsMono => "JetBrains Mono",
+        FontFamily::Inter => "Inter",
         FontFamily::SourceSerif4 => "Source Serif 4",
     };
     let mut parts: Vec<String> = Vec::with_capacity(4);
@@ -307,6 +324,7 @@ fn parse_glyph_outline_path(svg: &str) -> Option<Path> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct GlyphKey {
     family: FontFamily,
+    weight: u16,
     bold: bool,
     italic: bool,
     ch: char,
@@ -329,8 +347,8 @@ const GLYPH_CACHE_MAX_ENTRIES: usize = 32_768;
 /// has always used (primary → NerdFont → Symbols2 → CJK SC → Arabic →
 /// Devanagari → NotoColorEmoji → NotoEmoji → primary tofu; whitespace
 /// never falls back), served from [`GLYPH_CACHE`] after the first call.
-fn rasterize_cached(family: FontFamily, bold: bool, italic: bool, ch: char, px: f32) -> std::sync::Arc<CachedGlyph> {
-    let key = GlyphKey { family, bold, italic, ch, px_bits: px.to_bits() };
+fn rasterize_cached(family: FontFamily, weight: u16, bold: bool, italic: bool, ch: char, px: f32) -> std::sync::Arc<CachedGlyph> {
+    let key = GlyphKey { family, weight, bold, italic, ch, px_bits: px.to_bits() };
     let cache = GLYPH_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
     if let Ok(map) = cache.lock() {
         if let Some(hit) = map.get(&key) {
@@ -338,7 +356,7 @@ fn rasterize_cached(family: FontFamily, bold: bool, italic: bool, ch: char, px: 
         }
     }
 
-    let font = get_font(family, bold, italic);
+    let font = get_font_w(family, weight, bold, italic);
     let (mut metrics, mut bitmap) = font.rasterize(ch, px);
     if metrics.width == 0 && !ch.is_whitespace() {
         let fallbacks: [&fontdue::Font; 7] = [
@@ -394,7 +412,7 @@ fn rasterize_cached(family: FontFamily, bold: bool, italic: bool, ch: char, px: 
 fn measure_text_width(text: &str, font_info: &FontInfo) -> f64 {
     let mut width = 0.0f32;
     for ch in text.chars() {
-        width += rasterize_cached(font_info.family, font_info.bold, font_info.italic, ch, font_info.size)
+        width += rasterize_cached(font_info.family, font_info.weight, font_info.bold, font_info.italic, ch, font_info.size)
             .metrics
             .advance_width;
     }
@@ -1266,7 +1284,7 @@ impl TextRenderer for TinySkiaCpuRenderContext {
         if text.is_empty() { return; }
 
         let font_info = self.font_info.clone();
-        let font      = get_font(font_info.family, font_info.bold, font_info.italic);
+        let font      = get_font_w(font_info.family, font_info.weight, font_info.bold, font_info.italic);
         let px        = font_info.size;
 
         let total_w = measure_text_width(text, &font_info) as f32;
@@ -1326,7 +1344,7 @@ impl TextRenderer for TinySkiaCpuRenderContext {
             // Cached post-fallback glyph (see [`rasterize_cached`]'s own
             // doc — same NerdFont → … → NotoEmoji chain as before, paid
             // once per distinct glyph instead of per draw call).
-            let glyph = rasterize_cached(font_info.family, font_info.bold, font_info.italic, ch, render_px);
+            let glyph = rasterize_cached(font_info.family, font_info.weight, font_info.bold, font_info.italic, ch, render_px);
             let metrics = glyph.metrics;
             let bitmap = &glyph.bitmap;
 
@@ -1392,7 +1410,7 @@ impl TextMetrics for TinySkiaCpuRenderContext {
         let px = font_info.size;
         let glyphs = uzor::shaper::measure_glyphs(text, font);
         let w = glyphs.last().map(|g| g.x_offset + g.advance).unwrap_or(0.0);
-        let fontdue_font = get_font(font_info.family, font_info.bold, font_info.italic);
+        let fontdue_font = get_font_w(font_info.family, font_info.weight, font_info.bold, font_info.italic);
         let (ascent, descent) = fontdue_font
             .horizontal_line_metrics(px)
             .map(|m| (m.ascent as f64, (-m.descent) as f64))

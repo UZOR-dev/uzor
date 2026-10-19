@@ -173,6 +173,7 @@ pub struct VisualView<S: Spec> {
     pub(crate) scroll: (f64, f64),
     pub(crate) pointer: Option<(f64, f64)>,
     pub(crate) button_down: bool,
+    pub(crate) context: Option<(f64, f64)>,
     pub(crate) captured: bool,
     pub(crate) open_overlays: Vec<S::Overlay>,
 }
@@ -188,6 +189,7 @@ impl<S: Spec> Default for VisualView<S> {
             scroll: (0.0, 0.0),
             pointer: None,
             button_down: false,
+            context: None,
             captured: false,
             open_overlays: Vec::new(),
         }
@@ -253,6 +255,11 @@ impl<S: Spec> VisualView<S> {
     /// Last pointer position in window coordinates, if known.
     pub fn pointer(&self) -> Option<(f64, f64)> {
         self.pointer
+    }
+
+    /// Secondary-button (context menu) release in this frame, window coords.
+    pub fn context_click(&self) -> Option<(f64, f64)> {
+        self.context
     }
 
     /// A pointer button is held.

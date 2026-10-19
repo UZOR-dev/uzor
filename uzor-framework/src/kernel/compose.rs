@@ -317,6 +317,7 @@ impl<S: Spec> Kernel<S> {
         view.clicked = iview.clicked(win).to_vec();
         view.scroll = iview.pending_scroll(win);
         (view.pointer, view.button_down) = iview.pointer(win);
+        view.context = iview.context_click(win);
         view.open_overlays = self
             .overlays
             .view()

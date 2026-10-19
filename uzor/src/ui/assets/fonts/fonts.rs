@@ -22,7 +22,15 @@
 
 // Re-export all font byte constants from the dedicated assets crate.
 pub use uzor_fonts::{
+    inter_for_weight,
     DEJAVU_SANS,
+    INTER_400,
+    INTER_500,
+    INTER_550,
+    INTER_600,
+    INTER_650,
+    INTER_700,
+    INTER_WEIGHTS,
     JETBRAINS_MONO_BOLD,
     JETBRAINS_MONO_REGULAR,
     NOTO_COLOR_EMOJI,
@@ -67,6 +75,9 @@ pub enum FontFamily {
     JetBrainsMono,
     /// Source Serif 4, OFL. Regular, bold, italic, bold-italic.
     SourceSerif4,
+    /// Inter, OFL. Static weights 400/500/550/600/650/700 (opsz 14); see
+    /// [`FontInfo::weight`]. Italic falls back to upright.
+    Inter,
 }
 
 /// Parsed CSS font-shorthand result.
@@ -74,8 +85,10 @@ pub enum FontFamily {
 pub struct FontInfo {
     /// Font size in logical pixels.
     pub size:   f32,
-    /// Whether a bold weight was requested.
+    /// Whether a bold weight was requested (`bold`, or a numeric weight ≥ 600).
     pub bold:   bool,
+    /// CSS numeric weight (`400` normal, `700` bold, any 100–900 token).
+    pub weight: u16,
     /// Whether an italic style was requested.
     pub italic: bool,
     /// Resolved family after detecting the family keywords in the CSS string.
@@ -87,6 +100,7 @@ impl Default for FontInfo {
         Self {
             size:   12.0,
             bold:   false,
+            weight: 400,
             italic: false,
             family: FontFamily::Roboto,
         }
@@ -133,6 +147,8 @@ pub fn resolve_family(family_str: &str) -> FontFamily {
         FontFamily::SourceSerif4
     } else if is_pt_root_ui(&lower) {
         FontFamily::PtRootUi
+    } else if lower.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| w == "inter") {
+        FontFamily::Inter
     } else {
         FontFamily::Roboto
     }
@@ -155,7 +171,21 @@ pub fn parse_css_font(font_str: &str) -> FontInfo {
 
     for part in lower.split_whitespace() {
         match part {
-            "bold"   => info.bold = true,
+            "bold"   => {
+                info.bold = true;
+                info.weight = 700;
+            }
+            "normal" => {}
+            s if s.len() == 3 && s.ends_with("00") || matches!(s, "550" | "650" | "450" | "350" | "750") => {
+                if let Ok(w) = s.parse::<u16>() {
+                    if (100..=900).contains(&w) {
+                        info.weight = w;
+                        info.bold = w >= 600;
+                    } else {
+                        family_parts.push(s);
+                    }
+                }
+            }
             "italic" => info.italic = true,
             s if s.ends_with("px") => {
                 if let Ok(sz) = s.trim_end_matches("px").parse::<f32>() {
@@ -171,6 +201,15 @@ pub fn parse_css_font(font_str: &str) -> FontInfo {
     }
 
     info
+}
+
+/// Bytes for `family` at CSS `weight`: Inter picks its nearest static weight,
+/// every other family maps `weight >= 600` to bold.
+pub fn font_bytes_weighted(family: FontFamily, weight: u16, italic: bool) -> &'static [u8] {
+    match family {
+        FontFamily::Inter => uzor_fonts::inter_for_weight(weight),
+        f => font_bytes(f, weight >= 600, italic),
+    }
 }
 
 /// Return the static byte slice for the requested family / style combination.
@@ -190,6 +229,10 @@ pub fn font_bytes(family: FontFamily, bold: bool, italic: bool) -> &'static [u8]
             (false, false) => ROBOTO_REGULAR,
         },
         FontFamily::PtRootUi => PT_ROOT_UI_VF,
+        FontFamily::Inter => {
+            let _ = italic;
+            uzor_fonts::inter_for_weight(if bold { 700 } else { 400 })
+        }
         FontFamily::JetBrainsMono => {
             let _ = italic; // no italic variant bundled
             if bold { JETBRAINS_MONO_BOLD } else { JETBRAINS_MONO_REGULAR }

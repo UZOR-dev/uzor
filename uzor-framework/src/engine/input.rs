@@ -189,6 +189,8 @@ struct PointerAccum {
     prev_pos: Option<(f64, f64)>,
     button_down: Option<MouseButton>,
     clicked: Option<MouseButton>,
+    /// Secondary-button release not yet read by a frame (context menus).
+    context: Option<(f64, f64)>,
     mods: ModifierKeys,
     scroll: (f64, f64),
 }
@@ -654,6 +656,9 @@ impl PerWindowInput {
                 self.pointer.pos = Some((pos.x, pos.y));
                 self.pointer.button_down = None;
                 self.pointer.clicked = Some(button);
+                if button == MouseButton::Right {
+                    self.pointer.context = Some((pos.x, pos.y));
+                }
                 let target = self.content_target(self.pointer.pos);
                 let _ = self.pressed.take();
                 let _ = self.release_select(win, target.as_ref(), fx);
@@ -993,6 +998,7 @@ impl PerWindowInput {
         state.pointer.clicked = self.pointer.clicked.take();
         state.modifiers = self.pointer.mods;
         state.scroll_delta = std::mem::take(&mut self.pointer.scroll);
+        self.pointer.context = None;
         state.time = now.get();
         self.pointer.prev_pos = self.pointer.pos;
         self.coord.begin_frame(state);
@@ -1664,6 +1670,11 @@ impl<'a> InputEngineView<'a> {
 
     /// Last pointer position in window coordinates and whether a button is
     /// held (embedded surfaces that forward raw pointer events need both).
+    /// Secondary-button release position since the last `BeginFrame`.
+    pub fn context_click(&self, win: WindowId) -> Option<(f64, f64)> {
+        self.w(win).and_then(|w| w.pointer.context)
+    }
+
     pub fn pointer(&self, win: WindowId) -> (Option<(f64, f64)>, bool) {
         self.w(win).map_or((None, false), |w| (w.pointer.pos, w.pointer.button_down.is_some()))
     }

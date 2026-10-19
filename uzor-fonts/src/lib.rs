@@ -38,6 +38,35 @@ pub static ROBOTO_BOLD_ITALIC: &[u8] = include_bytes!("../fonts/Roboto-BoldItali
 /// PT Root UI Variable Font (covers weight axis 100–900).
 pub static PT_ROOT_UI_VF: &[u8] = include_bytes!("../fonts/PTRootUI-VF.ttf");
 
+// ── Inter ─────────────────────────────────────────────────────────────────────
+//
+// Inter (OFL-1.1, rsms/inter, see fonts/Inter-OFL.txt): static instances cut from
+// the variable font at opsz=14 (Chrome's optical size for UI text) for the
+// weights CSS UIs use. fontdue rasterises static faces only, so each weight is
+// its own file; `inter_for_weight` picks the nearest.
+
+/// Inter 400.
+pub static INTER_400: &[u8] = include_bytes!("../fonts/Inter-400.ttf");
+/// Inter 500.
+pub static INTER_500: &[u8] = include_bytes!("../fonts/Inter-500.ttf");
+/// Inter 550.
+pub static INTER_550: &[u8] = include_bytes!("../fonts/Inter-550.ttf");
+/// Inter 600.
+pub static INTER_600: &[u8] = include_bytes!("../fonts/Inter-600.ttf");
+/// Inter 650.
+pub static INTER_650: &[u8] = include_bytes!("../fonts/Inter-650.ttf");
+/// Inter 700.
+pub static INTER_700: &[u8] = include_bytes!("../fonts/Inter-700.ttf");
+
+/// Bundled Inter weights, ascending.
+pub const INTER_WEIGHTS: [u16; 6] = [400, 500, 550, 600, 650, 700];
+
+/// Inter bytes for the nearest bundled weight to `w` (CSS 100–900).
+pub fn inter_for_weight(w: u16) -> &'static [u8] {
+    let i = INTER_WEIGHTS.iter().enumerate().min_by_key(|(_, &x)| (x as i32 - w as i32).abs()).map(|(i, _)| i).unwrap_or(0);
+    [INTER_400, INTER_500, INTER_550, INTER_600, INTER_650, INTER_700][i]
+}
+
 // ── JetBrains Mono ────────────────────────────────────────────────────────────
 //
 // Monospace font with full Unicode box-drawing coverage (U+2500–U+259F).

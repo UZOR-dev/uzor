@@ -678,6 +678,7 @@ impl InstancedRenderer {
                     (false, true)  => "Roboto Italic",
                     (false, false) => "Roboto",
                 },
+                FontFamily::Inter => if ta.bold { "Roboto Bold" } else { "Roboto" },
                 FontFamily::SourceSerif4 => match (ta.bold, ta.italic) {
                     (true, true) => "Source Serif 4 Bold Italic",
                     (true, false) => "Source Serif 4 Bold",

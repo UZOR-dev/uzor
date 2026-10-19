@@ -59,6 +59,7 @@ impl FontSpec {
             FontFamily::Roboto => "Roboto",
             FontFamily::PtRootUi => "PT Root UI",
             FontFamily::JetBrainsMono => "JetBrains Mono",
+            FontFamily::Inter => "Inter",
             FontFamily::SourceSerif4 => "Source Serif 4",
         }
     }

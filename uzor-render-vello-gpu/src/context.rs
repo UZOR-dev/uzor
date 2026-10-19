@@ -71,6 +71,12 @@ pub(crate) fn get_cached_font(family: FontFamily, bold: bool, italic: bool) -> &
             (false, false) => CACHED_FONT_REGULAR
                 .get_or_init(|| make_font(fonts::font_bytes(family, false, false))),
         },
+        FontFamily::Inter => {
+            static IR: OnceLock<FontData> = OnceLock::new();
+            static IB: OnceLock<FontData> = OnceLock::new();
+            let _ = italic;
+            if bold { IB.get_or_init(|| make_font(fonts::font_bytes(family, true, false))) } else { IR.get_or_init(|| make_font(fonts::font_bytes(family, false, false))) }
+        }
         FontFamily::SourceSerif4 => {
             static REG: OnceLock<FontData> = OnceLock::new();
             static BOLD: OnceLock<FontData> = OnceLock::new();
@@ -242,6 +248,7 @@ fn font_css_string(family: FontFamily, bold: bool, italic: bool, size: f64) -> S
         FontFamily::Roboto        => "Roboto",
         FontFamily::PtRootUi      => "PT Root UI",
         FontFamily::JetBrainsMono => "JetBrains Mono",
+        FontFamily::Inter => "Roboto",
         FontFamily::SourceSerif4 => "Source Serif 4",
     };
     let mut parts: Vec<String> = Vec::with_capacity(4);
