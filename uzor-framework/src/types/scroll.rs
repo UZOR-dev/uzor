@@ -32,6 +32,13 @@ pub struct ScrollStyle {
     pub thumb: &'static str,
     /// Hovered / dragged thumb.
     pub thumb_hot: &'static str,
+    /// Synthesise a fling after a precise gesture. Off in the browser: like DOM scrolling,
+    /// the offset follows the deltas 1:1 and momentum comes from the OS / browser's own
+    /// kinetic events (a synthetic fling on top made a wheel notch drift on after the hand
+    /// stopped — the "scroll lags" report). On native it only follows touchpad-sized deltas.
+    pub fling: bool,
+    /// A precise delta larger than this (px) is a wheel notch, not a touchpad sample: no fling.
+    pub fling_max_step: f64,
 }
 
 impl Default for ScrollStyle {
@@ -47,6 +54,8 @@ impl Default for ScrollStyle {
             min_thumb: 24.0,
             thumb: "rgba(255,255,255,0.16)",
             thumb_hot: "rgba(255,255,255,0.32)",
+            fling: !cfg!(target_arch = "wasm32"),
+            fling_max_step: 40.0,
         }
     }
 }
@@ -109,6 +118,11 @@ impl ScrollView {
         self.follow_end = self.at_bottom();
     }
 
+    /// Room left to scroll towards `dy`'s direction (positive dy = towards the top).
+    pub fn can_scroll(&self, dy: f64) -> bool {
+        self.scrollable() && ((dy > 0.0 && !self.at_top()) || (dy < 0.0 && !self.at_bottom()))
+    }
+
     /// Feed one frame's wheel delta in framework units (positive = towards
     /// the top, winit's sign). `precise` = pixel deltas. Returns whether the
     /// offset moved.
@@ -120,9 +134,14 @@ impl ScrollView {
         self.fling = None;
         if precise {
             self.offset -= dy * st.pixel_unit;
-            self.last_precise_ms = Some(now_ms);
-            self.samples.push((now_ms, self.offset));
-            self.samples.retain(|(t, _)| now_ms - t <= 100.0);
+            if st.fling && (dy * st.pixel_unit).abs() <= st.fling_max_step {
+                self.last_precise_ms = Some(now_ms);
+                self.samples.push((now_ms, self.offset));
+                self.samples.retain(|(t, _)| now_ms - t <= 100.0);
+            } else {
+                self.last_precise_ms = None;
+                self.samples.clear();
+            }
         } else {
             self.offset -= dy * st.line_px;
             self.samples.clear();
@@ -260,7 +279,8 @@ mod tests {
 
     #[test]
     fn precise_flick_flings_and_comes_to_rest() {
-        let (mut s, st) = sv();
+        let (mut s, mut st) = sv();
+        st.fling = true;
         for i in 0..5 {
             s.wheel(-1.0, true, i as f64 * 10.0, &st); // 20 px / 10 ms = 2000 px/s
         }
@@ -275,6 +295,27 @@ mod tests {
         }
         assert!(s.offset > at_release + 50.0, "inertia carried it on: {}", s.offset);
         assert!(s.offset <= s.max());
+    }
+
+    #[test]
+    fn wheel_notches_and_no_fling_style_follow_deltas_exactly() {
+        let (mut s, mut st) = sv();
+        st.fling = true;
+        // 100 px notches (browser wheel, pixel mode) never fling.
+        s.wheel(-5.0, true, 0.0, &st);
+        s.wheel(-5.0, true, 16.0, &st);
+        assert_eq!(s.offset, 200.0);
+        assert!(!s.animating());
+        assert!(!s.tick(200.0, &st));
+        assert_eq!(s.offset, 200.0);
+        // fling off: touchpad samples move 1:1 and stop with the hand.
+        st.fling = false;
+        for i in 0..5 {
+            s.wheel(-1.0, true, 300.0 + i as f64 * 10.0, &st);
+        }
+        assert_eq!(s.offset, 300.0);
+        assert!(!s.tick(500.0, &st));
+        assert_eq!(s.offset, 300.0);
     }
 
     #[test]
