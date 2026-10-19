@@ -83,6 +83,32 @@ pub struct MessageView<'a> {
     pub quote: Option<Quote<'a>>,
     /// Body runs.
     pub body: &'a [Span],
+    /// Reaction badge on the bubble's top corner (empty = none).
+    pub reactions: &'a [ReactionView<'a>],
+    /// The pointer rests on the badge: it widens to show who reacted (CSS `.rx:hover .rw`).
+    pub rx_hover: bool,
+}
+
+/// One reaction key in a message's badge.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReactionView<'a> {
+    /// The emoji (or text) key.
+    pub key: &'a str,
+    /// How many reacted with it.
+    pub count: u32,
+    /// The viewer is among them (the badge gets the `mine` border).
+    pub mine: bool,
+    /// Who reacted, shown while the badge is hovered (`You, peer-b`).
+    pub who: &'a str,
+}
+
+/// Where a message's reaction badge and its pills sit (for hit-testing).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BadgeLayout {
+    /// The whole badge.
+    pub rect: Rect,
+    /// One rect per reaction key, in order.
+    pub pills: Vec<Rect>,
 }
 
 /// Metrics and colours (defaults: the HQ web `.msg` computed style).
@@ -120,6 +146,21 @@ pub struct ThreadStyle {
     pub sys_margin: f64,
     pub metrics: FontMetrics,
     pub family: &'static str,
+    /// Reaction badge (style.css round 21 `.rx` / `.rpill` / `.rn` / `.rw`): the extra gap above
+    /// a message with reactions (`.msg.hasrx{margin-top:16px}`), badge offset above the bubble
+    /// top, height, horizontal padding, overhang past the bubble's corner, colours.
+    pub rx_gap: f64,
+    pub rx_top: f64,
+    pub rx_h: f64,
+    pub rx_pad: f64,
+    pub rx_out: f64,
+    pub rx_bg: &'static str,
+    pub rx_border_mine: &'static str,
+    pub rx_px: f64,
+    pub rx_n_px: f64,
+    pub rx_n_fg: &'static str,
+    pub rx_who_px: f64,
+    pub rx_who_fg: &'static str,
 }
 
 impl Default for ThreadStyle {
@@ -157,6 +198,18 @@ impl Default for ThreadStyle {
             sys_margin: 6.0,
             metrics: crate::ui::css_text::INTER,
             family: "Inter, sans-serif",
+            rx_gap: 16.0,
+            rx_top: 16.0,
+            rx_h: 24.0,
+            rx_pad: 7.0,
+            rx_out: 10.0,
+            rx_bg: "#1f1f1f",
+            rx_border_mine: "#353535",
+            rx_px: 13.0,
+            rx_n_px: 12.0,
+            rx_n_fg: "#d0d0d0",
+            rx_who_px: 12.0,
+            rx_who_fg: "#d6d6d6",
         }
     }
 }
@@ -377,6 +430,87 @@ pub fn draw_message(ctx: &mut dyn RenderContext, x: f64, y: f64, v: &MessageView
         }
         yy += st.lh;
     }
+    draw_badge(ctx, x, y, v, l, st);
+}
+
+fn badge_items(ctx: &mut dyn RenderContext, v: &MessageView<'_>, st: &ThreadStyle) -> (f64, Vec<(f64, f64)>, f64) {
+    // flex row, gap 1px: per key a pill (padding 0 1px) + its `.rw` names (hover only,
+    // margin 0 6px 0 3px), then the total `.rn` (padding 0 2px 0 3px) when it is above 1
+    // and the badge is not hovered.
+    let mut x = st.rx_pad;
+    let mut out = Vec::new();
+    for (i, r) in v.reactions.iter().enumerate() {
+        if i > 0 {
+            x += 1.0;
+        }
+        ctx.set_font(&font(st, 400, st.rx_px));
+        let w = ctx.measure_text(r.key) + 2.0;
+        let who_w = if v.rx_hover && !r.who.is_empty() {
+            ctx.set_font(&font(st, 400, st.rx_who_px));
+            ctx.measure_text(r.who).min(220.0) + 9.0
+        } else {
+            0.0
+        };
+        out.push((x, w));
+        x += w + who_w;
+    }
+    let tot: u32 = v.reactions.iter().map(|r| r.count).sum();
+    let mut n_w = 0.0;
+    if tot > 1 && !v.rx_hover {
+        ctx.set_font(&font(st, 600, st.rx_n_px));
+        n_w = ctx.measure_text(&tot.to_string()) + 5.0;
+        x += 1.0 + n_w;
+    }
+    (x + st.rx_pad, out, n_w)
+}
+
+/// The reaction badge of a message whose bubble's top-left is `(x, y)` (`None` without
+/// reactions): own messages hang it off the left corner, others' off the right one.
+pub fn reaction_badge(ctx: &mut dyn RenderContext, x: f64, y: f64, v: &MessageView<'_>, l: &MessageLayout, st: &ThreadStyle) -> Option<BadgeLayout> {
+    if v.reactions.is_empty() {
+        return None;
+    }
+    let (w, items, _) = badge_items(ctx, v, st);
+    let bx = if v.mine { x - st.rx_out } else { x + l.w + st.rx_out - w };
+    let by = y - st.rx_top;
+    Some(BadgeLayout { rect: Rect::new(bx, by, w, st.rx_h), pills: items.iter().map(|(px, pw)| Rect::new(bx + px, by, *pw, st.rx_h)).collect() })
+}
+
+fn draw_badge(ctx: &mut dyn RenderContext, x: f64, y: f64, v: &MessageView<'_>, l: &MessageLayout, st: &ThreadStyle) {
+    let Some(b) = reaction_badge(ctx, x, y, v, l, st) else { return };
+    let (_, items, n_w) = badge_items(ctx, v, st);
+    let r = b.rect;
+    let mine = v.reactions.iter().any(|x| x.mine);
+    // box-shadow 0 2px 8px #0006, 1px border (transparent unless one is the viewer's).
+    ctx.set_shadow(0.0, 2.0, 8.0, "rgba(0,0,0,0.4)");
+    path_round_rect(ctx, r, r.height / 2.0);
+    ctx.set_fill_color(if mine { st.rx_border_mine } else { st.rx_bg });
+    ctx.fill();
+    ctx.clear_shadow();
+    if mine {
+        path_round_rect(ctx, Rect::new(r.x + 1.0, r.y + 1.0, r.width - 2.0, r.height - 2.0), r.height / 2.0 - 1.0);
+        ctx.set_fill_color(st.rx_bg);
+        ctx.fill();
+    }
+    let lh = st.rx_h - 2.0;
+    for (i, (px, pw)) in items.iter().enumerate() {
+        let rv = &v.reactions[i];
+        ctx.set_font(&font(st, 400, st.rx_px));
+        ctx.set_fill_color("#ffffff");
+        fill_text_css(ctx, rv.key, r.x + px + 1.0, r.y + 1.0, st.rx_px, lh, st.metrics, TextAlign::Left);
+        if v.rx_hover && !rv.who.is_empty() {
+            ctx.set_font(&font(st, 400, st.rx_who_px));
+            ctx.set_fill_color(st.rx_who_fg);
+            let who = ellipsize(ctx, rv.who, 220.0);
+            fill_text_css(ctx, &who, r.x + px + pw + 3.0, r.y + 1.0, st.rx_who_px, lh, st.metrics, TextAlign::Left);
+        }
+    }
+    if n_w > 0.0 {
+        let tot: u32 = v.reactions.iter().map(|r| r.count).sum();
+        ctx.set_font(&font(st, 600, st.rx_n_px));
+        ctx.set_fill_color(st.rx_n_fg);
+        fill_text_css(ctx, &tot.to_string(), r.x + r.width - st.rx_pad - n_w + 3.0, r.y + 1.0, st.rx_n_px, lh, st.metrics, TextAlign::Left);
+    }
 }
 
 /// Height of a system line including its vertical margins.
@@ -395,6 +529,30 @@ pub fn draw_sys(ctx: &mut dyn RenderContext, col: Rect, y: f64, text: &str, st: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reaction_badge_hangs_off_the_outer_corner() {
+        let mut ctx = crate::testing::RecordingRenderContext::with_char_width(8.0);
+        let st = ThreadStyle::default();
+        let body = vec![Span::plain("hello")];
+        let rx = [ReactionView { key: "+", count: 2, mine: false, who: "a, b" }];
+        let mut v = MessageView { mine: false, header: None, quote: None, body: &body, reactions: &rx, rx_hover: false };
+        let l = layout_message(&mut ctx, &v, 600.0, &st);
+        let b = reaction_badge(&mut ctx, 100.0, 200.0, &v, &l, &st).unwrap();
+        // them: right edge 10px past the bubble's right edge, 16px above its top, 24 tall
+        assert_eq!(b.rect.x + b.rect.width, 100.0 + l.w + 10.0);
+        assert_eq!((b.rect.y, b.rect.height), (184.0, 24.0));
+        // pill (8 + 2) + gap 1 + total "2" (8 + 5) + padding 7 * 2
+        assert_eq!(b.rect.width, 7.0 + 10.0 + 1.0 + 13.0 + 7.0);
+        v.mine = true;
+        let b = reaction_badge(&mut ctx, 100.0, 200.0, &v, &l, &st).unwrap();
+        assert_eq!(b.rect.x, 90.0);
+        // hover: names instead of the total
+        v.rx_hover = true;
+        let b2 = reaction_badge(&mut ctx, 100.0, 200.0, &v, &l, &st).unwrap();
+        assert_eq!(b2.rect.width, 7.0 + 10.0 + (4.0 * 8.0 + 9.0) + 7.0);
+        assert!(reaction_badge(&mut ctx, 0.0, 0.0, &MessageView { reactions: &[], ..v }, &l, &st).is_none());
+    }
+
     #[test]
     fn mentions_split() {
         let s = mention_spans("@a1.b x (@cc) e@mail", "#58a6ff", 500);
