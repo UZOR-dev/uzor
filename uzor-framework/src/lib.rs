@@ -78,6 +78,7 @@ pub use types::command::{
     WindowCmd,
 };
 pub use types::controls::{ControlButton, ControlsPlacement, FloatingControls, WindowControlsStyle};
+pub use types::scroll::{ScrollStyle, ScrollView};
 pub use types::error::FrameworkError;
 pub use types::frame::{FrameRequest, RegionPlan, RegionSpec, TimerOwner, Wake, WindowSurface};
 pub use types::ids::{

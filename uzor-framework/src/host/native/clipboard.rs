@@ -33,6 +33,23 @@ impl NativeClipboard {
         }
     }
 
+    /// Write an image (RGBA8).
+    pub fn write_image(&mut self, img: &crate::types::bus::ClipboardImage) {
+        let Some(cb) = self.inner.as_mut() else {
+            return;
+        };
+        let data = arboard::ImageData { width: img.width as usize, height: img.height as usize, bytes: std::borrow::Cow::Borrowed(&img.rgba) };
+        if let Err(e) = cb.set_image(data) {
+            log::warn!("clipboard image write failed: {e}");
+        }
+    }
+
+    /// The clipboard image, if it holds one.
+    pub fn read_image(&mut self) -> Option<crate::types::bus::ClipboardImage> {
+        let img = self.inner.as_mut()?.get_image().ok()?;
+        Some(crate::types::bus::ClipboardImage { width: img.width as u32, height: img.height as u32, rgba: img.bytes.into_owned().into() })
+    }
+
     /// Read text for a `ClipboardRead` ticket.
     pub fn read(&mut self, ticket: Ticket) -> ClipboardResult {
         let text = self.inner.as_mut().and_then(|cb| match cb.get_text() {

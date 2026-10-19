@@ -308,6 +308,8 @@ pub enum WindowCommand {
     SetImePurpose(ImePurpose),
     /// Write text to the system clipboard.
     ClipboardWrite(String),
+    /// Write an image to the system clipboard.
+    ClipboardWriteImage(crate::types::bus::ClipboardImage),
     /// Read the clipboard; the host answers with `InputEvent::Clipboard`
     /// carrying the same ticket.
     ClipboardRead(Ticket),

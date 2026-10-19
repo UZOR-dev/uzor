@@ -105,6 +105,8 @@ pub fn execute(window: &mut dyn WebSurface, cmd: WindowCommand) -> Option<WebFol
             Some(WebFollowUp::OuterRectEcho { position, size })
         }
         WindowCommand::ClipboardWrite(text) => Some(WebFollowUp::ClipboardWrite(text)),
+        // Image writes need the async Clipboard API; not wired on the web yet.
+        WindowCommand::ClipboardWriteImage(_) => None,
         WindowCommand::ClipboardRead(ticket) => Some(WebFollowUp::ClipboardRead(ticket)),
         WindowCommand::FocusWindow => {
             window.focus();

@@ -52,6 +52,8 @@ pub enum InputEvent {
     Drop(DropInput),
     /// Answer to a `WindowCommand::ClipboardRead`.
     Clipboard(ClipboardResult),
+    /// The clipboard held an image instead of text when a paste read it.
+    ClipboardImage(ClipboardImage),
     /// The host woke the loop at the instant the kernel asked for.
     Timer(TimerWake),
     /// Window lifecycle.
@@ -227,6 +229,17 @@ pub struct DroppedFile {
     pub path: Option<PathBuf>,
     /// File contents (web only), shared immutably.
     pub bytes: Option<Arc<[u8]>>,
+}
+
+/// An RGBA8 (straight alpha) clipboard image.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClipboardImage {
+    /// Width, px.
+    pub width: u32,
+    /// Height, px.
+    pub height: u32,
+    /// `width * height * 4` bytes.
+    pub rgba: Arc<[u8]>,
 }
 
 /// Answer to `WindowCommand::ClipboardRead`.

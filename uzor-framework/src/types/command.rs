@@ -228,6 +228,8 @@ pub enum ThemeCmd {
 pub enum ClipboardCmd {
     /// Write text to the clipboard.
     Write(String),
+    /// Write an image to the clipboard.
+    WriteImage(crate::types::bus::ClipboardImage),
 }
 
 // ---------------------------------------------------------------------------

@@ -34,3 +34,4 @@ pub mod overlay_model;
 pub mod snapshot;
 pub mod spec;
 pub mod window;
+pub mod scroll;

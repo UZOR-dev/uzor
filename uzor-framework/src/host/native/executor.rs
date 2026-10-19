@@ -18,6 +18,8 @@ use crate::types::window::{
 pub enum ExecutorFollowUp {
     /// Write text to the system clipboard.
     ClipboardWrite(String),
+    /// Write an image.
+    ClipboardWriteImage(crate::types::bus::ClipboardImage),
     /// Read the clipboard; answer with this ticket.
     ClipboardRead(Ticket),
     /// Capture the window; answer with this ticket.
@@ -212,6 +214,7 @@ pub fn execute(window: &mut dyn OsWindow, cmd: WindowCommand) -> Option<Executor
             None
         }
         WindowCommand::ClipboardWrite(text) => Some(ExecutorFollowUp::ClipboardWrite(text)),
+        WindowCommand::ClipboardWriteImage(img) => Some(ExecutorFollowUp::ClipboardWriteImage(img)),
         WindowCommand::ClipboardRead(ticket) => Some(ExecutorFollowUp::ClipboardRead(ticket)),
         WindowCommand::FocusWindow => {
             window.focus_window();

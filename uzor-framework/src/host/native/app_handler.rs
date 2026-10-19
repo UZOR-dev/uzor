@@ -147,9 +147,15 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
         };
         match follow {
             ExecutorFollowUp::ClipboardWrite(text) => self.clipboard.write(&text),
+            ExecutorFollowUp::ClipboardWriteImage(img) => self.clipboard.write_image(&img),
             ExecutorFollowUp::ClipboardRead(ticket) => {
                 let result = self.clipboard.read(ticket);
+                // No text: an image paste is the app's (e.g. an attachment chip).
+                let image = if result.text.is_none() { self.clipboard.read_image() } else { None };
                 self.push(id, InputEvent::Clipboard(result));
+                if let Some(img) = image {
+                    self.push(id, InputEvent::ClipboardImage(img));
+                }
             }
             ExecutorFollowUp::Screenshot(ticket) => self.take_screenshot(id, ticket),
             ExecutorFollowUp::Spawn(spec) => {

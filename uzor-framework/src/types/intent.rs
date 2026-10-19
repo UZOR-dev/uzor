@@ -34,6 +34,8 @@ pub enum Intent<S: Spec> {
     Text(TextIntent),
     /// Files dropped on a widget (InputEngine).
     Drop(DropIntent),
+    /// A paste found an image on the clipboard.
+    PasteImage(PastedImage),
     /// An app timer armed with `CadenceCmd::WakeAt` fired (CadenceEngine).
     Timer(u64),
     /// A screenshot the app requested, as PNG bytes.
@@ -61,6 +63,7 @@ impl<S: Spec> Clone for Intent<S> {
             Intent::Window(i) => Intent::Window(i.clone()),
             Intent::Text(i) => Intent::Text(i.clone()),
             Intent::Drop(i) => Intent::Drop(i.clone()),
+            Intent::PasteImage(i) => Intent::PasteImage(i.clone()),
             Intent::Timer(n) => Intent::Timer(*n),
             Intent::Screenshot { ticket, png } => Intent::Screenshot {
                 ticket: *ticket,
@@ -81,6 +84,7 @@ impl<S: Spec> fmt::Debug for Intent<S> {
             Intent::Window(i) => f.debug_tuple("Window").field(i).finish(),
             Intent::Text(i) => f.debug_tuple("Text").field(i).finish(),
             Intent::Drop(i) => f.debug_tuple("Drop").field(i).finish(),
+            Intent::PasteImage(i) => f.debug_struct("PasteImage").field("w", &i.image.width).field("h", &i.image.height).finish(),
             Intent::Timer(n) => f.debug_tuple("Timer").field(n).finish(),
             Intent::Screenshot { ticket, png } => f
                 .debug_struct("Screenshot")
@@ -377,6 +381,34 @@ pub enum DropIntent {
         /// The files.
         files: Vec<DroppedFile>,
     },
+    /// Files were dropped where no widget is (the window itself).
+    Window {
+        /// Its window.
+        win: WindowId,
+        /// The files.
+        files: Vec<DroppedFile>,
+    },
+    /// A drag with a file is over the window (show a drop affordance).
+    Hovering {
+        /// Its window.
+        win: WindowId,
+        /// The file.
+        file: DroppedFile,
+    },
+    /// The drag left the window or was aborted.
+    Left {
+        /// Its window.
+        win: WindowId,
+    },
+}
+
+/// An image pasted from the system clipboard (no text was on it).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PastedImage {
+    /// Its window.
+    pub win: WindowId,
+    /// The image.
+    pub image: crate::types::bus::ClipboardImage,
 }
 
 /// Input nothing consumed.

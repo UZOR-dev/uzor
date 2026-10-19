@@ -18,6 +18,7 @@ mod composites;
 mod host;
 pub mod lm;
 mod paint;
+mod scroll;
 pub mod raw;
 
 #[cfg(test)]
@@ -27,3 +28,4 @@ pub use atomics::{checkbox, chevron, separator, text, toggle, tooltip};
 pub use button::button;
 pub use composites::{chrome, context_menu, dropdown, modal, panel, popup, sidebar, toolbar};
 pub use host::ContentCx;
+pub use scroll::{scroll_begin, scroll_end};

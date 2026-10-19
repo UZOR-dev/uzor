@@ -1206,3 +1206,20 @@ fn text_ime_clipboard_flow() {
         h.runtime().app().intents
     );
 }
+
+/// A one-finger tap clicks like the mouse (touch routes through the pointer path).
+#[test]
+fn touch_tap_clicks_content() {
+    use crate::types::bus::TouchInput;
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    h.runtime_mut().app_mut().panel_widgets.push((wid("btn"), Rect::new(10.0, 100.0, 60.0, 24.0), Sense::CLICK));
+    h.advance(0.017);
+    h.input(win, InputEvent::Touch(TouchInput::Start { id: 7, pos: Point::new(20.0, 112.0) }));
+    h.advance(0.017);
+    h.input(win, InputEvent::Touch(TouchInput::End { id: 7, pos: Point::new(20.0, 112.0) }));
+    h.advance(0.017);
+    h.advance(0.017);
+    let app = h.runtime().app();
+    assert!(app.seen_clicks.iter().any(|(id, _)| *id == wid("btn")), "tap did not click: {:?}", app.seen_clicks);
+}

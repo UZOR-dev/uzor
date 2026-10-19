@@ -193,6 +193,8 @@ struct PointerAccum {
     context: Option<(f64, f64)>,
     mods: ModifierKeys,
     scroll: (f64, f64),
+    /// The scroll came (at least partly) as pixel deltas (trackpad / smooth wheel).
+    scroll_precise: bool,
 }
 
 /// The focus the engine restores when a scope closes.
@@ -706,7 +708,10 @@ impl PerWindowInput {
     fn wheel(&mut self, input: WheelInput) -> Option<WidgetId> {
         let (dx, dy) = match input.delta {
             WheelDelta::Lines { x, y } => (x, y),
-            WheelDelta::Pixels { x, y } => (x / WHEEL_PIXELS_PER_LINE, y / WHEEL_PIXELS_PER_LINE),
+            WheelDelta::Pixels { x, y } => {
+                self.pointer.scroll_precise = true;
+                (x / WHEEL_PIXELS_PER_LINE, y / WHEEL_PIXELS_PER_LINE)
+            }
         };
         self.pointer.pos = Some((input.pos.x, input.pos.y));
         self.pointer.mods = input.mods;
@@ -1001,6 +1006,7 @@ impl PerWindowInput {
         state.pointer.clicked = self.pointer.clicked.take();
         state.modifiers = self.pointer.mods;
         state.scroll_delta = std::mem::take(&mut self.pointer.scroll);
+        self.pointer.scroll_precise = false;
         self.pointer.context = None;
         state.time = now.get();
         self.pointer.prev_pos = self.pointer.pos;
@@ -1669,6 +1675,12 @@ impl<'a> InputEngineView<'a> {
     /// moves it into the coordinator's frame input.
     pub fn pending_scroll(&self, win: WindowId) -> (f64, f64) {
         self.w(win).map_or((0.0, 0.0), |w| w.pointer.scroll)
+    }
+
+    /// Whether [`Self::pending_scroll`] came from pixel deltas (trackpad,
+    /// smooth wheel): scroll containers then follow 1:1 and fling on release.
+    pub fn pending_scroll_precise(&self, win: WindowId) -> bool {
+        self.w(win).is_some_and(|w| w.pointer.scroll_precise)
     }
 
     /// Last pointer position in window coordinates and whether a button is

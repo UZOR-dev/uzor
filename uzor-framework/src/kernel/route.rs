@@ -3,6 +3,7 @@
 //! names appended as the event crosses module boundaries, asserted
 //! `len() <= 3` by the hop-count tests.
 
+use uzor::CursorIcon;
 use uzor::render::InvalidateBits;
 use uzor::input::{KeyboardShortcut, MouseButton};
 
@@ -36,16 +37,71 @@ impl<S: Spec> Kernel<S> {
                 InputEvent::Key(input) => self.route_key(now, win, input),
                 InputEvent::Ime(input) => self.route_ime(now, win, input),
                 InputEvent::Clipboard(result) => self.route_clipboard(now, win, result),
+                InputEvent::ClipboardImage(image) => {
+                    self.outbox.intents.push(Intent::PasteImage(crate::types::intent::PastedImage { win, image }));
+                }
                 InputEvent::Drop(input) => self.route_drop(now, win, input),
                 // Lifecycle and host facts are phase 2's; the wheel drains
                 // by clock in phase 4a regardless of the wake echo.
                 InputEvent::Window(_) | InputEvent::Host(_) | InputEvent::Timer(_) => {}
-                // The bus accepts touch; no engine door exists for it yet
-                // (F3 built none), so there is nothing honest to route it
-                // to. Recorded gap; a mobile / web brief will wire it.
-                InputEvent::Touch(_) => {}
+                InputEvent::Touch(t) => self.route_touch(now, win, t),
             }
             self.trace_max = self.trace_max.max(self.trace.len());
+        }
+    }
+
+    /// Touch: the first contact drives the primary pointer (press, move,
+    /// release: taps click, drags drag); while a second contact is down the
+    /// contacts' mean motion scrolls as pixel wheel deltas (two-finger pan).
+    fn route_touch(&mut self, now: Seconds, win: WindowId, t: crate::types::bus::TouchInput) {
+        use crate::types::bus::{TouchInput as T, WheelDelta, WheelInput};
+        let mods = uzor::input::ModifierKeys::default();
+        let mean = |v: &[(u64, crate::types::window::Point)]| {
+            let n = v.len().max(1) as f64;
+            crate::types::window::Point::new(v.iter().map(|c| c.1.x).sum::<f64>() / n, v.iter().map(|c| c.1.y).sum::<f64>() / n)
+        };
+        match t {
+            T::Start { id, pos } => {
+                self.touches.push((id, pos));
+                if self.touches.len() == 1 {
+                    self.route_pointer(now, win, PointerInput::Moved { pos, mods });
+                    self.route_pointer(now, win, PointerInput::Down { pos, button: MouseButton::Left, mods });
+                } else if self.touches.len() == 2 {
+                    // A pan, not a drag: release the primary without a click.
+                    self.route_pointer(now, win, PointerInput::Cancelled);
+                }
+            }
+            T::Move { id, pos } => {
+                let before = mean(&self.touches);
+                let primary = self.touches.first().map(|c| c.0) == Some(id);
+                if let Some(c) = self.touches.iter_mut().find(|c| c.0 == id) {
+                    c.1 = pos;
+                }
+                if self.touches.len() >= 2 {
+                    let after = mean(&self.touches);
+                    let (dx, dy) = (after.x - before.x, after.y - before.y);
+                    if dx != 0.0 || dy != 0.0 {
+                        self.route_wheel(now, win, WheelInput { pos: after, delta: WheelDelta::Pixels { x: dx, y: dy }, mods });
+                    }
+                } else if primary {
+                    self.route_pointer(now, win, PointerInput::Moved { pos, mods });
+                }
+            }
+            T::End { id, pos } => {
+                let n = self.touches.len();
+                let primary = self.touches.first().map(|c| c.0) == Some(id);
+                self.touches.retain(|c| c.0 != id);
+                if n == 1 && primary {
+                    self.route_pointer(now, win, PointerInput::Up { pos, button: MouseButton::Left, mods });
+                }
+            }
+            T::Cancel { id } => {
+                let n = self.touches.len();
+                self.touches.retain(|c| c.0 != id);
+                if n == 1 {
+                    self.route_pointer(now, win, PointerInput::Cancelled);
+                }
+            }
         }
     }
 
@@ -155,7 +211,7 @@ impl<S: Spec> Kernel<S> {
                     self.invalidate(win, None, InvalidateBits::ALL);
                 }
             }
-            self.update_cursor(now, win, &hit);
+            self.update_cursor(now, win, &hit, pos);
             let primary_down = matches!(
                 input,
                 PointerInput::Down {
@@ -401,8 +457,16 @@ impl<S: Spec> Kernel<S> {
     fn route_drop(&mut self, now: Seconds, win: WindowId, input: DropInput) {
         let _ = now;
         self.trace_push("route::drop");
-        let DropInput::Dropped(file) = input else {
-            return;
+        let file = match input {
+            DropInput::Dropped(f) => f,
+            DropInput::Hovered(file) => {
+                self.outbox.intents.push(Intent::Drop(DropIntent::Hovering { win, file }));
+                return;
+            }
+            DropInput::Cancelled => {
+                self.outbox.intents.push(Intent::Drop(DropIntent::Left { win }));
+                return;
+            }
         };
         let target = self
             .input
@@ -415,20 +479,21 @@ impl<S: Spec> Kernel<S> {
                     .coordinator(win)
                     .and_then(|c| c.hit_test_now(x, y))
             });
-        if let Some(target) = target {
-            self.outbox.intents.push(Intent::Drop(DropIntent::Files {
-                win,
-                target,
-                files: vec![file],
-            }));
+        match target {
+            Some(target) => self.outbox.intents.push(Intent::Drop(DropIntent::Files { win, target, files: vec![file] })),
+            None => self.outbox.intents.push(Intent::Drop(DropIntent::Window { win, files: vec![file] })),
         }
     }
 
     /// The cursor a layout hit suggests, applied when it changes (design
     /// §3.8's cursor row; the engine-only `CursorChanged` effect does not
     /// exist, so the route phase maps `LayoutHit::cursor` itself).
-    fn update_cursor(&mut self, now: Seconds, win: WindowId, hit: &LayoutHit) {
-        let Some(icon) = hit.cursor() else { return };
+    fn update_cursor(&mut self, now: Seconds, win: WindowId, hit: &LayoutHit, pos: crate::types::window::Point) {
+        // Layout zones decide first; over content the widget under the pointer does.
+        let icon = match hit.cursor() {
+            Some(i) => i,
+            None => self.input.view().coordinator(win).map_or(CursorIcon::Default, |c| content_cursor(c, pos)),
+        };
         let current = self.windows.view().window(win).map(|w| w.cursor());
         if current != Some(icon) {
             let fx = self.windows.apply(WindowOp::Enqueue {
@@ -441,6 +506,22 @@ impl<S: Spec> Kernel<S> {
 
     fn trace_push(&mut self, hop: &'static str) {
         self.trace.push(hop);
+    }
+}
+
+/// The cursor a content widget implies: text fields and `Custom` surfaces
+/// (terminals, selectable text) get the I-beam, clickable atoms the hand,
+/// scrollbar / drag handles the arrow, nothing the arrow.
+pub(crate) fn content_cursor(c: &uzor::input::InputCoordinator, pos: crate::types::window::Point) -> CursorIcon {
+    use uzor::input::WidgetKind as K;
+    let Some(id) = c.hit_test_now(pos.x, pos.y) else { return CursorIcon::Default };
+    if c.text_fields().field_state(&id).is_some() {
+        return CursorIcon::Text;
+    }
+    match c.widget_kind(&id) {
+        Some(K::Custom) => CursorIcon::Text,
+        Some(K::Button | K::Checkbox | K::CloseButton | K::ColorSwatch | K::DropdownTrigger | K::Item | K::Radio | K::Toggle | K::ChromeTab | K::ScrollChevron) => CursorIcon::PointingHand,
+        _ => CursorIcon::Default,
     }
 }
 

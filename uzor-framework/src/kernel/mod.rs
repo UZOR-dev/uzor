@@ -125,6 +125,8 @@ pub(crate) struct Kernel<S: Spec> {
     trace: Vec<&'static str>,
     /// Longest per-event trace seen so far.
     trace_max: usize,
+    /// Live touch contacts (id -> last position); the first is the pointer.
+    touches: Vec<(u64, crate::types::window::Point)>,
     /// Debug-only phase order assertions (design §4.2 `PhaseClock`).
     clock: PhaseClock,
 }
@@ -147,6 +149,7 @@ impl<S: Spec> Kernel<S> {
             last_frame: BTreeMap::new(),
             trace: Vec::new(),
             trace_max: 0,
+            touches: Vec::new(),
             clock: PhaseClock::new(),
         }
     }

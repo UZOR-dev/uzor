@@ -171,6 +171,7 @@ pub struct VisualView<S: Spec> {
     pub(crate) focused: Option<WidgetId>,
     pub(crate) clicked: Vec<(WidgetId, u8)>,
     pub(crate) scroll: (f64, f64),
+    pub(crate) scroll_precise: bool,
     pub(crate) pointer: Option<(f64, f64)>,
     pub(crate) button_down: bool,
     pub(crate) context: Option<(f64, f64)>,
@@ -187,6 +188,7 @@ impl<S: Spec> Default for VisualView<S> {
             focused: None,
             clicked: Vec::new(),
             scroll: (0.0, 0.0),
+            scroll_precise: false,
             pointer: None,
             button_down: false,
             context: None,
@@ -250,6 +252,11 @@ impl<S: Spec> VisualView<S> {
     /// Scroll delta accumulated for this frame, in lines.
     pub fn scroll(&self) -> (f64, f64) {
         self.scroll
+    }
+
+    /// The frame's scroll came from pixel deltas (trackpad / smooth wheel).
+    pub fn scroll_precise(&self) -> bool {
+        self.scroll_precise
     }
 
     /// Last pointer position in window coordinates, if known.

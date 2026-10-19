@@ -304,7 +304,15 @@ struct WindowLayout<P: DockPanel> {
     expand: Option<expand::Expand>,
     /// `Some` for a drag-out micro-window (with the chrome it wears).
     micro: Option<DragOutChrome>,
+    /// Clock of the pointer op being handled (seconds).
+    now: f64,
+    /// Last primary press on the window-drag zone: double-press toggles maximize.
+    drag_press: Option<(f64, Point)>,
 }
+
+/// Two drag-zone presses within this time and distance are a double-click.
+const DOUBLE_PRESS_S: f64 = 0.45;
+const DOUBLE_PRESS_PX: f64 = 5.0;
 
 impl<P: DockPanel> WindowLayout<P> {
     fn new(caps: HostCaps, viewport: Rect, policy: &LayoutPolicy) -> Self {
@@ -325,6 +333,8 @@ impl<P: DockPanel> WindowLayout<P> {
             solved: LayoutSolved::default(),
             dock,
             session: None,
+            now: 0.0,
+            drag_press: None,
             dock_rev: Revision::ZERO,
             wire,
             outer: None,
@@ -472,6 +482,9 @@ impl<P: DockPanel> LayoutEngine<P> {
                 self.dragout_pointer(win, event);
                 let outer_before = self.windows.get(&win).and_then(|w| w.outer);
                 let mut out = None;
+                if let Some(w) = self.windows.get_mut(&win) {
+                    w.now = now.get();
+                }
                 self.edit(win, &mut fx, |w, ctx, fx| {
                     pointer(win, w, ctx, event, fx, &mut out)
                 });
@@ -870,6 +883,19 @@ fn press<P: DockPanel>(
                 cmd: WindowCommand::DragResizeWindow(dir),
             });
             None
+        }
+        LayoutHit::Chrome(uzor::widgets::composite::chrome::ChromeHit::Drag) => {
+            // Double-click on the drag zone = maximize / restore (all platforms'
+            // title-bar convention); the first press still starts the OS drag.
+            let double = w.drag_press.is_some_and(|(t, p)| w.now - t <= DOUBLE_PRESS_S && (p.x - pos.x).abs() <= DOUBLE_PRESS_PX && (p.y - pos.y).abs() <= DOUBLE_PRESS_PX);
+            if double {
+                w.drag_press = None;
+                fx.push(LayoutEffect::Chrome { win, action: uzor::widgets::composite::chrome::ChromeAction::MaximizeRestore });
+                None
+            } else {
+                w.drag_press = Some((w.now, pos));
+                chrome::press(win, uzor::widgets::composite::chrome::ChromeHit::Drag, fx)
+            }
         }
         LayoutHit::Chrome(part) => chrome::press(win, part, fx),
         LayoutHit::Splitter { sep, .. } => {

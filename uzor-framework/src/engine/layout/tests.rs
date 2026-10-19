@@ -1562,4 +1562,17 @@ fn floating_controls_hit_above_content_with_a_drag_band() {
     // Below the band is content; the bezel still wins at the border.
     assert_ne!(h(500.0, 60.0), LayoutHit::Chrome(ChromeHit::Drag));
     assert_eq!(h(2.0, 300.0), LayoutHit::Bezel(ResizeDirection::West));
+    // Drag band: a press drags the window, a second press soon after toggles maximize.
+    let at = |e: &mut E, t: f64, x: f64| {
+        e.apply(LayoutOp::Pointer { win: W, now: Seconds(t), event: DockPointer::Down { pos: Point::new(x, 20.0), button: MouseButton::Left } })
+    };
+    let max = |fx: &LayoutEffects| fx.iter().any(|f| matches!(f, LayoutEffect::Chrome { action: uzor::widgets::composite::chrome::ChromeAction::MaximizeRestore, .. }));
+    let drag = |fx: &LayoutEffects| fx.iter().any(|f| matches!(f, LayoutEffect::Window { cmd: WindowCommand::DragWindow, .. }));
+    let f1 = at(&mut e, 10.0, 500.0);
+    assert!(drag(&f1) && !max(&f1));
+    let f2 = at(&mut e, 10.3, 501.0);
+    assert!(max(&f2) && !drag(&f2), "double-press toggles maximize");
+    let f3 = at(&mut e, 20.0, 500.0);
+    let f4 = at(&mut e, 21.0, 500.0);
+    assert!(!max(&f3) && !max(&f4), "slow presses are two drags");
 }
