@@ -91,6 +91,22 @@ impl<S: Spec> Kernel<S> {
         let fx = self.input.apply(InputOp::BeginFrame { win, now });
         self.conduct_input(now, fx);
 
+        // Rounded window shape (floating controls): clip the whole frame.
+        let shape = self
+            .layout
+            .view()
+            .window(win)
+            .and_then(|wv| wv.chrome_model().floating.clone())
+            .map(|fc| {
+                let (vp, maxed) = self
+                    .windows
+                    .view()
+                    .window(win)
+                    .map_or_else(Default::default, |w| (w.geometry().viewport, w.geometry().maximized));
+                fc.begin_clip(render, vp, maxed);
+            })
+            .is_some();
+
         // -- dock leaves (main layer), chrome strip above them -----------
         {
             let lview = self.layout.view();
@@ -219,6 +235,10 @@ impl<S: Spec> Kernel<S> {
                 let hover = view.pointer.and_then(|p| fc.button_at(viewport, p));
                 fc.paint(render, viewport, maximized, hover, view.button_down);
             }
+        }
+
+        if shape {
+            render.restore();
         }
 
         // Focus ring over whatever registered this frame (the view's focus

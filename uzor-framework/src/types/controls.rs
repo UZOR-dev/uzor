@@ -132,12 +132,17 @@ pub struct FloatingControls {
     /// 1 px outer window border painted inside the viewport edge (`None` =
     /// none). On Windows set `WindowSpec::border_color` too (DWM border).
     pub border: Option<String>,
+    /// Window corner radius, logical px (`0` = square). Compose clips the whole
+    /// frame to it and the border follows it; outside the corners the window
+    /// is transparent when the spec sets `transparent` (X11 with a compositor,
+    /// macOS); on Windows 11 the host asks DWM for rounded corners instead.
+    pub radius: f64,
 }
 
 impl FloatingControls {
     /// Min, max and close in the platform's place, a 40 px drag band.
     pub fn new(style: WindowControlsStyle) -> Self {
-        Self { placement: ControlsPlacement::Auto, style, drag_height: 40.0, show_maximize: true, show_minimize: true, border: None }
+        Self { placement: ControlsPlacement::Auto, style, drag_height: 40.0, show_maximize: true, show_minimize: true, border: None, radius: 8.0 }
     }
 
     /// The buttons and their rects inside `viewport`, in paint order.
@@ -194,15 +199,6 @@ impl FloatingControls {
     /// Paint the buttons. `hover` / `pressed` = the button under the pointer.
     pub fn paint(&self, ctx: &mut dyn RenderContext, viewport: Rect, maximized: bool, hover: Option<ControlButton>, pressed: bool) {
         let s = &self.style;
-        if let Some(c) = &self.border {
-            if !maximized {
-                ctx.set_stroke_color(c);
-                ctx.set_stroke_width(1.0);
-                ctx.begin_path();
-                ctx.rect(viewport.x + 0.5, viewport.y + 0.5, viewport.width - 1.0, viewport.height - 1.0);
-                ctx.stroke();
-            }
-        }
         let left = self.placement.resolve() == ControlsPlacement::Left;
         for (b, r) in self.buttons(viewport) {
             let hot = hover == Some(b);
@@ -223,6 +219,8 @@ impl FloatingControls {
                 (true, ControlButton::Close) => Some(s.close_hover_fill.as_str()),
                 (true, _) if pressed => Some(s.press_fill.as_str()),
                 (true, _) => Some(s.hover_fill.as_str()),
+                // Maximized: no idle fill, the buttons sit on the app surface.
+                (false, _) if maximized => None,
                 (false, _) => s.fill.as_deref(),
             };
             if let Some(f) = fill {
@@ -261,6 +259,36 @@ impl FloatingControls {
                 }
             }
             ctx.stroke();
+        }
+        // Border last so the button fills do not cover it.
+        if let Some(c) = &self.border {
+            if !maximized {
+                ctx.set_stroke_color(c);
+                ctx.set_stroke_width(1.0);
+                ctx.begin_path();
+                let r = (self.radius - 0.5).max(0.0);
+                ctx.rounded_rect(viewport.x + 0.5, viewport.y + 0.5, viewport.width - 1.0, viewport.height - 1.0, r);
+                ctx.stroke();
+            }
+        }
+    }
+}
+
+impl FloatingControls {
+    /// The corner radius to clip with: none while maximized / fullscreen.
+    pub fn clip_radius(&self, maximized: bool) -> f64 {
+        if maximized { 0.0 } else { self.radius.max(0.0) }
+    }
+
+    /// Clip everything painted after this to the rounded window shape. Pair
+    /// with `ctx.restore()`.
+    pub fn begin_clip(&self, ctx: &mut dyn RenderContext, viewport: Rect, maximized: bool) {
+        ctx.save();
+        let r = self.clip_radius(maximized);
+        if r > 0.0 {
+            ctx.begin_path();
+            ctx.rounded_rect(viewport.x, viewport.y, viewport.width, viewport.height, r);
+            ctx.clip();
         }
     }
 }

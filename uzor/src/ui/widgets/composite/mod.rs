@@ -21,6 +21,7 @@ pub mod terminal;
 pub mod dialog;
 pub mod dropdown;
 pub mod frame_view;
+pub mod image_viewer;
 pub mod modal;
 pub mod overflow;
 pub mod panel;

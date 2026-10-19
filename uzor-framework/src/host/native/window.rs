@@ -34,6 +34,8 @@ pub struct NativeWindow {
     pub decorations: bool,
     /// Last maximized state echoed to the framework.
     pub maximized: Option<bool>,
+    /// Spawned transparent: frames clear to fully transparent.
+    pub transparent: bool,
 }
 
 impl NativeWindow {

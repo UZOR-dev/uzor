@@ -123,3 +123,7 @@ name = "demo_web"
 path = "examples/demo/main_web.rs"
 required-features = ["web"]
 crate-type = ["cdylib"]
+
+[[example]]
+name = "image_viewer"
+required-features = ["native"]

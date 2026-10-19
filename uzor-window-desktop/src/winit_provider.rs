@@ -339,7 +339,7 @@ impl SoftwarePresenter for WinitSoftbufferPresenter {
         }
     }
 
-    /// Convert `pixels` (RGBA8) to `0x00RRGGBB` u32 and present.
+    /// Convert `pixels` (premultiplied RGBA8) to `0xAARRGGBB` u32 and present.
     ///
     /// Silently skips the frame for zero dimensions or on surface errors.
     fn present(&mut self, pixels: &[u8], width: u32, height: u32) {
@@ -368,7 +368,10 @@ impl SoftwarePresenter for WinitSoftbufferPresenter {
             let r = pixels[src] as u32;
             let g = pixels[src + 1] as u32;
             let b = pixels[src + 2] as u32;
-            buf[i] = (r << 16) | (g << 8) | b;
+            let a = pixels[src + 3] as u32;
+            // Premultiplied ARGB: the alpha byte is ignored by opaque surfaces
+            // and honoured by 32-bit (transparent) X11 visuals under a compositor.
+            buf[i] = (a << 24) | (r << 16) | (g << 8) | b;
         }
 
         let _ = buf.present();

@@ -58,6 +58,20 @@ pub fn create_window(
         .with_visible(false)
         .with_transparent(spec.transparent);
 
+    // macOS: an undecorated transparent window keeps the system's rounded
+    // corners and shadow by hiding the title bar instead of dropping the frame
+    // (the app's floating controls replace the traffic lights).
+    #[cfg(target_os = "macos")]
+    if !spec.decorations && spec.transparent {
+        use winit::platform::macos::WindowAttributesExtMacOS;
+        attrs = attrs
+            .with_decorations(true)
+            .with_titlebar_transparent(true)
+            .with_title_hidden(true)
+            .with_fullsize_content_view(true)
+            .with_titlebar_buttons_hidden(true);
+    }
+
     if let Some(min) = spec.min_inner_size {
         attrs = attrs.with_min_inner_size(LogicalSize::new(
             f64::from(min.width),
@@ -118,6 +132,7 @@ pub fn create_window(
         mapper: WinitMapper::new(dpr),
         decorations: spec.decorations,
         maximized: None,
+        transparent: spec.transparent,
     })
 }
 

@@ -245,6 +245,12 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
             let Some(mut nw) = self.windows.remove(&wid) else {
                 continue;
             };
+            // A transparent window clears to alpha 0 so what the app leaves
+            // unpainted (rounded corners) shows the desktop.
+            let mut req = req;
+            if nw.transparent {
+                req.background = 0;
+            }
             if let Err(e) = paint_frame(&mut self.runtime, &mut self.hub, &mut nw.render_state, &req)
             {
                 log::warn!("paint failed: {e}");
