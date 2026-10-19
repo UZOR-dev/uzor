@@ -32,6 +32,8 @@ pub struct NativeWindow {
     pub mapper: WinitMapper,
     /// Last known decorations flag (for borderless-resize install).
     pub decorations: bool,
+    /// Last maximized state echoed to the framework.
+    pub maximized: Option<bool>,
 }
 
 impl NativeWindow {

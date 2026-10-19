@@ -117,6 +117,7 @@ pub fn create_window(
         render_state,
         mapper: WinitMapper::new(dpr),
         decorations: spec.decorations,
+        maximized: None,
     })
 }
 

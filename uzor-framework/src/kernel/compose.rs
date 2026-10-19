@@ -207,6 +207,20 @@ impl<S: Spec> Kernel<S> {
             hook_ops.append(&mut hooks.ops);
         }
 
+        // Floating window controls: above the dock and overlays.
+        {
+            let lview = self.layout.view();
+            if let Some(fc) = lview.window(win).and_then(|wv| wv.chrome_model().floating.clone()) {
+                let (viewport, maximized) = self
+                    .windows
+                    .view()
+                    .window(win)
+                    .map_or_else(Default::default, |w| (w.geometry().viewport, w.geometry().maximized));
+                let hover = view.pointer.and_then(|p| fc.button_at(viewport, p));
+                fc.paint(render, viewport, maximized, hover, view.button_down);
+            }
+        }
+
         // Focus ring over whatever registered this frame (the view's focus
         // is the last evaluated one; a field focused by the previous tick
         // has re-registered above).
@@ -221,8 +235,15 @@ impl<S: Spec> Kernel<S> {
         }
 
         // `EndFrame`: this frame's registrations evaluate (hover, clicks).
+        let hover_before = self.input.view().window(win).and_then(|v| v.hovered);
         let fx = self.input.apply(InputOp::EndFrame { win, now });
         self.conduct_input(now, fx);
+        // Hover evaluated here is painted by the NEXT compose (like clicks below);
+        // without a follow-up frame the hover state shows one input late.
+        if self.input.view().window(win).and_then(|v| v.hovered) != hover_before {
+            self.invalidate(win, None, InvalidateBits::ALL);
+            out.wants_frame = true;
+        }
         // Clicks evaluated here are read by the app on the NEXT compose; on a
         // dirty-driven cadence nothing else would schedule it until the next
         // input event, so a click would surface one interaction late.

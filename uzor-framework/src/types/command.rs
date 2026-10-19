@@ -622,6 +622,9 @@ pub struct ChromeModel {
     pub buttons: ChromeLayoutConfig,
     /// Tabs, left to right.
     pub tabs: Vec<ChromeTab>,
+    /// Floating window controls drawn in the app's own space (undecorated
+    /// windows without a chrome strip). `None` = no floating controls.
+    pub floating: Option<crate::types::controls::FloatingControls>,
 }
 
 impl ChromeModel {
@@ -636,6 +639,7 @@ impl ChromeModel {
             && a.show_close_window_btn == b.show_close_window_btn
             && a.menu_left == b.menu_left
             && a.show_maximize == b.show_maximize
+            && self.floating == other.floating
     }
 }
 
@@ -646,6 +650,7 @@ impl Default for ChromeModel {
             kind: ChromeKind::Default,
             buttons: ChromeLayoutConfig::default(),
             tabs: Vec::new(),
+            floating: None,
         }
     }
 }

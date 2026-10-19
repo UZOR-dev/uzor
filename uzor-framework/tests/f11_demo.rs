@@ -491,3 +491,39 @@ fn golden_chrome_button_states() {
         assert_pixmap(file, out.width(), out.height(), out.data());
     }
 }
+
+/// A pointer move onto a widget asks for a follow-up frame on a dirty-driven
+/// window, so the hover evaluated at `EndFrame` paints without further input.
+#[test]
+fn hover_change_requests_a_follow_up_frame() {
+    let mut cfg = DemoApp::runtime_config();
+    cfg.tick = uzor::render::TickRate::Dirty;
+    cfg.windows.truncate(1);
+    let (mut host, _) = HeadlessHost::new(DemoApp::new(), cfg);
+    for _ in 0..8 {
+        host.advance(0.016);
+    }
+    let win = window_id(&host, "main");
+    let nav = leaf_rect(&host, "main", "nav");
+    let r = navigator_hits(nav).settings;
+    // Settle: no input, no frames.
+    for _ in 0..4 {
+        host.advance(0.016);
+    }
+    assert!(host.advance(0.016).frames.is_empty(), "idle window still painting");
+    pointer(
+        &mut host,
+        win,
+        PointerInput::Moved {
+            pos: uzor_framework::Point::new(r.x + r.width / 2.0, r.y + r.height / 2.0),
+            mods: ModifierKeys::default(),
+        },
+    );
+    assert!(!host.advance(0.016).frames.is_empty(), "the move paints");
+    // The hover was evaluated at that frame's EndFrame: one more frame shows it.
+    assert!(!host.advance(0.016).frames.is_empty(), "no follow-up frame for the new hover");
+    for _ in 0..3 {
+        host.advance(0.016);
+    }
+    assert!(host.advance(0.016).frames.is_empty(), "hover kept the window painting");
+}

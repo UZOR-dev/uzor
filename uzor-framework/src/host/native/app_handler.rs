@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use uzor::RenderBackend;
-use uzor_render_hub::RenderHub;
+use uzor_render_hub::{RenderHub, WindowRenderState};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -292,6 +292,30 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
             return;
         }
 
+        // Resize: the surface (GPU swapchain / software presenter pixmap) follows the
+        // window, otherwise frames keep presenting at the creation size (only the
+        // top-left part drawn after maximize) and a shrink can stall presents.
+        if let WindowEvent::Resized(size) = &ev {
+            resize_render_surface(&mut nw.render_state, size.width, size.height);
+            nw.window.request_redraw();
+            // The OS (WM, double-click, Win+Up) can maximize too: echo the state
+            // so a restore toggle reads the truth.
+            let maximized = nw.window.is_maximized();
+            if nw.maximized != Some(maximized) {
+                nw.maximized = Some(maximized);
+                self.push(framework_id, InputEvent::Window(WindowInput::Maximized(maximized)));
+            }
+            // `self.windows` borrow ended by push; re-fetch below.
+            let Some(nw) = self.windows.get_mut(&id) else {
+                return;
+            };
+            let events = nw.mapper.map(&ev);
+            for e in events {
+                self.push(framework_id, e);
+            }
+            return;
+        }
+
         if matches!(ev, WindowEvent::RedrawRequested) {
             // Force an immediate tick+paint for this window by waking.
             // about_to_wait does the real work; request a poll.
@@ -437,4 +461,13 @@ where
     A: App<Spec = S>,
 {
     run_native(app, cfg, NativeOptions::default())
+}
+
+/// Resize a window's render surface to the new physical size (no-op for 0×0,
+/// which winit reports for a minimized window).
+pub(crate) fn resize_render_surface(rs: &mut WindowRenderState, width: u32, height: u32) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    rs.resize_surface(width, height);
 }

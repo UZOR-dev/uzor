@@ -130,7 +130,31 @@ impl<S: Spec> Kernel<S> {
         // session (and may set the capture); hover over a zone sets the
         // suggested cursor.
         if let Some(pos) = pointer_pos(input) {
-            let hit = self.layout.hit(win, pos);
+            let mut hit = self.layout.hit(win, pos);
+            let floating = self
+                .layout
+                .view()
+                .window(win)
+                .and_then(|wv| wv.chrome_model().floating.clone());
+            if let Some(fc) = floating {
+                // The top drag band yields to content widgets under the pointer
+                // (the app's own buttons there stay clickable).
+                if hit == LayoutHit::Chrome(uzor::widgets::composite::chrome::ChromeHit::Drag)
+                    && self
+                        .input
+                        .view()
+                        .coordinator(win)
+                        .and_then(|c| c.hit_test_now(pos.x, pos.y))
+                        .is_some()
+                {
+                    hit = LayoutHit::None;
+                }
+                // Button hover paints without waiting for other input.
+                let vp = self.windows.view().window(win).map(|w| w.geometry().viewport);
+                if vp.is_some_and(|vp| pos.y < vp.y + fc.style.button_h.max(fc.style.dot_inset * 2.0 + fc.style.dot) + 4.0) {
+                    self.invalidate(win, None, InvalidateBits::ALL);
+                }
+            }
             self.update_cursor(now, win, &hit);
             let primary_down = matches!(
                 input,

@@ -1021,6 +1021,17 @@ fn hit_window<P: DockPanel>(w: &WindowLayout<P>, policy: &LayoutPolicy, p: Point
             return LayoutHit::Bezel(dir);
         }
     }
+    if let Some(fc) = &w.chrome.floating {
+        use crate::types::controls::ControlButton as B;
+        use uzor::widgets::composite::chrome::ChromeHit as H;
+        match fc.button_at(w.viewport, (p.x, p.y)) {
+            Some(B::Minimize) => return LayoutHit::Chrome(H::MinBtn),
+            Some(B::Maximize) => return LayoutHit::Chrome(H::MaxBtn),
+            Some(B::Close) => return LayoutHit::Chrome(H::CloseWindowBtn),
+            None if fc.in_drag_band(w.viewport, (p.x, p.y)) => return LayoutHit::Chrome(H::Drag),
+            None => {}
+        }
+    }
     if let Some(hit) = chrome::hit(w, p) {
         return hit;
     }

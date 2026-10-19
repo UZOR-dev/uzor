@@ -23,6 +23,7 @@
 pub mod anim;
 pub mod bus;
 pub mod command;
+pub mod controls;
 pub mod error;
 pub mod frame;
 pub mod ids;

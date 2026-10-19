@@ -1194,6 +1194,7 @@ fn furnished() -> (E, LeafId, LeafId) {
                     label: "Main".into(),
                     closable: false,
                 }],
+                floating: None,
             },
         },
     );
@@ -1523,3 +1524,42 @@ fn closed_and_unknown_windows_are_ignored() {
 }
 
 mod expand_dragout;
+
+#[test]
+fn floating_controls_hit_above_content_with_a_drag_band() {
+    use crate::types::controls::{ControlsPlacement, FloatingControls, WindowControlsStyle};
+    let mut e = E::new(decode);
+    e.apply(LayoutOp::Open {
+        win: W,
+        caps: HostCaps {
+            os_resize_bezel: false,
+            ..os_caps()
+        },
+        viewport: vp(),
+    });
+    let fc = FloatingControls {
+        placement: ControlsPlacement::Right,
+        ..FloatingControls::new(WindowControlsStyle::default())
+    };
+    cmd(
+        &mut e,
+        LayoutCmd::SetChromeModel {
+            win: W,
+            model: ChromeModel {
+                floating: Some(fc),
+                ..ChromeModel::default()
+            },
+        },
+    );
+    let h = |x: f64, y: f64| e.hit(W, Point::new(x, y));
+    // No strip is reserved: the dock fills the viewport.
+    assert_eq!(e.view().window(W).expect("W").dock_area(), vp());
+    // vp() is 1000 wide: close 954..1000, max 908..954, min 862..908.
+    assert_eq!(h(980.0, 16.0), LayoutHit::Chrome(ChromeHit::CloseWindowBtn));
+    assert_eq!(h(930.0, 16.0), LayoutHit::Chrome(ChromeHit::MaxBtn));
+    assert_eq!(h(880.0, 16.0), LayoutHit::Chrome(ChromeHit::MinBtn));
+    assert_eq!(h(500.0, 20.0), LayoutHit::Chrome(ChromeHit::Drag));
+    // Below the band is content; the bezel still wins at the border.
+    assert_ne!(h(500.0, 60.0), LayoutHit::Chrome(ChromeHit::Drag));
+    assert_eq!(h(2.0, 300.0), LayoutHit::Bezel(ResizeDirection::West));
+}
