@@ -277,7 +277,7 @@ impl Painter for Canvas2dRenderContext {
 // ---------------------------------------------------------------------------
 
 impl TextRenderer for Canvas2dRenderContext {
-    fn set_font(&mut self, font: &str) { self.ctx.set_font(font); }
+    fn set_font(&mut self, font: &str) { self.ctx.set_font(&crate::emoji::with_fallback(font)); }
     fn set_text_align(&mut self, align: TextAlign) {
         let value = match align {
             TextAlign::Left   => "left",

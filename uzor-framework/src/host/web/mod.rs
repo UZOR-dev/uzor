@@ -18,6 +18,10 @@ mod translate;
 
 pub use raf::{run_web, start_web};
 
+/// Colour-emoji fallback for canvas text: the font families every `set_font` gets, and the
+/// lazy loader of the bundled subset (a separate asset, not in the wasm).
+pub use uzor_render_canvas2d::emoji;
+
 use crate::types::bus::HostCaps;
 use crate::types::error::FrameworkError;
 

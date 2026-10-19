@@ -21,6 +21,11 @@ js-sys = "0.3"
 version = "0.3"
 features = [
     "CanvasGradient",
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "Window",
     "CanvasRenderingContext2d",
     "DomMatrix",
     "HtmlCanvasElement",
