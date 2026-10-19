@@ -261,6 +261,7 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
             {
                 log::warn!("paint failed: {e}");
             }
+            flush_x11(&nw.window);
             // Report render facts.
             let m = *self.hub.metrics();
             let info = RenderInfo {
@@ -483,3 +484,26 @@ pub(crate) fn resize_render_surface(rs: &mut WindowRenderState, width: u32, heig
     }
     rs.resize_surface(width, height);
 }
+
+/// Flushes the window's Xlib connection after a present. softbuffer's X11
+/// path writes `shm::PutImage` plus a `GetInputFocus` completion probe into
+/// the shared Xlib/XCB output buffer without flushing it, so the frame (and
+/// the probe the next present waits on) sat in the buffer until some other
+/// traffic flushed it: the last frame after a state change stayed unseen
+/// until the mouse moved.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn flush_x11(window: &winit::window::Window) {
+    use std::sync::OnceLock;
+    use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
+    static XLIB: OnceLock<Option<x11_dl::xlib::Xlib>> = OnceLock::new();
+    let Ok(h) = window.display_handle() else { return };
+    if let RawDisplayHandle::Xlib(x) = h.as_raw() {
+        if let (Some(d), Some(xlib)) = (x.display, XLIB.get_or_init(|| x11_dl::xlib::Xlib::open().ok())) {
+            // SAFETY: winit's live display pointer; XFlush only writes the buffer out.
+            unsafe { (xlib.XFlush)(d.as_ptr().cast()) };
+        }
+    }
+}
+
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn flush_x11(_window: &winit::window::Window) {}

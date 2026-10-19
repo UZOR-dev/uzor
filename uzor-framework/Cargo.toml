@@ -79,10 +79,17 @@ web-sys = { version = "0.3", optional = true, features = [
 uzor-render-canvas2d = { workspace = true, optional = true }
 uzor-window-web = { workspace = true, optional = true }
 
+[target.'cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))'.dependencies]
+# XFlush after a software present (softbuffer queues the X11 PutImage and its
+# completion probe without flushing: the last frame stayed unseen until the
+# next input event).
+x11-dl = { version = "2.21", optional = true }
+
 [features]
 # Native (winit) host — brief F9.
 native = [
     "dep:winit",
+    "dep:x11-dl",
     "dep:uzor-window-desktop",
     "dep:uzor-render-hub",
     "dep:arboard",

@@ -10,7 +10,7 @@
 use uzor::input::{Sense, WidgetKind};
 use uzor::{Rect, WidgetId};
 
-use crate::handle::PanelCx;
+use crate::handle::{OverlayCx, PanelCx};
 use crate::types::scroll::{ScrollStyle, ScrollView};
 use crate::types::spec::Spec;
 
@@ -22,10 +22,12 @@ fn ids(id: &str) -> (WidgetId, WidgetId) {
     (WidgetId::from(format!("{id}:thumb").as_str()), WidgetId::from(format!("{id}:track").as_str()))
 }
 
+macro_rules! scroll_fns {
+    ($cx:ident, $begin:ident, $end:ident) => {
 /// Input half: sets the extent, applies this frame's wheel when the pointer is
 /// over `viewport` (and `wheel` is allowed), advances inertia, follows a thumb
 /// drag, pages on a track press. Returns the offset to paint the content at.
-pub fn scroll_begin<S: Spec>(cx: &mut PanelCx<'_, S>, id: &str, viewport: Rect, sv: &mut ScrollView, content_h: f64, wheel: bool, st: &ScrollStyle) -> f64 {
+pub fn $begin<S: Spec>(cx: &mut $cx<'_, S>, id: &str, viewport: Rect, sv: &mut ScrollView, content_h: f64, wheel: bool, st: &ScrollStyle) -> f64 {
     let now = cx.time.now.0 * 1000.0;
     sv.set_extent(content_h, viewport.height);
     let (thumb_id, track_id) = ids(id);
@@ -65,7 +67,7 @@ pub fn scroll_begin<S: Spec>(cx: &mut PanelCx<'_, S>, id: &str, viewport: Rect, 
 
 /// Output half: registers the track and thumb above the content and paints
 /// the thumb (nothing when the content fits).
-pub fn scroll_end<S: Spec>(cx: &mut PanelCx<'_, S>, id: &str, viewport: Rect, sv: &ScrollView, st: &ScrollStyle) {
+pub fn $end<S: Spec>(cx: &mut $cx<'_, S>, id: &str, viewport: Rect, sv: &ScrollView, st: &ScrollStyle) {
     let track = sv.track(viewport, st);
     let Some(th) = sv.thumb(track, st) else { return };
     let (thumb_id, track_id) = ids(id);
@@ -81,3 +83,9 @@ pub fn scroll_end<S: Spec>(cx: &mut PanelCx<'_, S>, id: &str, viewport: Rect, sv
     ctx.rounded_rect(th.x, th.y, th.width, th.height, th.width / 2.0);
     ctx.fill();
 }
+
+    };
+}
+
+scroll_fns!(PanelCx, scroll_begin, scroll_end);
+scroll_fns!(OverlayCx, scroll_begin_overlay, scroll_end_overlay);
