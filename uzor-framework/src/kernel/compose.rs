@@ -253,6 +253,8 @@ impl<S: Spec> Kernel<S> {
                 self.input
                     .view()
                     .coordinator(win)
+                    // Text fields show focus with their caret / border; no ring.
+                    .filter(|c| c.text_fields().field_state(id).is_none())
                     .and_then(|c| c.widget_rect(id))
             });
             super::furniture::paint_focus_ring(render, &tokens, ring);

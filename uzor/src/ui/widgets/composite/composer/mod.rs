@@ -442,17 +442,12 @@ fn chip_w(ctx: &mut dyn RenderContext, name: &str) -> f64 {
 pub fn composer_layout_rich(ctx: &mut dyn RenderContext, area: Rect, view: &RichComposerView<'_>, max_h: f64, st: &ComposerStyle) -> RichComposerLayout {
     let lines = view.base.text.matches('\n').count() + 1;
     let lh = st.font_px * 1.45;
-    if view.attach.is_empty() && lines == 1 {
-        let hits = composer_layout_styled(area, st);
-        let top = hits.frame.y + (st.height - lh) / 2.0;
-        return RichComposerLayout { hits, items: vec![], remove: vec![], body: hits.text, content_h: hits.text.height, text_top: top, tall: false };
-    }
+    // hatchery style.css `#box` (stacked): padding 10px 10px 8px 14px, column, gap 6px.
     let side = st.side.max((area.width - st.max_width) / 2.0);
     let w = (area.width - 2.0 * side).max(160.0);
-    let pad = 12.0;
-    let inner_w = w - 2.0 * pad;
-    // Attachments wrap in rows.
-    let mut rows_h = 0.0;
+    let (pt, pr, pb, pl, gap) = (10.0, 10.0, 8.0, 14.0, 6.0);
+    let inner_w = w - pl - pr;
+    // Attachment strip: a fixed top layer (wraps; never scrolled, never shrunk).
     let mut rel: Vec<Rect> = Vec::new();
     let (mut x, mut y, mut row_h) = (0.0, 0.0, 0.0f64);
     for a in view.attach {
@@ -469,36 +464,40 @@ pub fn composer_layout_rich(ctx: &mut dyn RenderContext, area: Rect, view: &Rich
         x += iw + 8.0;
         row_h = row_h.max(ih);
     }
-    if !rel.is_empty() {
-        rows_h = y + row_h + 10.0;
+    let strip_h = if rel.is_empty() { 0.0 } else { y + row_h + gap };
+    if lines == 1 {
+        // `#box.one`: the one-row layout; the strip (if any) is a header on top.
+        let mut hits = composer_layout_styled(area, st);
+        let f = hits.frame;
+        let text_top = f.y + (st.height - lh) / 2.0;
+        hits.frame = Rect::new(f.x, f.y - strip_h, f.width, f.height + strip_h);
+        let items: Vec<Rect> = rel.iter().map(|r| Rect::new(hits.frame.x + pl + r.x, hits.frame.y + pt + r.y, r.width, r.height)).collect();
+        let remove = items.iter().map(|r| Rect::new(r.x + r.width - 22.0, r.y + 4.0, 18.0, 18.0)).collect();
+        return RichComposerLayout { hits, items, remove, body: hits.text, content_h: hits.text.height, text_top, tall: false };
     }
-    let text_h = lines as f64 * lh;
-    let content_h = rows_h + text_h;
-    let btn_row = st.btn + 2.0 * (1.0 + st.pad);
-    let natural = pad + content_h + 4.0 + btn_row;
-    let h = natural.min(max_h.max(st.height + btn_row));
+    // Text: `#input` grows to its max-height (`max_h`), then scrolls internally.
+    let text_h = lines as f64 * lh + 8.0; // `#box #input{padding:4px 2px}`
+    let content_h = text_h;
+    let view_h = text_h.min(max_h.max(lh + 8.0));
+    let h = pt + strip_h + view_h + gap + st.btn + pb;
     let frame = Rect::new(area.x + side, area.y + area.height - st.bottom - h, w, h);
-    let body = Rect::new(frame.x + pad, frame.y + pad, inner_w, (h - pad - 4.0 - btn_row).max(lh));
-    let off = view.scroll.clamp(0.0, (content_h - body.height).max(0.0));
-    let items: Vec<Rect> = rel.iter().map(|r| Rect::new(body.x + r.x, body.y + r.y - off, r.width, r.height)).collect();
+    let items: Vec<Rect> = rel.iter().map(|r| Rect::new(frame.x + pl + r.x, frame.y + pt + r.y, r.width, r.height)).collect();
     let remove = items.iter().map(|r| Rect::new(r.x + r.width - 22.0, r.y + 4.0, 18.0, 18.0)).collect();
-    let inner = 1.0 + st.pad;
-    let by = frame.y + h - inner - st.btn;
-    let attach = Rect::new(frame.x + inner, by, st.btn, st.btn);
-    let send = Rect::new(frame.x + frame.width - inner - st.btn, by, st.btn, st.btn);
+    let body = Rect::new(frame.x + pl, frame.y + pt + strip_h, inner_w, view_h);
+    let off = view.scroll.clamp(0.0, (content_h - body.height).max(0.0));
+    let by = frame.y + h - pb - st.btn;
+    let attach = Rect::new(frame.x + pl - 4.0, by, st.btn, st.btn);
+    let send = Rect::new(frame.x + frame.width - pr - st.btn, by, st.btn, st.btn);
     let mic = Rect::new(send.x - st.gap - st.btn, by, st.btn, st.btn);
-    let text_top = body.y + rows_h - off;
-    // The editable text rect: the text lines, clamped to the visible body.
-    let tt = text_top.max(body.y);
-    let text = Rect::new(body.x, tt, body.width, (body.y + body.height - tt).max(1.0));
-    let hits = ComposerHits { frame, text, attach, mic, send };
+    let text_top = body.y + 4.0 - off;
+    let hits = ComposerHits { frame, text: body, attach, mic, send };
     RichComposerLayout { hits, items, remove, body, content_h, text_top, tall: true }
 }
 
 /// Paints the rich composer; returns the caret x per char boundary.
 pub fn draw_composer_rich(ctx: &mut dyn RenderContext, l: &RichComposerLayout, view: &RichComposerView<'_>, st: &ComposerStyle) -> Vec<f64> {
     let f = l.hits.frame;
-    let r = if l.tall { 18.0 } else { st.radius };
+    let r = if l.tall { 22.0 } else { st.radius };
     path_round_rect(ctx, f, r);
     ctx.set_fill_color(if view.base.cursor.is_some() { st.border_focus } else { st.border });
     ctx.fill();
@@ -510,15 +509,16 @@ pub fn draw_composer_rich(ctx: &mut dyn RenderContext, l: &RichComposerLayout, v
     ctx.rect(l.body.x - 2.0, l.body.y, l.body.width + 4.0, l.body.height);
     ctx.clip();
     // Text first, under the plain body clip (thumbnail clips below may replace it).
-    let x0 = if l.tall { l.body.x } else { l.hits.text.x };
+    let x0 = if l.tall { l.body.x + 2.0 } else { l.hits.text.x };
     let positions = draw_text_lines(ctx, x0, l.text_top, &view.base, st, (l.body.y, l.body.y + l.body.height));
+    ctx.restore();
+    // Fixed attachment strip above the text.
     for (i, (a, ir)) in view.attach.iter().zip(&l.items).enumerate() {
         match a {
             ComposerAttach::Image { rgba, w, h } => {
                 // Clip replaces (does not intersect) on some backends: clip to the
                 // visible part of the thumbnail inside the body ourselves.
-                let top = ir.y.max(l.body.y);
-                let bot = (ir.y + ir.height).min(l.body.y + l.body.height);
+                let (top, bot) = (ir.y, ir.y + ir.height);
                 if bot <= top {
                     continue;
                 }
@@ -534,10 +534,6 @@ pub fn draw_composer_rich(ctx: &mut dyn RenderContext, l: &RichComposerLayout, v
                     ip.draw_image_rgba(rgba, *w, *h, ir.x + (ir.width - iw * k) / 2.0, ir.y + (ir.height - ih * k) / 2.0, iw * k, ih * k);
                 }
                 ctx.restore();
-                // Some backends drop the whole clip stack on restore: re-clip the body.
-                ctx.begin_path();
-                ctx.rect(l.body.x - 2.0, l.body.y, l.body.width + 4.0, l.body.height);
-                ctx.clip();
                 if top == ir.y && bot == ir.y + ir.height {
                 ctx.set_stroke_color("#3a3a3a");
                     ctx.set_stroke_width(1.0);
@@ -547,9 +543,6 @@ pub fn draw_composer_rich(ctx: &mut dyn RenderContext, l: &RichComposerLayout, v
                 }
             }
             ComposerAttach::File { name } => {
-                if ir.y + ir.height <= l.body.y || ir.y >= l.body.y + l.body.height {
-                    continue;
-                }
                 path_round_rect(ctx, *ir, 10.0);
                 ctx.set_fill_color("#2a2a2a");
                 ctx.fill();
@@ -581,7 +574,6 @@ pub fn draw_composer_rich(ctx: &mut dyn RenderContext, l: &RichComposerLayout, v
             ctx.stroke();
         }
     }
-    ctx.restore();
     draw_buttons(ctx, &l.hits, &view.base, view.is_empty(), st);
     positions
 }
@@ -604,13 +596,19 @@ mod rich_tests {
         let leaked: &'static [ComposerAttach<'static>] = Box::leak(Box::new([ComposerAttach::Image { rgba: Box::leak(Box::new([0u8; 4])), w: 1, h: 1 }]));
         let _ = one;
         let tall = composer_layout_rich(&mut ctx, area, &v(leaked, "hi"), 300.0, &st);
-        assert!(tall.tall && tall.hits.frame.height > empty.hits.frame.height);
+        assert!(!tall.tall && tall.hits.frame.height > empty.hits.frame.height, "one line + strip keeps the one-row layout");
+        assert_eq!(tall.hits.send, empty.hits.send, "buttons unchanged by attachments");
         assert_eq!(tall.items.len(), 1);
         assert!(tall.text_top >= tall.items[0].y + THUMB);
         let long: &'static str = Box::leak("x\n".repeat(40).into_boxed_str());
         let capped = composer_layout_rich(&mut ctx, area, &v(leaked, long), 300.0, &st);
-        assert!(capped.hits.frame.height <= 300.0 + 0.5);
-        assert!(capped.content_h > capped.body.height, "body scrolls");
+        assert!(capped.body.height <= 300.0 + 0.5, "text capped at max_h");
+        assert!(capped.content_h > capped.body.height, "text scrolls");
+        let mut sv = v(leaked, long);
+        sv.scroll = 1e6;
+        let scrolled = composer_layout_rich(&mut ctx, area, &sv, 300.0, &st);
+        assert_eq!(scrolled.items, capped.items, "attachment strip never scrolls");
+        assert!(scrolled.items[0].y + THUMB <= scrolled.body.y, "strip above text");
         assert!(!v(leaked, "").is_empty());
     }
 }
