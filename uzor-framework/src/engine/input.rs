@@ -636,8 +636,11 @@ impl PerWindowInput {
         match input {
             PointerInput::Moved { pos, .. } => {
                 self.pointer.pos = Some((pos.x, pos.y));
-                // A held drag repaints so hooks see the moving pointer.
-                (self.pointer.button_down.is_some(), self.content_target(self.pointer.pos))
+                // A held drag repaints so hooks see the moving pointer; so does a move
+                // onto another widget (or off all of them), so hover paints without
+                // waiting for the next unrelated input.
+                let target = self.content_target(self.pointer.pos);
+                (self.pointer.button_down.is_some() || target != self.hover, target)
             }
             PointerInput::Down { pos, button, .. } => {
                 self.pointer.pos = Some((pos.x, pos.y));

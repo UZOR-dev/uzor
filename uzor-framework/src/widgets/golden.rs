@@ -91,6 +91,12 @@ fn assert_golden(name: &str, ctx: &TinySkiaCpuRenderContext) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../uzor-render-tiny-skia/tests/goldens")
         .join(format!("{name}.png"));
+    // `UZOR_BLESS=1` rewrites the golden from the current render (intentional changes only).
+    if std::env::var_os("UZOR_BLESS").is_some() {
+        let mut pm = Pixmap::new(ctx.width(), ctx.height()).expect("pixmap");
+        pm.data_mut().copy_from_slice(ctx.pixels());
+        pm.save_png(&path).unwrap_or_else(|err| panic!("bless {}: {err}", path.display()));
+    }
     let golden =
         Pixmap::load_png(&path).unwrap_or_else(|err| panic!("load {}: {err}", path.display()));
     assert_eq!(golden.width(), ctx.width(), "{name} width");
