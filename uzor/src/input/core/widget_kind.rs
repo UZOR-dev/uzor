@@ -65,11 +65,53 @@ pub enum WidgetKind {
     /// Draggable handle / grip — composite widgets register one of these for their
     /// header drag zones.
     DragHandle,
+    /// Click-swallowing backdrop under a modal / menu (the dimmed scrim, "click outside
+    /// closes"). Blocks everything below it like the DOM's fixed overlay; default arrow
+    /// cursor (it is not a control).
+    Backdrop,
+    /// Inert surface that swallows pointer events: a dialog card, a menu panel, a message
+    /// bubble. Default arrow cursor; clicks on it reach no widget below.
+    Surface,
+    /// Inline link or nick mention inside text (`<a>`): hand cursor, clickable.
+    Link,
+    /// Draggable splitter between panes: column-resize cursor when taller than wide,
+    /// row-resize otherwise. Register it with `Sense::DRAG` so a press captures the pointer.
+    Splitter,
+    /// Static selectable text (label, message body): I-beam cursor.
+    Text,
     /// Escape hatch — any widget that doesn't fit the above categories.
     Custom,
 }
 
 impl WidgetKind {
+    /// The cursor the role implies (the DOM's UA defaults: `button`/`a` → pointer, text →
+    /// I-beam, splitters → resize, everything else the arrow). `rect` picks a splitter's
+    /// axis. A widget can override it with `InputCoordinator::set_widget_cursor`.
+    pub fn cursor(self, rect: crate::types::Rect) -> crate::CursorIcon {
+        use crate::CursorIcon as C;
+        use WidgetKind::*;
+        match self {
+            Button | Checkbox | CloseButton | ColorSwatch | DropdownTrigger | Item | Radio | Toggle | ChromeTab | ScrollChevron | Link => C::PointingHand,
+            Splitter => {
+                if rect.height >= rect.width {
+                    C::ResizeHorizontal
+                } else {
+                    C::ResizeVertical
+                }
+            }
+            Text | Custom => C::Text,
+            Slider | DragHandle => C::Default,
+            _ => C::Default,
+        }
+    }
+
+    /// Interactive role: takes clicks / keyboard focus as a control (a DOM `button`, `a`,
+    /// `input`). Backdrops and surfaces swallow clicks but are not controls.
+    pub const fn is_interactive(self) -> bool {
+        use WidgetKind::*;
+        matches!(self, Button | Checkbox | CloseButton | ColorSwatch | DropdownTrigger | Item | Radio | Toggle | ChromeTab | ScrollChevron | Link | Slider | Splitter)
+    }
+
     /// `true` for kinds that act as parent containers.
     pub const fn is_composite(self) -> bool {
         use WidgetKind::*;
@@ -100,6 +142,6 @@ impl WidgetKind {
     /// when they are hit (modal / context-menu behaviour).
     pub const fn blocks_lower_layers(self) -> bool {
         use WidgetKind::*;
-        matches!(self, Modal | ContextMenu | Popup)
+        matches!(self, Modal | ContextMenu | Popup | Backdrop)
     }
 }

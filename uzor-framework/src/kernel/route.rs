@@ -506,20 +506,13 @@ impl<S: Spec> Kernel<S> {
     }
 }
 
-/// The cursor a content widget implies: text fields and `Custom` surfaces
-/// (terminals, selectable text) get the I-beam, clickable atoms the hand,
-/// scrollbar / drag handles the arrow, nothing the arrow.
+/// The cursor a content widget implies, resolved like the DOM's `cursor` property: the
+/// pointer-captured widget keeps its own for the whole drag, else the topmost widget under
+/// the modal barrier declares it (its own `set_widget_cursor`, a text field's I-beam, else
+/// its role: controls and links the hand, splitters resize, text the I-beam, backdrops,
+/// surfaces and everything else the arrow).
 pub(crate) fn content_cursor(c: &uzor::input::InputCoordinator, pos: crate::types::window::Point) -> CursorIcon {
-    use uzor::input::WidgetKind as K;
-    let Some(id) = c.hit_test_now(pos.x, pos.y) else { return CursorIcon::Default };
-    if c.text_fields().field_state(&id).is_some() {
-        return CursorIcon::Text;
-    }
-    match c.widget_kind(&id) {
-        Some(K::Custom) => CursorIcon::Text,
-        Some(K::Button | K::Checkbox | K::CloseButton | K::ColorSwatch | K::DropdownTrigger | K::Item | K::Radio | K::Toggle | K::ChromeTab | K::ScrollChevron) => CursorIcon::PointingHand,
-        _ => CursorIcon::Default,
-    }
+    c.cursor_at(pos.x, pos.y)
 }
 
 /// The position a pointer event carries, if it is a positioned one.

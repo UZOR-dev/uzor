@@ -69,6 +69,8 @@ struct RegisteredWidget {
     kind: WidgetKind,
     /// Parent widget id for child widgets registered via `register_child`.
     parent: Option<WidgetId>,
+    /// Cursor declared for this widget (`set_widget_cursor`), overriding its role's default.
+    cursor: Option<crate::CursorIcon>,
 }
 
 /// A layer in the z-order stack
@@ -276,6 +278,7 @@ impl InputCoordinator {
             layer: layer.clone(),
             kind: WidgetKind::Custom,
             parent: None,
+            cursor: None,
         });
     }
 
@@ -310,6 +313,7 @@ impl InputCoordinator {
             layer: layer.clone(),
             kind,
             parent: None,
+            cursor: None,
         });
         CompositeId(id)
     }
@@ -368,6 +372,7 @@ impl InputCoordinator {
             layer: parent_layer,
             kind,
             parent: Some(parent_id.clone()),
+            cursor: None,
         });
     }
 
@@ -401,8 +406,41 @@ impl InputCoordinator {
             layer: layer.clone(),
             kind,
             parent: None,
+            cursor: None,
         });
         AtomicId(id)
+    }
+
+    /// Declare the cursor shown over `id` (registered this frame), overriding the default of
+    /// its [`WidgetKind`] role — the CSS `cursor:` of one element.
+    pub fn set_widget_cursor(&mut self, id: &WidgetId, icon: crate::CursorIcon) {
+        if let Some(w) = self.widgets.iter_mut().rev().find(|w| w.id == *id) {
+            w.cursor = Some(icon);
+        }
+    }
+
+    /// The cursor over `id`: its declared cursor, the I-beam for text fields, else the
+    /// default of its role ([`WidgetKind::cursor`]). `None` when `id` is not registered.
+    pub fn widget_cursor(&self, id: &WidgetId) -> Option<crate::CursorIcon> {
+        let w = self.widgets.iter().rev().find(|w| w.id == *id)?;
+        if let Some(c) = w.cursor {
+            return Some(c);
+        }
+        if self.text_fields.field_state(id).is_some() {
+            return Some(crate::CursorIcon::Text);
+        }
+        Some(w.kind.cursor(w.rect))
+    }
+
+    /// The cursor at `(x, y)`: the pointer-captured widget's (a splitter keeps its resize
+    /// cursor for the whole drag, like `setPointerCapture`), else the topmost widget's under
+    /// the modal barrier, else the arrow.
+    pub fn cursor_at(&self, x: f64, y: f64) -> crate::CursorIcon {
+        let id = match &self.cook.grabbed {
+            Some(g) if self.widgets.iter().any(|w| &w.id == g) => Some(g.clone()),
+            _ => self.hit_test_now(x, y),
+        };
+        id.and_then(|id| self.widget_cursor(&id)).unwrap_or_default()
     }
 
     /// Returns the `WidgetKind` of a registered widget (current frame only).
@@ -2460,5 +2498,46 @@ mod tests {
             assert_eq!(coord.text_fields().selection_range(&id), None);
             assert_eq!(coord.text_fields().cursor(&id), 2);
         }
+    }
+}
+
+/// DOM-parity cursor rules: role defaults, declared overrides, the modal barrier, capture.
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+    use crate::input::driver::CoordinatorDriver;
+    use crate::CursorIcon as C;
+
+    #[test]
+    fn cursor_follows_role_override_modal_barrier_and_capture() {
+        let mut c = InputCoordinator::new();
+        let main = LayerId::main();
+        c.register_atomic("btn", WidgetKind::Button, Rect::new(0.0, 0.0, 50.0, 20.0), Sense::CLICK, &main);
+        c.register_atomic("split", WidgetKind::Splitter, Rect::new(100.0, 0.0, 8.0, 300.0), Sense::DRAG, &main);
+        c.register_atomic("body", WidgetKind::Text, Rect::new(200.0, 0.0, 100.0, 100.0), Sense::CLICK, &main);
+        c.register_atomic("link", WidgetKind::Link, Rect::new(210.0, 10.0, 30.0, 14.0), Sense::CLICK, &main);
+        assert_eq!(c.cursor_at(10.0, 10.0), C::PointingHand);
+        assert_eq!(c.cursor_at(104.0, 100.0), C::ResizeHorizontal);
+        assert_eq!(c.cursor_at(250.0, 50.0), C::Text);
+        assert_eq!(c.cursor_at(215.0, 15.0), C::PointingHand);
+        assert_eq!(c.cursor_at(500.0, 500.0), C::Default);
+        c.set_widget_cursor(&WidgetId::from("body"), C::Copy);
+        assert_eq!(c.cursor_at(250.0, 50.0), C::Copy);
+        // A modal: backdrop + card swallow everything below with the arrow; only its own
+        // controls get the hand.
+        let m = LayerId::modal();
+        c.push_layer_ex(m.clone(), 100, true, false);
+        c.register_atomic("scrim", WidgetKind::Backdrop, Rect::new(0.0, 0.0, 1000.0, 1000.0), Sense::CLICK, &m);
+        c.register_atomic("card", WidgetKind::Surface, Rect::new(0.0, 0.0, 400.0, 300.0), Sense::CLICK, &m);
+        c.register_atomic("ok", WidgetKind::Button, Rect::new(300.0, 250.0, 60.0, 30.0), Sense::CLICK, &m);
+        assert_eq!(c.cursor_at(10.0, 10.0), C::Default, "button under the card");
+        assert_eq!(c.cursor_at(600.0, 600.0), C::Default, "backdrop");
+        assert_eq!(c.cursor_at(310.0, 260.0), C::PointingHand);
+        assert_eq!(c.hit_test_now(10.0, 10.0), Some(WidgetId::from("card")));
+        // Captured: the grabbing splitter's cursor wins wherever the pointer is.
+        c.grab_pointer("split");
+        assert_eq!(c.cursor_at(600.0, 600.0), C::ResizeHorizontal);
+        c.release_pointer();
+        assert_eq!(WidgetKind::Splitter.cursor(Rect::new(0.0, 0.0, 300.0, 6.0)), C::ResizeVertical);
     }
 }
