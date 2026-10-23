@@ -325,6 +325,172 @@ impl<'a> InputBuilder<'a> {
     }
 }
 
+// -- field ------------------------------------------------------------------
+
+/// A borderless text field inside the app's own chrome. Start with [`field`].
+pub struct FieldBuilder<'a> {
+    id: WidgetId,
+    rect: Rect,
+    text_rect: Option<Rect>,
+    config: uzor::TextFieldConfig,
+    name: &'a str,
+    placeholder: &'a str,
+    masked: bool,
+    clip: bool,
+    px: f64,
+    family: &'a str,
+    color: Option<&'a str>,
+    placeholder_color: Option<&'a str>,
+    set: Option<&'a str>,
+    parent: Option<WidgetId>,
+}
+
+/// What a [`field`] shows this frame.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FieldResponse {
+    /// The shown text, composition included (unmasked).
+    pub text: String,
+    /// Keyboard focus is in the field.
+    pub focused: bool,
+}
+
+/// A text field whose box the app paints itself (a search pill, a dialog row, a sign-in
+/// input): the kit registers it at `rect`, names it, draws text, placeholder, caret and
+/// composition, and feeds caret geometry and the IME area back to the text store. The
+/// edit state lives in the store; seed or clear it there before `build`.
+pub fn field<'a>(id: impl Into<WidgetId>, rect: Rect) -> FieldBuilder<'a> {
+    FieldBuilder {
+        id: id.into(),
+        rect,
+        text_rect: None,
+        config: uzor::TextFieldConfig::text(),
+        name: "",
+        placeholder: "",
+        masked: false,
+        clip: false,
+        px: 13.0,
+        family: "sans-serif",
+        color: None,
+        placeholder_color: None,
+        set: None,
+        parent: None,
+    }
+}
+
+fn css_hex(c: [u8; 4]) -> String {
+    format!("#{:02x}{:02x}{:02x}{:02x}", c[0], c[1], c[2], c[3])
+}
+
+impl<'a> FieldBuilder<'a> {
+    /// Editing behaviour (text, search, password, multiline, max length).
+    pub fn config(mut self, c: uzor::TextFieldConfig) -> Self {
+        self.config = c;
+        self
+    }
+    /// Accessible name (defaults to the placeholder).
+    pub fn name(mut self, n: &'a str) -> Self {
+        self.name = n;
+        self
+    }
+    /// Grey hint while empty.
+    pub fn placeholder(mut self, p: &'a str) -> Self {
+        self.placeholder = p;
+        self
+    }
+    /// Draw bullets instead of the text.
+    pub fn masked(mut self, on: bool) -> Self {
+        self.masked = on;
+        self
+    }
+    /// Where the text runs, when it is inset inside the hit rect.
+    pub fn text_rect(mut self, r: Rect) -> Self {
+        self.text_rect = Some(r);
+        self
+    }
+    /// Clip the text to its rect.
+    pub fn clip(mut self, on: bool) -> Self {
+        self.clip = on;
+        self
+    }
+    /// Font size and CSS family.
+    pub fn font(mut self, px: f64, family: &'a str) -> Self {
+        self.px = px;
+        self.family = family;
+        self
+    }
+    /// Text and placeholder colours (CSS); the theme's when unset.
+    pub fn colors(mut self, text: &'a str, placeholder: &'a str) -> Self {
+        self.color = Some(text);
+        self.placeholder_color = Some(placeholder);
+        self
+    }
+
+    /// Replace the text this frame (`Some("")` clears it, undo included); the
+    /// caret goes to the end.
+    pub fn set(mut self, text: Option<&'a str>) -> Self {
+        self.set = text;
+        self
+    }
+    /// Nest the field under a container (a dialog scrim) for focus scoping.
+    pub fn parent(mut self, p: impl Into<WidgetId>) -> Self {
+        self.parent = Some(p.into());
+        self
+    }
+
+    /// Register, draw, and feed the store.
+    pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> FieldResponse {
+        use uzor::ui::widgets::atomic::text_input::TextInputTheme;
+        use uzor::ui::widgets::composite::dialog::draw_field_text_ime;
+        let theme = theme_of(cx);
+        let color = self.color.map_or_else(|| css_hex(theme.text_normal()), str::to_owned);
+        let ph_color = self.placeholder_color.map_or_else(|| css_hex(theme.placeholder()), str::to_owned);
+        let FieldBuilder { id, rect, text_rect, config, name, placeholder, masked, clip, px, family, set, parent, .. } = self;
+        let fr = text_rect.unwrap_or(rect);
+        let (out, ime) = cx.with_paint(|render, widgets, v, _| {
+            let (coord, _, layer) = parts(widgets);
+            coord.set_default_layer(Some(layer.clone()));
+            coord.register_text_field(id.clone(), rect, config);
+            if let Some(p) = &parent {
+                coord.set_widget_parent(&id, p);
+            }
+            coord.set_a11y(&id, if name.is_empty() { placeholder } else { name }, None);
+            coord.set_default_layer(None);
+            if let Some(t) = set {
+                let fields = coord.text_fields_mut();
+                fields.clear(&id);
+                if !t.is_empty() {
+                    fields.set_text(&id, t);
+                }
+            }
+            let focused = v.is_focused(&id);
+            let (text, caret, preedit) = coord.text_fields().field_state(&id).map(|s| s.display()).unwrap_or_default();
+            let shown = if masked { "\u{2022}".repeat(text.chars().count()) } else { text.clone() };
+            if clip {
+                render.save();
+                render.begin_path();
+                render.rect(fr.x, fr.y, fr.width, fr.height);
+                render.clip();
+            }
+            let pos = draw_field_text_ime(render, fr, &shown, placeholder, focused.then_some(caret), preedit, px, &color, &ph_color, family);
+            if clip {
+                render.restore();
+            }
+            let ime = (focused && caret < pos.len()).then(|| Rect::new(pos[caret], fr.y, 1.0, fr.height));
+            let fields = coord.text_fields_mut();
+            let pos = match fields.field_state(&id) {
+                Some(s) => s.buffer_positions(pos),
+                None => pos,
+            };
+            fields.update_field(&id, (fr.x, fr.y, fr.width, fr.height), pos);
+            (FieldResponse { text, focused }, ime)
+        });
+        if let Some(at) = ime {
+            cx.ime_area(at);
+        }
+        out
+    }
+}
+
 // -- tabs -------------------------------------------------------------------
 
 /// A row of equal-width tabs. Start with [`tabs`].

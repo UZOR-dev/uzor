@@ -279,3 +279,30 @@ fn drawer_closes_on_scrim_and_slides_with_progress() {
     let r = h.frame(&click("d:scrim"), |cx| drawer("d", area, &mut open).build(cx));
     assert!(!open && r.changed);
 }
+
+#[test]
+fn field_registers_names_masks_and_feeds_the_store() {
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let rect = Rect::new(10.0, 0.0, 200.0, 28.0);
+    let id = WidgetId::from("pw");
+    let pw = || field("pw", rect).config(uzor::TextFieldConfig::password()).placeholder("Password").masked(true).clip(true).colors("white", "gray");
+    let r = h.frame(&idle(), |cx| pw().build(cx));
+    assert_eq!(r, FieldResponse::default());
+    assert!(h.coord.focusable_ids(None).contains(&id));
+    assert!(h.coord.a11y_tree().nodes().iter().any(|n| n.name == "Password"));
+    let f = h.coord.text_fields_mut();
+    f.focus(id.clone());
+    for c in "abc".chars() {
+        f.on_char(c);
+    }
+    let mut v = idle();
+    v.focused = Some(id.clone());
+    let r = h.frame(&v, |cx| pw().build(cx));
+    assert_eq!(r, FieldResponse { text: "abc".into(), focused: true });
+    let st = h.coord.text_fields().field_state(&id).unwrap();
+    assert_eq!(st.text, "abc");
+    let r = h.frame(&v, |cx| pw().set(Some("xy")).build(cx));
+    assert_eq!(r.text, "xy");
+    let r = h.frame(&v, |cx| pw().set(Some("")).build(cx));
+    assert_eq!(r.text, "");
+}
