@@ -5,5 +5,6 @@ pub mod css_text;
 pub mod effects;
 pub mod i18n;
 pub mod style;
+pub mod flow;
 pub mod themes;
 pub mod widgets;
