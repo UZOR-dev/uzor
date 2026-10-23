@@ -44,6 +44,22 @@ pub struct Inspector {
     pinned: Option<InspectBox>,
 }
 
+thread_local! {
+    static NOTED: std::cell::RefCell<Vec<InspectBox>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Contribute a box that is not a registered widget (a card, a scroll body, a layout
+/// box from [`crate::ui::flow`]) to this frame's inspector. A host that owns the
+/// inspector drains them with [`take_noted`] after the app painted.
+pub fn note_box(b: InspectBox) {
+    NOTED.with(|n| n.borrow_mut().push(b));
+}
+
+/// The boxes noted since the last call.
+pub fn take_noted() -> Vec<InspectBox> {
+    NOTED.with(|n| std::mem::take(&mut *n.borrow_mut()))
+}
+
 const MARGIN_C: &str = "rgba(246,178,107,0.66)";
 const BORDER_C: &str = "rgba(255,229,153,0.66)";
 const PADDING_C: &str = "rgba(147,196,125,0.55)";

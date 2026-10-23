@@ -407,6 +407,7 @@ impl<S: Spec> Kernel<S> {
     fn paint_inspector(&mut self, win: WindowId, view: &VisualView<S>, render: &mut dyn RenderContext) {
         use uzor::ui::inspector::InspectBox;
         if !self.inspector.enabled {
+            uzor::ui::inspector::take_noted();
             return;
         }
         self.inspector.begin_frame();
@@ -419,6 +420,9 @@ impl<S: Spec> Kernel<S> {
             for a in uzor::ui::style::trace::of(w.id.as_str()).unwrap_or_default() {
                 b.notes.push(format!("{}: {}  <- {}", a.property, a.value, a.selector));
             }
+            self.inspector.record(b);
+        }
+        for b in uzor::ui::inspector::take_noted() {
             self.inspector.record(b);
         }
         if let Some(p) = view.pointer {
