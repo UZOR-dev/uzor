@@ -4,7 +4,8 @@
 //! `uzor/tests/mlc_uicolors_mapping.rs`'s header for the exact commit and
 //! line numbers — that test is the proof these JSON files stay correct).
 //!
-//! Each set is embedded at compile time ([`include_str!`]) and lazily
+//! `Dark`/`Light` ship precompiled (`builtin/precompiled.rs`, checked against
+//! their JSON by a test); the other two are embedded ([`include_str!`]) and lazily
 //! parsed/resolved once per process, cached behind a `OnceLock` keyed by
 //! [`BuiltinSet`] variant — [`Tokens::builtin`] never re-parses on repeat
 //! calls, only bumps an `Arc` refcount.
@@ -12,9 +13,15 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::tokens::loader::load_token_set;
-use crate::tokens::set::Tokens;
+use crate::tokens::set::{AppTokens, ComponentOverrides, Tokens};
 
+#[path = "builtin/precompiled.rs"]
+mod precompiled;
+
+/// Kept for the drift test: the shipped `Dark`/`Light` come from `precompiled.rs`.
+#[cfg(test)]
 const DARK_JSON: &str = include_str!("builtin/dark.json");
+#[cfg(test)]
 const LIGHT_JSON: &str = include_str!("builtin/light.json");
 const HIGH_CONTRAST_JSON: &str = include_str!("builtin/high_contrast.json");
 const HIGH_CONTRAST_MONO_JSON: &str = include_str!("builtin/high_contrast_mono.json");
@@ -55,8 +62,8 @@ impl Tokens {
     #[inline(always)]
     pub fn builtin(set: BuiltinSet) -> Arc<Tokens> {
         match set {
-            BuiltinSet::Dark => cached(&DARK, DARK_JSON),
-            BuiltinSet::Light => cached(&LIGHT, LIGHT_JSON),
+            BuiltinSet::Dark => cached_pre(&DARK, precompiled::dark),
+            BuiltinSet::Light => cached_pre(&LIGHT, precompiled::light),
             BuiltinSet::HighContrast => cached(&HIGH_CONTRAST, HIGH_CONTRAST_JSON),
             BuiltinSet::HighContrastMono => cached(&HIGH_CONTRAST_MONO, HIGH_CONTRAST_MONO_JSON),
         }
@@ -66,6 +73,27 @@ impl Tokens {
 #[inline(never)]
 fn cached(cell: &'static OnceLock<Arc<Tokens>>, json: &'static str) -> Arc<Tokens> {
     Arc::clone(cell.get_or_init(|| Arc::new(load_builtin(json))))
+}
+
+/// `Dark`/`Light` carry no `app.*` or `component.*` entries, so the resolved
+/// set is just name + geometry + semantic roles, precompiled from the JSON
+/// (no DTCG parse at run time; the loader stays out of binaries that only use
+/// these two).
+#[inline(never)]
+fn cached_pre(
+    cell: &'static OnceLock<Arc<Tokens>>,
+    set: fn() -> (&'static str, crate::tokens::geometry::GeometryRoles, crate::tokens::semantic::SemanticRoles),
+) -> Arc<Tokens> {
+    Arc::clone(cell.get_or_init(|| {
+        let (name, geometry, semantic) = set();
+        Arc::new(Tokens::assemble(
+            semantic,
+            geometry,
+            Some(name.to_string()),
+            AppTokens::default(),
+            ComponentOverrides::default(),
+        ))
+    }))
 }
 
 fn load_builtin(json: &str) -> Tokens {
@@ -88,6 +116,20 @@ mod tests {
                 ColorValue::Transparent,
                 "{set:?}: surface_app_chrome must resolve to a real colour"
             );
+        }
+    }
+
+    #[test]
+    fn precompiled_sets_match_their_json() {
+        for (set, json) in [(BuiltinSet::Dark, DARK_JSON), (BuiltinSet::Light, LIGHT_JSON)] {
+            let pre = Tokens::builtin(set);
+            let parsed = load_builtin(json);
+            assert_eq!(pre.semantic, parsed.semantic, "{set:?}: semantic roles drifted from the JSON");
+            assert_eq!(pre.geometry, parsed.geometry, "{set:?}: geometry drifted from the JSON");
+            assert_eq!(pre.name, parsed.name, "{set:?}: name drifted from the JSON");
+            assert!(parsed.app.values.is_empty(), "{set:?}: app.* entries need the loader path");
+            assert!(parsed.components.widgets.is_empty(), "{set:?}: component.* entries need the loader path");
+            assert_eq!(format!("{pre:?}"), format!("{parsed:?}"), "{set:?}: resolved tokens differ");
         }
     }
 
@@ -124,3 +166,4 @@ mod tests {
         }
     }
 }
+

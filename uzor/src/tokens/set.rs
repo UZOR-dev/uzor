@@ -91,168 +91,7 @@ impl TokenSet {
             radius_lg: required_radius("radius.lg")?,
         };
 
-        let button = crate::ui::widgets::atomic::button::tokens::ButtonTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let checkbox = crate::ui::widgets::atomic::checkbox::tokens::CheckboxTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let chevron = crate::ui::widgets::atomic::chevron::tokens::ChevronTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let clock = crate::ui::widgets::atomic::clock::tokens::ClockTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let close_button = crate::ui::widgets::atomic::close_button::tokens::CloseButtonTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let color_swatch = crate::ui::widgets::atomic::color_swatch::tokens::ColorSwatchTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let drag_handle = crate::ui::widgets::atomic::drag_handle::tokens::DragHandleTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let dropdown_trigger =
-            crate::ui::widgets::atomic::dropdown_trigger::tokens::DropdownTriggerTokens::resolve(
-                &semantic,
-                &self.components,
-            );
-        let item = crate::ui::widgets::atomic::item::tokens::ItemTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let radio = crate::ui::widgets::atomic::radio::tokens::RadioTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let scrollbar = crate::ui::widgets::atomic::scrollbar::tokens::ScrollbarTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let container = crate::ui::widgets::atomic::container::tokens::ContainerTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let scroll_chevron =
-            crate::ui::widgets::atomic::scroll_chevron::tokens::ScrollChevronTokens::resolve(
-                &semantic,
-                &self.components,
-            );
-        let separator = crate::ui::widgets::atomic::separator::tokens::SeparatorTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let text = crate::ui::widgets::atomic::text::tokens::TextTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let tab = crate::ui::widgets::atomic::tab::tokens::TabTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let slider = crate::ui::widgets::atomic::slider::tokens::SliderTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let text_input = crate::ui::widgets::atomic::text_input::tokens::TextInputTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let toggle = crate::ui::widgets::atomic::toggle::tokens::ToggleTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let toast = crate::ui::widgets::atomic::toast::tokens::ToastTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let tooltip = crate::ui::widgets::atomic::tooltip::tokens::TooltipTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let blackbox_panel =
-            crate::ui::widgets::composite::blackbox_panel::tokens::BlackboxPanelTokens::resolve(
-                &semantic,
-                &self.components,
-            );
-        let chrome = crate::ui::widgets::composite::chrome::tokens::ChromeTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let context_menu =
-            crate::ui::widgets::composite::context_menu::tokens::ContextMenuTokens::resolve(
-                &semantic,
-                &self.components,
-            );
-        let dropdown = crate::ui::widgets::composite::dropdown::tokens::DropdownTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let modal = crate::ui::widgets::composite::modal::tokens::ModalTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let panel = crate::ui::widgets::composite::panel::tokens::PanelTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let popup = crate::ui::widgets::composite::popup::tokens::PopupTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let sidebar = crate::ui::widgets::composite::sidebar::tokens::SidebarTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-        let toolbar = crate::ui::widgets::composite::toolbar::tokens::ToolbarTokens::resolve(
-            &semantic,
-            &self.components,
-        );
-
-        Ok(Tokens {
-            semantic,
-            geometry,
-            name: self.name.clone(),
-            app: self.app.clone(),
-            components: self.components.clone(),
-            button,
-            checkbox,
-            chevron,
-            clock,
-            close_button,
-            color_swatch,
-            drag_handle,
-            dropdown_trigger,
-            item,
-            radio,
-            scrollbar,
-            container,
-            scroll_chevron,
-            separator,
-            text,
-            tab,
-            slider,
-            text_input,
-            toggle,
-            toast,
-            tooltip,
-            blackbox_panel,
-            chrome,
-            context_menu,
-            dropdown,
-            modal,
-            panel,
-            popup,
-            sidebar,
-            toolbar,
-        })
+        Ok(Tokens::assemble(semantic, geometry, self.name.clone(), self.app.clone(), self.components.clone()))
     }
 }
 
@@ -540,6 +379,183 @@ impl TokenValue {
             TokenValue::Color(_) => "color",
             TokenValue::Dimension(_) => "dimension",
             TokenValue::Number(_) => "number",
+        }
+    }
+}
+
+impl Tokens {
+    /// Builds the per-widget component tokens from resolved semantic roles and
+    /// the file's `component.*` overrides. Shared by [`TokenSet::resolve`] and
+    /// the precompiled built-in sets, so both produce identical [`Tokens`].
+    pub(crate) fn assemble(
+        semantic: SemanticRoles,
+        geometry: GeometryRoles,
+        name: Option<String>,
+        app: AppTokens,
+        components: ComponentOverrides,
+    ) -> Tokens {
+
+        let button = crate::ui::widgets::atomic::button::tokens::ButtonTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let checkbox = crate::ui::widgets::atomic::checkbox::tokens::CheckboxTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let chevron = crate::ui::widgets::atomic::chevron::tokens::ChevronTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let clock = crate::ui::widgets::atomic::clock::tokens::ClockTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let close_button = crate::ui::widgets::atomic::close_button::tokens::CloseButtonTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let color_swatch = crate::ui::widgets::atomic::color_swatch::tokens::ColorSwatchTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let drag_handle = crate::ui::widgets::atomic::drag_handle::tokens::DragHandleTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let dropdown_trigger =
+            crate::ui::widgets::atomic::dropdown_trigger::tokens::DropdownTriggerTokens::resolve(
+                &semantic,
+                &components,
+            );
+        let item = crate::ui::widgets::atomic::item::tokens::ItemTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let radio = crate::ui::widgets::atomic::radio::tokens::RadioTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let scrollbar = crate::ui::widgets::atomic::scrollbar::tokens::ScrollbarTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let container = crate::ui::widgets::atomic::container::tokens::ContainerTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let scroll_chevron =
+            crate::ui::widgets::atomic::scroll_chevron::tokens::ScrollChevronTokens::resolve(
+                &semantic,
+                &components,
+            );
+        let separator = crate::ui::widgets::atomic::separator::tokens::SeparatorTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let text = crate::ui::widgets::atomic::text::tokens::TextTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let tab = crate::ui::widgets::atomic::tab::tokens::TabTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let slider = crate::ui::widgets::atomic::slider::tokens::SliderTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let text_input = crate::ui::widgets::atomic::text_input::tokens::TextInputTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let toggle = crate::ui::widgets::atomic::toggle::tokens::ToggleTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let toast = crate::ui::widgets::atomic::toast::tokens::ToastTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let tooltip = crate::ui::widgets::atomic::tooltip::tokens::TooltipTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let blackbox_panel =
+            crate::ui::widgets::composite::blackbox_panel::tokens::BlackboxPanelTokens::resolve(
+                &semantic,
+                &components,
+            );
+        let chrome = crate::ui::widgets::composite::chrome::tokens::ChromeTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let context_menu =
+            crate::ui::widgets::composite::context_menu::tokens::ContextMenuTokens::resolve(
+                &semantic,
+                &components,
+            );
+        let dropdown = crate::ui::widgets::composite::dropdown::tokens::DropdownTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let modal = crate::ui::widgets::composite::modal::tokens::ModalTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let panel = crate::ui::widgets::composite::panel::tokens::PanelTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let popup = crate::ui::widgets::composite::popup::tokens::PopupTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let sidebar = crate::ui::widgets::composite::sidebar::tokens::SidebarTokens::resolve(
+            &semantic,
+            &components,
+        );
+        let toolbar = crate::ui::widgets::composite::toolbar::tokens::ToolbarTokens::resolve(
+            &semantic,
+            &components,
+        );
+
+        Tokens {
+            semantic,
+            geometry,
+            name,
+            app,
+            components,
+            button,
+            checkbox,
+            chevron,
+            clock,
+            close_button,
+            color_swatch,
+            drag_handle,
+            dropdown_trigger,
+            item,
+            radio,
+            scrollbar,
+            container,
+            scroll_chevron,
+            separator,
+            text,
+            tab,
+            slider,
+            text_input,
+            toggle,
+            toast,
+            tooltip,
+            blackbox_panel,
+            chrome,
+            context_menu,
+            dropdown,
+            modal,
+            panel,
+            popup,
+            sidebar,
+            toolbar,
         }
     }
 }
