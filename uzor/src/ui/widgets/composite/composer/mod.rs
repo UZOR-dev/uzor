@@ -99,6 +99,9 @@ pub struct ComposerStyle {
     pub send_bg: &'static str,
     /// Send hover.
     pub send_hover: &'static str,
+    /// An empty rich composer swaps send for a voice-chat button. Off by
+    /// default: the HQ page (`#sendbtn`) always shows send.
+    pub voice_when_empty: bool,
 }
 
 impl Default for ComposerStyle {
@@ -125,6 +128,7 @@ impl Default for ComposerStyle {
             btn_fg: tokens::TEXT,
             send_bg: tokens::SEND_BG,
             send_hover: tokens::SEND_HOVER,
+            voice_when_empty: false,
         }
     }
 }
@@ -576,7 +580,7 @@ pub fn draw_composer_rich(ctx: &mut dyn RenderContext, l: &RichComposerLayout, v
             ctx.stroke();
         }
     }
-    draw_buttons(ctx, &l.hits, &view.base, view.is_empty(), st);
+    draw_buttons(ctx, &l.hits, &view.base, st.voice_when_empty && view.is_empty(), st);
     positions
 }
 
