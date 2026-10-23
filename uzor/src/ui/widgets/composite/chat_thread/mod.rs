@@ -5,6 +5,8 @@
 //! Layout and paint are split: [`layout_message`] measures, [`draw_message`] paints
 //! the measured result at a position, so a caller can stack and clip freely.
 
+mod tokens;
+
 use crate::render::{RenderContext, TextAlign};
 use crate::types::Rect;
 use crate::ui::css_text::{fill_text_css, FontMetrics};
@@ -166,10 +168,10 @@ pub struct ThreadStyle {
 impl Default for ThreadStyle {
     fn default() -> Self {
         Self {
-            them_bg: "#1b1b1b",
-            me_bg: "#116dd2",
-            them_fg: "#f5f5f5",
-            me_fg: "#ffffff",
+            them_bg: tokens::THEM_BG,
+            me_bg: tokens::ME_BG,
+            them_fg: tokens::THEM_FG,
+            me_fg: tokens::ME_FG,
             px: 14.0,
             lh: 21.0,
             pad_x: 14.0,
@@ -183,9 +185,9 @@ impl Default for ThreadStyle {
             hdr_gap: 2.0,
             q_px: 12.5,
             q_lh: 18.75,
-            q_bg: "rgba(255,255,255,0.039)",
-            q_bar: "#3a3a3a",
-            q_fg: "#bdbdbd",
+            q_bg: tokens::Q_BG,
+            q_bar: tokens::Q_BAR,
+            q_fg: tokens::Q_FG,
             q_who_weight: 700,
             q_pad_x: 8.0,
             q_pad_y: 4.0,
@@ -193,7 +195,7 @@ impl Default for ThreadStyle {
             q_mb: 6.0,
             sys_px: 12.0,
             sys_lh: 18.0,
-            sys_fg: "#7a7a7a",
+            sys_fg: tokens::SYS_FG,
             sys_pad_y: 2.0,
             sys_margin: 6.0,
             metrics: crate::ui::css_text::INTER,
@@ -203,13 +205,13 @@ impl Default for ThreadStyle {
             rx_h: 24.0,
             rx_pad: 7.0,
             rx_out: 10.0,
-            rx_bg: "#1f1f1f",
-            rx_border_mine: "#353535",
+            rx_bg: tokens::RX_BG,
+            rx_border_mine: tokens::RX_BORDER_MINE,
             rx_px: 13.0,
             rx_n_px: 12.0,
-            rx_n_fg: "#d0d0d0",
+            rx_n_fg: tokens::RX_N_FG,
             rx_who_px: 12.0,
-            rx_who_fg: "#d6d6d6",
+            rx_who_fg: tokens::RX_WHO_FG,
         }
     }
 }
@@ -482,7 +484,7 @@ fn draw_badge(ctx: &mut dyn RenderContext, x: f64, y: f64, v: &MessageView<'_>, 
     let r = b.rect;
     let mine = v.reactions.iter().any(|x| x.mine);
     // box-shadow 0 2px 8px #0006, 1px border (transparent unless one is the viewer's).
-    ctx.set_shadow(0.0, 2.0, 8.0, "rgba(0,0,0,0.4)");
+    ctx.set_shadow(0.0, 2.0, 8.0, tokens::RGBA);
     path_round_rect(ctx, r, r.height / 2.0);
     ctx.set_fill_color(if mine { st.rx_border_mine } else { st.rx_bg });
     ctx.fill();
@@ -496,7 +498,7 @@ fn draw_badge(ctx: &mut dyn RenderContext, x: f64, y: f64, v: &MessageView<'_>, 
     for (i, (px, pw)) in items.iter().enumerate() {
         let rv = &v.reactions[i];
         ctx.set_font(&font(st, 400, st.rx_px));
-        ctx.set_fill_color("#ffffff");
+        ctx.set_fill_color(tokens::ME_FG);
         fill_text_css(ctx, rv.key, r.x + px + 1.0, r.y + 1.0, st.rx_px, lh, st.metrics, TextAlign::Left);
         if v.rx_hover && !rv.who.is_empty() {
             ctx.set_font(&font(st, 400, st.rx_who_px));
@@ -555,7 +557,7 @@ mod tests {
 
     #[test]
     fn mentions_split() {
-        let s = mention_spans("@a1.b x (@cc) e@mail", "#58a6ff", 500);
+        let s = mention_spans("@a1.b x (@cc) e@mail", tokens::C_58A6FF, 500);
         let m: Vec<_> = s.iter().filter(|x| x.color.is_some()).map(|x| x.text.as_str()).collect();
         assert_eq!(m, vec!["@a1.b", "@cc"]);
         assert_eq!(s.iter().map(|x| x.text.as_str()).collect::<String>(), "@a1.b x (@cc) e@mail");

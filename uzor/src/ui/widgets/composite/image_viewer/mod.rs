@@ -7,6 +7,8 @@
 //! selection and what download / close do. [`key_nav`] maps arrow / Escape
 //! keys to the next selection.
 
+mod tokens;
+
 use crate::input::KeyCode;
 use crate::render::RenderContext;
 use crate::types::Rect;
@@ -63,21 +65,21 @@ pub struct ViewerStyle {
 impl Default for ViewerStyle {
     fn default() -> Self {
         Self {
-            backdrop: "rgba(0,0,0,0.86)",
+            backdrop: tokens::BACKDROP,
             radius: 10.0,
             margin_frac: 0.1,
-            caption: "#e6e6e6",
+            caption: tokens::CAPTION,
             caption_px: 13.0,
             thumb: 46.0,
             thumb_gap: 10.0,
             thumb_bottom: 22.0,
-            thumb_ring: "#ffffff",
-            thumb_dim: "rgba(0,0,0,0.35)",
+            thumb_ring: tokens::THUMB_RING,
+            thumb_dim: tokens::THUMB_DIM,
             btn: 30.0,
             btn_gap: 8.0,
-            btn_bg: "rgba(255,255,255,0.10)",
-            btn_hover: "rgba(255,255,255,0.20)",
-            btn_icon: "#f0f0f0",
+            btn_bg: tokens::BTN_BG,
+            btn_hover: tokens::BTN_HOVER,
+            btn_icon: tokens::BTN_ICON,
         }
     }
 }

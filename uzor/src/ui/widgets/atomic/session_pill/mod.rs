@@ -1,6 +1,8 @@
 //! Session pill: a centred, floating rounded label (critter + name + chevron)
 //! that opens the session control panel.
 
+mod tokens;
+
 use crate::input::core::coordinator::LayerId;
 use crate::input::{InputCoordinator, Sense, WidgetKind};
 use crate::render::{RenderContext, TextAlign};
@@ -64,11 +66,11 @@ pub struct SessionPillStyle {
 impl Default for SessionPillStyle {
     fn default() -> Self {
         Self {
-            bg: "#1f1f1f",
-            bg_hover: "#262626",
-            border: "#2b2b2b",
-            text: "#f5f5f5",
-            sub: "#acacac",
+            bg: tokens::BG,
+            bg_hover: tokens::BG_HOVER,
+            border: tokens::BORDER,
+            text: tokens::TEXT,
+            sub: tokens::SUB,
             font: "600 15px Inter, sans-serif",
             font_px: 15.0,
             height: 40.0,
@@ -77,7 +79,7 @@ impl Default for SessionPillStyle {
             pad_r: 13.0,
             avatar: 24.0,
             gap: 10.0,
-            shadow: Some((2.0, 10.0, "rgba(0,0,0,0.333)")),
+            shadow: Some((2.0, 10.0, tokens::SHADOW)),
             chevron_on_hover: true,
         }
     }

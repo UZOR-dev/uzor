@@ -3,6 +3,8 @@
 //! Each layer gets its own scrim; only the top layer takes input. Values are plain
 //! CSS numbers so a host can match a web reference pixel for pixel.
 
+mod tokens;
+
 use crate::render::{RenderContext, TextAlign};
 use crate::types::Rect;
 use crate::ui::css_text::{fill_text_css, INTER};
@@ -142,7 +144,7 @@ pub fn draw_switch(ctx: &mut dyn RenderContext, r: Rect, on: bool, on_color: &st
     let x = r.x + 3.0 + if on { r.width - 6.0 - d } else { 0.0 };
     ctx.begin_path();
     ctx.arc(x + d / 2.0, r.y + 3.0 + d / 2.0, d / 2.0, 0.0, std::f64::consts::TAU);
-    ctx.set_fill_color("#ffffff");
+    ctx.set_fill_color(tokens::WHITE);
     ctx.fill();
 }
 

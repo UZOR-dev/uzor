@@ -1,6 +1,8 @@
 //! Chat message bubble: wrapped text in a rounded box, own messages right
 //! (accent), others left (neutral), optional sender line above.
 
+mod tokens;
+
 use crate::render::{RenderContext, TextAlign, TextBaseline};
 use crate::types::Rect;
 use crate::ui::widgets::atomic::session_pill::path_round_rect;
@@ -40,11 +42,11 @@ pub struct BubbleStyle {
 impl Default for BubbleStyle {
     fn default() -> Self {
         Self {
-            mine_bg: "#116dd2",
-            mine_fg: "#ffffff",
-            other_bg: "#f2f2f4",
-            other_fg: "#18181b",
-            from_fg: "#8e8e96",
+            mine_bg: tokens::MINE_BG,
+            mine_fg: tokens::MINE_FG,
+            other_bg: tokens::OTHER_BG,
+            other_fg: tokens::OTHER_FG,
+            from_fg: tokens::FROM_FG,
             font: "14.5px sans-serif",
             line_h: 21.0,
             max_share: 0.72,

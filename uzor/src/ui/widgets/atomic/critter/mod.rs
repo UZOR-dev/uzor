@@ -8,6 +8,8 @@
 //!   is due, so an idle screen repaints only for blinks; [`critter_look`] is the eye offset
 //!   toward the pointer.
 
+mod tokens;
+
 use crate::input::core::coordinator::LayerId;
 use crate::input::{InputCoordinator, Sense, WidgetKind};
 use crate::render::{emit_svg_path, RenderContext};
@@ -25,10 +27,7 @@ pub const CRITTER_SHAPES: [&str; 7] = [
 ];
 
 /// Body colours.
-pub const CRITTER_PALETTE: [&str; 10] = [
-    "#1677ff", "#ff7a1a", "#ff3d8b", "#8b5cf6", "#14b8a6", "#a855f7", "#22c55e", "#f5b014",
-    "#ef4444", "#06b6d4",
-];
+pub const CRITTER_PALETTE: [&str; 10] = tokens::PALETTE;
 
 /// Which kind of chat the critter stands for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,7 +264,7 @@ pub fn draw_critter_motion(ctx: &mut dyn RenderContext, rect: Rect, view: &Critt
         Off => (0.12, 0.0),
         _ => (1.0, (-12.0f64).to_radians()),
     };
-    ctx.set_fill_color("#0b0b0d");
+    ctx.set_fill_color(tokens::EYE);
     for cx in [23.0, 41.0] {
         ctx.begin_path();
         ctx.ellipse(cx + ex, view.eye_y + ey, 4.0, 6.0 * sy, tilt, 0.0, std::f64::consts::TAU);
@@ -275,7 +274,7 @@ pub fn draw_critter_motion(ctx: &mut dyn RenderContext, rect: Rect, view: &Critt
     // extras: thought dots, attention ring
     match st {
         Thinking => {
-            ctx.set_fill_color("#9ec5ff");
+            ctx.set_fill_color(tokens::THOUGHT);
             for (i, (cx, cy, r)) in [(50.0, 8.0, 2.4), (56.0, 3.0, 1.8)].into_iter().enumerate() {
                 let a = if m.reduced { 1.0 } else { 0.2 + 0.8 * swing(t - 0.5 * i as f64, 1.6) };
                 ctx.set_global_alpha(a);
@@ -288,7 +287,7 @@ pub fn draw_critter_motion(ctx: &mut dyn RenderContext, rect: Rect, view: &Critt
             let f = if m.reduced { 0.0 } else { (t / 1.4).rem_euclid(1.0) };
             let e = 1.0 - (1.0 - f).powi(3); // ease-out
             ctx.set_global_alpha(0.9 * (1.0 - e));
-            ctx.set_stroke_color("#e0a63a");
+            ctx.set_stroke_color(tokens::ATTENTION);
             ctx.set_stroke_width(2.5);
             ctx.begin_path();
             ctx.arc(32.0, 32.0, 30.0 * (1.0 + 0.25 * e), 0.0, std::f64::consts::TAU);

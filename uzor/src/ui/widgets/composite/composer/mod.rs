@@ -2,6 +2,8 @@
 //! mic and a round send button on the right. Draw returns the hit rects.
 //! Metrics and colours follow the HQ web composer (`#box.one`).
 
+mod tokens;
+
 use crate::input::core::coordinator::LayerId;
 use crate::input::{InputCoordinator, Sense, WidgetKind};
 use crate::render::{RenderContext, TextAlign};
@@ -110,19 +112,19 @@ impl Default for ComposerStyle {
             pad: 7.0,
             gap: 8.0,
             btn: 28.0,
-            bg: "#1f1f1f",
-            border: "#353535",
-            border_focus: "#404040",
+            bg: tokens::BG,
+            border: tokens::BORDER,
+            border_focus: tokens::BORDER_FOCUS,
             font: "14.5px Inter, sans-serif",
             font_px: 14.5,
-            text: "#f5f5f5",
-            placeholder: "#5e5e66",
-            caret: "#f5f5f5",
-            btn_bg: "#282828",
-            btn_hover: "#323232",
-            btn_fg: "#f5f5f5",
-            send_bg: "#116dd2",
-            send_hover: "#1884fc",
+            text: tokens::TEXT,
+            placeholder: tokens::PLACEHOLDER,
+            caret: tokens::TEXT,
+            btn_bg: tokens::BTN_BG,
+            btn_hover: tokens::BTN_HOVER,
+            btn_fg: tokens::TEXT,
+            send_bg: tokens::SEND_BG,
+            send_hover: tokens::SEND_HOVER,
         }
     }
 }
@@ -291,7 +293,7 @@ fn draw_buttons(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &Compose
         // Voice chat (empty composer): purple disc, waveform bars.
         round_btn(ctx, hits.send, if hov(ComposerPart::Send) { VOICE_HOVER } else { VOICE_BG });
         let g = Svg::new(hits.send, 17.0);
-        ctx.set_stroke_color("#ffffff");
+        ctx.set_stroke_color(tokens::WHITE);
         ctx.set_stroke_width(2.2 * g.k);
         ctx.begin_path();
         for (x, h) in [(5.0, 4.0), (9.0, 10.0), (12.0, 14.0), (15.0, 8.0), (19.0, 4.0)] {
@@ -302,7 +304,7 @@ fn draw_buttons(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &Compose
     } else {
         // send: <path d="M12 19V5M6 11l6-6 6 6"/> 17px, stroke 2.4, white
         let g = Svg::new(hits.send, 17.0);
-        ctx.set_stroke_color("#ffffff");
+        ctx.set_stroke_color(tokens::WHITE);
         ctx.set_stroke_width(2.4 * g.k);
         ctx.begin_path();
         g.m(ctx, 12.0, 19.0); g.l(ctx, 12.0, 5.0);
@@ -364,9 +366,9 @@ mod grow_tests {
 // ---------------------------------------------------------------------------
 
 /// Voice-chat button fill (empty composer).
-pub const VOICE_BG: &str = "#7c4dff";
+pub const VOICE_BG: &str = tokens::VOICE_BG;
 /// Voice-chat button hover fill.
-pub const VOICE_HOVER: &str = "#9068ff";
+pub const VOICE_HOVER: &str = tokens::VOICE_HOVER;
 
 /// One attachment shown inside the composer.
 #[derive(Clone, Copy, Debug)]
@@ -528,14 +530,14 @@ pub fn draw_composer_rich(ctx: &mut dyn RenderContext, l: &RichComposerLayout, v
                 ctx.begin_path();
                 ctx.rounded_rect(ir.x, top, ir.width, bot - top, 12.0);
                 ctx.clip();
-                ctx.set_fill_color("#111111");
+                ctx.set_fill_color(tokens::C_111111);
                 ctx.fill_rect(ir.x, ir.y, ir.width, ir.height);
                 if let Some(ip) = ctx.image_painter() {
                     ip.draw_image_rgba(rgba, *w, *h, ir.x + (ir.width - iw * k) / 2.0, ir.y + (ir.height - ih * k) / 2.0, iw * k, ih * k);
                 }
                 ctx.restore();
                 if top == ir.y && bot == ir.y + ir.height {
-                ctx.set_stroke_color("#3a3a3a");
+                ctx.set_stroke_color(tokens::C_3A3A3A);
                     ctx.set_stroke_width(1.0);
                     ctx.begin_path();
                     ctx.rounded_rect(ir.x + 0.5, ir.y + 0.5, ir.width - 1.0, ir.height - 1.0, 12.0);
@@ -544,10 +546,10 @@ pub fn draw_composer_rich(ctx: &mut dyn RenderContext, l: &RichComposerLayout, v
             }
             ComposerAttach::File { name } => {
                 path_round_rect(ctx, *ir, 10.0);
-                ctx.set_fill_color("#2a2a2a");
+                ctx.set_fill_color(tokens::C_2A2A2A);
                 ctx.fill();
                 // document glyph
-                ctx.set_fill_color("#58a6ff");
+                ctx.set_fill_color(tokens::C_58A6FF);
                 ctx.fill_rect(ir.x + 12.0, ir.y + 12.0, 12.0, 16.0);
                 ctx.set_font("13px Inter, sans-serif");
                 ctx.set_fill_color(st.text);
@@ -562,9 +564,9 @@ pub fn draw_composer_rich(ctx: &mut dyn RenderContext, l: &RichComposerLayout, v
             let x = l.remove[i];
             ctx.begin_path();
             ctx.arc(x.x + 9.0, x.y + 9.0, 9.0, 0.0, std::f64::consts::TAU);
-            ctx.set_fill_color(if view.hovered_remove == Some(i) { "#000000" } else { "rgba(0,0,0,0.75)" });
+            ctx.set_fill_color(if view.hovered_remove == Some(i) { tokens::BLACK } else { tokens::SCRIM_75 });
             ctx.fill();
-            ctx.set_stroke_color("#ffffff");
+            ctx.set_stroke_color(tokens::WHITE);
             ctx.set_stroke_width(1.6);
             ctx.begin_path();
             ctx.move_to(x.x + 6.0, x.y + 6.0);

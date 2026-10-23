@@ -7,6 +7,8 @@
 //! up regardless of the font's advance; [`encode_key`] is the xterm keyboard
 //! encoding; [`register_terminal`] declares the focusable hit rect.
 
+mod tokens;
+
 use crate::input::core::coordinator::LayerId;
 use crate::input::keyboard::KeyCode;
 use crate::input::{InputCoordinator, ModifierKeys, Sense, WidgetKind};
@@ -69,9 +71,9 @@ pub struct TermStyle {
 impl Default for TermStyle {
     fn default() -> Self {
         Self {
-            bg: "#ffffff",
-            fg: "#18181b",
-            cursor: "#1d77f2",
+            bg: tokens::BG,
+            fg: tokens::FG,
+            cursor: tokens::CURSOR,
             size: 13.0,
             family: "'JetBrains Mono', monospace",
             cell_w: 7.8,
