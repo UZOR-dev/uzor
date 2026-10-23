@@ -169,9 +169,14 @@ pub fn draw_switch(ctx: &mut dyn RenderContext, r: Rect, on: bool, on_color: &st
     fill_round_rect(ctx, r, r.height / 2.0, if on { on_color } else { off_color });
     let d = r.height - 6.0;
     let x = r.x + 3.0 + if on { r.width - 6.0 - d } else { 0.0 };
+    fill_circle(ctx, x + d / 2.0, r.y + 3.0 + d / 2.0, d / 2.0, tokens::WHITE);
+}
+
+/// Fill a circle of radius `rad` centred on `(cx, cy)` (dots, round buttons).
+pub fn fill_circle(ctx: &mut dyn RenderContext, cx: f64, cy: f64, rad: f64, color: &str) {
     ctx.begin_path();
-    ctx.arc(x + d / 2.0, r.y + 3.0 + d / 2.0, d / 2.0, 0.0, std::f64::consts::TAU);
-    ctx.set_fill_color(tokens::WHITE);
+    ctx.arc(cx, cy, rad, 0.0, std::f64::consts::TAU);
+    ctx.set_fill_color(color);
     ctx.fill();
 }
 
@@ -223,6 +228,15 @@ pub fn draw_text_button(ctx: &mut dyn RenderContext, r: Rect, label: &str, s: &T
     ctx.set_font(&s.font());
     ctx.set_fill_color(s.color);
     fill_text_css(ctx, label, r.x + b + s.pad_x, r.y + b + s.pad_y, s.px, s.lh, INTER, TextAlign::Left);
+}
+
+/// Size a text button for `label` at `(x, y)`, paint it, and return its rect (the app
+/// registers the hit).
+pub fn text_button_at(ctx: &mut dyn RenderContext, x: f64, y: f64, label: &str, s: &TextButtonStyle, hovered: bool) -> Rect {
+    let (w, h) = s.size(ctx, label);
+    let r = Rect::new(x, y, w, h);
+    draw_text_button(ctx, r, label, s, hovered);
+    r
 }
 
 /// Single-line field text with placeholder and caret, Inter `px` on a `lh` line
@@ -311,4 +325,26 @@ pub fn draw_close_glyph(ctx: &mut dyn RenderContext, cx: f64, cy: f64, size: f64
     ctx.line_to(cx - h, cy + h);
     ctx.stroke();
     ctx.set_line_cap("butt");
+}
+
+/// Backdrop of a close button.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CloseBg<'a> {
+    /// Glyph only (a hover-less `.round` or an icon button at rest).
+    None,
+    /// A circle filling the button (`border-radius: 50%`).
+    Circle(&'a str),
+    /// A rounded rect with this radius.
+    Round(&'a str, f64),
+}
+
+/// A close button in `r`: its backdrop, then the `✕` glyph (`size` px) centred in it.
+pub fn draw_close_button(ctx: &mut dyn RenderContext, r: Rect, bg: CloseBg<'_>, size: f64, color: &str) {
+    let (cx, cy) = (r.x + r.width / 2.0, r.y + r.height / 2.0);
+    match bg {
+        CloseBg::None => {}
+        CloseBg::Circle(c) => fill_circle(ctx, cx, cy, r.width / 2.0, c),
+        CloseBg::Round(c, rad) => fill_round_rect(ctx, r, rad, c),
+    }
+    draw_close_glyph(ctx, cx, cy, size, color);
 }

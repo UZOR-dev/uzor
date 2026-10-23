@@ -34,6 +34,12 @@
 //! | drawer   | [`drawer`]`(id, area, &mut open)`          | `changed` when the scrim closes it |
 //! | field    | [`field`]`(id, rect)` in the app's own chrome | `text` shown, `focused`; edits itself |
 //!
+//! An app that paints its own chrome (its CSS, not the token theme) and
+//! registers hits itself uses the paint half from
+//! `uzor::ui::widgets::composite::dialog`: `text_button_at` (sized text
+//! button), `draw_close_button` (`✕` on a circle, a rounded rect or bare),
+//! `fill_circle`, `draw_switch`, `draw_card`.
+//!
 //! Overlay-like pieces (select's list, menu, dialog) paint where they are
 //! built: build them last in a panel, or inside an overlay hook, so they sit
 //! on top.
