@@ -49,11 +49,13 @@ impl Default for ScrollStyle {
             friction: 0.95,
             fling_min: 120.0,
             release_ms: 70.0,
-            bar_w: 6.0,
-            bar_inset: 3.0,
+            // The HQ page's thin scrollbar (`::-webkit-scrollbar` 8px, thumb with a
+            // 2px transparent border: 4px painted, 2px from the edge).
+            bar_w: 4.0,
+            bar_inset: 2.0,
             min_thumb: 24.0,
-            thumb: "rgba(255,255,255,0.16)",
-            thumb_hot: "rgba(255,255,255,0.32)",
+            thumb: "#2c2c31",
+            thumb_hot: "#3a3a41",
             fling: !cfg!(target_arch = "wasm32"),
             fling_max_step: 40.0,
         }
