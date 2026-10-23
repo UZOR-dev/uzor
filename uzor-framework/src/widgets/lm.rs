@@ -119,6 +119,11 @@ impl<'a> ButtonBuilder<'a> {
         self
     }
 
+    /// The button's id.
+    pub(crate) fn id_ref(&self) -> &WidgetId {
+        &self.id
+    }
+
     /// Register and draw into `cx`.
     pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) {
         let theme = theme_of(cx);

@@ -5,5 +5,7 @@
 //! `_deprecated/uzor-examples`. They are not a workspace member.
 
 pub mod dashboard;
+pub mod kit_gallery;
 
 pub use dashboard::DashboardApp;
+pub use kit_gallery::Gallery;

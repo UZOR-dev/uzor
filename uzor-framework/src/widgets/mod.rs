@@ -5,7 +5,9 @@
 //! chainable [`lm`] builders are the same surface the [`view!`](crate::view)
 //! macro lowers to (brief M1), retargeted off `layout façade` onto a
 //! [`ContentCx`]. [`raw`] re-exports the level-1 register functions for
-//! callers that draw themselves.
+//! callers that draw themselves. [`kit`] is the stable component kit
+//! (button, input, select, menu, dialog, tabs, list, splitter, tooltip,
+//! toast) with one builder shape and one [`kit::Response`].
 //!
 //! Blackbox panels are not in this module. Overlay chain builders for
 //! modal/dropdown/context menu/popup/panel/sidebar/toolbar were left
@@ -16,6 +18,7 @@ mod atomics;
 mod button;
 mod composites;
 mod host;
+pub mod kit;
 pub mod lm;
 mod paint;
 mod scroll;
