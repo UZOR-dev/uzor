@@ -34,6 +34,12 @@ where
     let (css_w, css_h) = sync_backing_store(canvas, dpr);
     let ctx = context_2d(canvas)?;
     let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
+    // The 2D context keeps its state between frames: a leaked alpha, blend or
+    // shadow from the last frame must not reach the background fill.
+    ctx.set_global_alpha(1.0);
+    let _ = ctx.set_global_composite_operation("source-over");
+    ctx.set_shadow_blur(0.0);
+    ctx.set_shadow_color("rgba(0,0,0,0)");
     ctx.set_fill_style_str(&css_rgba(req.background));
     ctx.fill_rect(0.0, 0.0, css_w, css_h);
 

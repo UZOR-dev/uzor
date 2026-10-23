@@ -60,10 +60,14 @@ pub trait Painter {
 
     /// Set fill color with an additional alpha multiplier.
     ///
-    /// Default: calls [`set_fill_color`] then [`set_global_alpha`].
+    /// Only the fill colour changes: the default passes `rgba(...)` with the
+    /// colour's own alpha times `alpha` to [`set_fill_color`]. It must not
+    /// touch the global alpha, which outlives the call (on canvas2d even the
+    /// frame) and would fade everything painted after it.
     fn set_fill_color_alpha(&mut self, color: &str, alpha: f64) {
-        self.set_fill_color(color);
-        self.set_global_alpha(alpha.clamp(0.0, 1.0));
+        let (r, g, b, a) = super::color::parse_color(color);
+        let a = (a as f64 / 255.0 * alpha.clamp(0.0, 1.0) * 1000.0).round() / 1000.0;
+        self.set_fill_color(&format!("rgba({r},{g},{b},{a})"));
     }
 
     /// Reset global alpha to 1.0 (fully opaque).
@@ -129,4 +133,23 @@ pub trait Painter {
 
     /// Fill the current path using the current fill style.
     fn fill(&mut self);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Painter;
+    use crate::testing::{DrawOp, RecordingRenderContext};
+
+    /// A translucent fill must not leave the global alpha behind: on canvas2d it
+    /// faded the rest of the frame and the next frame's background (web: a
+    /// click in the terminal dimmed the whole screen).
+    #[test]
+    fn fill_color_alpha_keeps_the_global_alpha() {
+        let mut r = RecordingRenderContext::new();
+        r.set_fill_color_alpha("#58a6ff", 0.35);
+        r.set_fill_color_alpha("rgba(0,0,0,0.5)", 0.5);
+        assert!(!r.ops.iter().any(|o| matches!(o, DrawOp::GlobalAlpha(_))), "{:?}", r.ops);
+        assert_eq!(r.ops[0], DrawOp::FillColor("rgba(88,166,255,0.35)".into()));
+        assert_eq!(r.ops[1], DrawOp::FillColor("rgba(0,0,0,0.249)".into()));
+    }
 }
