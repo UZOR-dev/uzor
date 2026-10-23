@@ -87,8 +87,10 @@ pub(crate) fn markup(tree: &A11yTree) -> (String, Option<usize>) {
         h.push_str("\" aria-label=\"");
         escape_into(&mut h, &n.name);
         h.push('"');
+        // A tab's state is its selection (`aria-selected`); checkboxes, radios and switches are checked.
         if let Some(c) = n.checked.or(n.toggled) {
-            h.push_str(if c { " aria-checked=\"true\"" } else { " aria-checked=\"false\"" });
+            let attr = if n.role == A11yRole::Tab { "aria-selected" } else { "aria-checked" };
+            h.push_str(&format!(" {attr}=\"{c}\""));
         }
         if n.disabled {
             h.push_str(" aria-disabled=\"true\"");
@@ -216,6 +218,20 @@ mod tests {
              <div id=\"a11y-1\" role=\"switch\" aria-label=\"Dark\" aria-checked=\"true\"></div>"
         );
         assert_eq!(active, Some(1));
+    }
+
+    #[test]
+    fn tab_state_is_selection_not_checked() {
+        let r = Rect::new(0.0, 0.0, 1.0, 1.0);
+        let mut t = A11yTree::new();
+        t.push(A11yNode::new("t0", A11yRole::Tab, "Board", r).with_checked(true));
+        t.push(A11yNode::new("t1", A11yRole::Tab, "Limits", r).with_checked(false));
+        let (h, _) = markup(&t);
+        assert_eq!(
+            h,
+            "<div id=\"a11y-0\" role=\"tab\" aria-label=\"Board\" aria-selected=\"true\"></div>\
+             <div id=\"a11y-1\" role=\"tab\" aria-label=\"Limits\" aria-selected=\"false\"></div>"
+        );
     }
 
     #[test]
