@@ -57,17 +57,38 @@ pub fn wrap_lines(ctx: &mut dyn RenderContext, text: &str, max_w: f64) -> Vec<St
     let mut out = Vec::new();
     for para in text.split('\n') {
         let mut line = String::new();
-        for word in para.split(' ') {
-            let cand = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
-            if ctx.measure_text(&cand) <= max_w || line.is_empty() {
-                line = cand;
-            } else {
-                out.push(std::mem::take(&mut line));
-                line = word.to_string();
+        for (wi, word) in para.split(' ').enumerate() {
+            // Break opportunities inside a word: after a hyphen between
+            // letters (UAX #14 HY, as browsers do: "one-task-|model").
+            for (si, seg) in hyphen_segments(word).into_iter().enumerate() {
+                let sep = if si == 0 && wi > 0 && !line.is_empty() { " " } else { "" };
+                let cand = format!("{line}{sep}{seg}");
+                if ctx.measure_text(&cand) <= max_w || line.is_empty() {
+                    line = cand;
+                } else {
+                    out.push(std::mem::take(&mut line));
+                    line = seg.to_string();
+                }
             }
         }
         out.push(line);
     }
+    out
+}
+
+/// `word` split after each hyphen that sits between two alphanumerics.
+fn hyphen_segments(word: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let cs: Vec<(usize, char)> = word.char_indices().collect();
+    for i in 1..cs.len().saturating_sub(1) {
+        let (bi, c) = cs[i];
+        if c == '-' && cs[i - 1].1.is_alphanumeric() && cs[i + 1].1.is_alphanumeric() {
+            out.push(&word[start..bi + 1]);
+            start = bi + 1;
+        }
+    }
+    out.push(&word[start..]);
     out
 }
 
@@ -105,4 +126,22 @@ pub fn draw_bubble(ctx: &mut dyn RenderContext, col: Rect, view: &BubbleView<'_>
         ctx.fill_text(l, x + 14.0, y + 9.0 + style.line_h * (i as f64 + 0.5));
     }
     (y - col.y) + h
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::*;
+    use crate::testing::RecordingRenderContext;
+
+    #[test]
+    fn wraps_at_spaces_and_after_hyphens_like_css() {
+        let mut ctx = RecordingRenderContext::with_char_width(1.0);
+        assert_eq!(wrap_lines(&mut ctx, "canary one-task-model", 16.0), vec!["canary one-task-", "model"]);
+        assert_eq!(wrap_lines(&mut ctx, "a b", 10.0), vec!["a b"]);
+        // No break at a slash; a long word stays whole (the caller clips it).
+        assert_eq!(wrap_lines(&mut ctx, "x prompt/tools/sub", 8.0), vec!["x", "prompt/tools/sub"]);
+        // A leading or trailing hyphen is not a break opportunity.
+        assert_eq!(hyphen_segments("-a-b-"), vec!["-a-", "b-"]);
+        assert_eq!(wrap_lines(&mut ctx, "l1\nl2", 80.0), vec!["l1", "l2"]);
+    }
 }
