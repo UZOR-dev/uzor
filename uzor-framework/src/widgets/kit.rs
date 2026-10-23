@@ -32,6 +32,7 @@
 //! | switch   | [`switch`]`(id, rect)` + `.bind(&mut b)`   | `.build_response`: `checked`, `changed` |
 //! | table    | [`table`]`(id, rect, columns, rows)`       | `index` row, `column` header, `changed` |
 //! | drawer   | [`drawer`]`(id, area, &mut open)`          | `changed` when the scrim closes it |
+//! | field    | [`field`]`(id, rect)` in the app's own chrome | `text` shown, `focused`; edits itself |
 //!
 //! Overlay-like pieces (select's list, menu, dialog) paint where they are
 //! built: build them last in a panel, or inside an overlay hook, so they sit
