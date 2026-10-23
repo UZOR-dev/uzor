@@ -577,3 +577,42 @@ fn cursor_with_modal_over_buttons() {
         assert_ne!(cur(&host), CursorIcon::PointingHand, "a button behind the modal shield shows the hand");
     }
 }
+
+/// A fast click (press and release queued before one tick, as a slow
+/// native frame delivers them) still clicks, like the DOM.
+#[test]
+fn same_tick_click_is_not_lost() {
+    let (mut host, _) = boot(false);
+    let win = window_id(&host, "main");
+    let nav = leaf_rect(&host, "main", "nav");
+    let s = navigator_hits(nav).settings;
+    let pos = uzor_framework::Point::new(s.x + s.width / 2.0, s.y + s.height / 2.0);
+    let m = ModifierKeys::default();
+    pointer(&mut host, win, PointerInput::Moved { pos, mods: m });
+    pointer(&mut host, win, PointerInput::Down { pos, button: MouseButton::Left, mods: m });
+    pointer(&mut host, win, PointerInput::Up { pos, button: MouseButton::Left, mods: m });
+    for _ in 0..8 {
+        host.advance(0.016);
+    }
+    assert!(host.snapshot().window(win).unwrap().overlays.iter().any(|o| o.modal), "the same-tick click opened the modal");
+}
+
+/// One pointer jump (a single move event, then quiet) updates the cursor
+/// without a second move.
+#[test]
+fn cursor_follows_a_single_jump() {
+    use uzor::input::cursor::CursorIcon;
+    let (mut host, _) = boot(false);
+    let win = window_id(&host, "main");
+    let nav = leaf_rect(&host, "main", "nav");
+    let s = navigator_hits(nav).settings;
+    let cur = |h: &HeadlessHost<demo::DemoSpec, DemoApp>| h.snapshot().window(win).unwrap().cursor;
+    let vp = host.snapshot().window(win).unwrap().geometry.viewport;
+    for _ in 0..3 {
+        move_to(&mut host, win, s.x + s.width / 2.0, s.y + s.height / 2.0);
+        assert_eq!(cur(&host), CursorIcon::PointingHand);
+        pointer(&mut host, win, PointerInput::Moved { pos: uzor_framework::Point::new(vp.x + vp.width - 4.0, vp.y + vp.height - 4.0), mods: ModifierKeys::default() });
+        host.advance(0.016);
+        assert_ne!(cur(&host), CursorIcon::PointingHand, "one jump off the button leaves the hand");
+    }
+}
