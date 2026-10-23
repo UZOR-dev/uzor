@@ -68,7 +68,10 @@ impl<S: Spec> Kernel<S> {
 
         // ChromeModel duality: the app declares per frame, the layout
         // engine is the single writer; apply only on change.
-        let declared = app.chrome_model(win);
+        let mut declared = app.chrome_model(win);
+        if !crate::types::controls::HOST_HAS_WINDOW_CONTROLS {
+            declared.floating = None;
+        }
         let same = self
             .layout
             .view()

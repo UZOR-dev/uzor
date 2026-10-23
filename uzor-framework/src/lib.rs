@@ -78,7 +78,7 @@ pub use types::command::{
     LayoutPolicy, OverlayCmd, OverlayPolicy, OverlaySize, SplitDir, SplitterPolicy, ThemeCmd,
     WindowCmd,
 };
-pub use types::controls::{ControlButton, ControlsPlacement, FloatingControls, WindowControlsStyle};
+pub use types::controls::{ControlButton, ControlsPlacement, FloatingControls, WindowControlsStyle, HOST_HAS_WINDOW_CONTROLS};
 pub use types::scroll::{ScrollStyle, ScrollView};
 pub use types::error::FrameworkError;
 pub use types::frame::{FrameRequest, RegionPlan, RegionSpec, TimerOwner, Wake, WindowSurface};

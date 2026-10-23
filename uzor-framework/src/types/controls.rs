@@ -11,6 +11,13 @@
 use uzor::render::RenderContext;
 use uzor::Rect;
 
+/// Whether the host has a window of its own to minimize / maximize / close.
+/// A browser page does not (the tab is the browser's), so on the web host
+/// [`ChromeModel::floating`](super::command::ChromeModel::floating) is ignored:
+/// no buttons are painted or hit-tested and no drag band exists. Apps that leave
+/// room under the buttons read this too.
+pub const HOST_HAS_WINDOW_CONTROLS: bool = !cfg!(target_arch = "wasm32");
+
 /// Which corner the buttons sit in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ControlsPlacement {
