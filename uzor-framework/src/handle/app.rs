@@ -179,6 +179,9 @@ pub struct VisualView<S: Spec> {
     pub(crate) captured: bool,
     pub(crate) open_overlays: Vec<S::Overlay>,
     pub(crate) selections: Vec<(WidgetId, uzor::input::text::TextSelection)>,
+    pub(crate) hover_path: Vec<WidgetId>,
+    pub(crate) prev_hover_path: Vec<WidgetId>,
+    pub(crate) click_paths: Vec<Vec<WidgetId>>,
 }
 
 // Manual impl: a derive would demand `S: Default` of the marker type.
@@ -198,6 +201,9 @@ impl<S: Spec> Default for VisualView<S> {
             captured: false,
             open_overlays: Vec::new(),
             selections: Vec::new(),
+            hover_path: Vec::new(),
+            prev_hover_path: Vec::new(),
+            click_paths: Vec::new(),
         }
     }
 }
@@ -211,6 +217,37 @@ impl<S: Spec> VisualView<S> {
     /// `id` is under the pointer.
     pub fn is_hovered(&self, id: &WidgetId) -> bool {
         self.hovered.as_ref() == Some(id)
+    }
+
+    /// The hovered widget and its `register_child` ancestors, root first:
+    /// everything CSS `:hover` matches.
+    pub fn hover_path(&self) -> &[WidgetId] {
+        &self.hover_path
+    }
+
+    /// `id` is hovered or contains the hovered widget (`:hover` on a
+    /// parent).
+    pub fn is_hover_within(&self, id: &WidgetId) -> bool {
+        self.hover_path.contains(id)
+    }
+
+    /// The `mouseleave` / `mouseenter` sets since the last compose: left
+    /// deepest first, entered outermost first; common ancestors get
+    /// neither (they do not bubble).
+    pub fn hover_changes(&self) -> (Vec<WidgetId>, Vec<WidgetId>) {
+        uzor::input::core::events::enter_leave(&self.prev_hover_path, &self.hover_path)
+    }
+
+    /// Dispatch last frame's clicks DOM-style: per click a capture leg
+    /// root → parent, the target, a bubble leg parent → root, honouring
+    /// `stop_propagation` / `prevent_default`. The handler also gets the
+    /// click count.
+    pub fn dispatch_clicks(&self, mut handler: impl FnMut(&mut uzor::input::core::events::EventCx<'_>, u8)) {
+        for (i, (w, n)) in self.clicked.iter().enumerate() {
+            let one = [w.clone()];
+            let path = self.click_paths.get(i).map_or(&one[..], Vec::as_slice);
+            uzor::input::core::events::dispatch(path, true, |cx| handler(cx, *n));
+        }
     }
 
     /// The widget being pressed, if any.

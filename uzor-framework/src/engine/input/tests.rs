@@ -325,6 +325,38 @@ fn clicks_through_the_coordinator_carry_the_click_count() {
     assert!(e.view().clicked(W).is_empty());
 }
 
+/// Clicks and hover carry the DOM propagation path of the parent chain
+/// the frame registered (what `VisualView::dispatch_clicks` walks).
+#[test]
+fn clicked_child_has_a_propagation_path() {
+    use uzor::input::core::events::{dispatch, Phase};
+    let mut e = engine();
+    let chip = |c: &mut InputCoordinator| {
+        let layer = uzor::input::LayerId::main();
+        let p = c.register_composite("chip", uzor::input::WidgetKind::Panel, Rect::new(0.0, 0.0, 80.0, 20.0), Sense::CLICK, &layer);
+        c.register_child(&p, "chip-x", uzor::input::WidgetKind::Button, Rect::new(60.0, 0.0, 20.0, 20.0), Sense::CLICK);
+    };
+    frame(&mut e, 0.5, chip);
+    click(&mut e, 1.0, 70.0, 10.0);
+    frame(&mut e, 1.05, chip);
+    let v = e.view();
+    assert_eq!(v.clicked(W).to_vec(), vec![(id("chip-x"), 1)]);
+    let coord = v.coordinator(W).expect("coordinator");
+    let path = coord.path_of(&id("chip-x"));
+    assert_eq!(path, vec![id("chip"), id("chip-x")]);
+    assert!(coord.is_hover_within(&id("chip")));
+    // The remove button stops the click from reaching the chip.
+    let mut chip_saw = false;
+    dispatch(&path, true, |cx| {
+        if cx.at_target() {
+            cx.stop_propagation();
+        } else if cx.phase == Phase::Bubble {
+            chip_saw = true;
+        }
+    });
+    assert!(!chip_saw);
+}
+
 #[test]
 fn press_and_hover_per_window() {
     let mut e = engine();
@@ -1353,7 +1385,6 @@ fn panel_scene(e: &mut InputEngine) {
         rect_b(),
         Sense::HOVER.with_select(),
     );
-    drop(c);
     report(e, "in1", rect_a(), LABEL);
     report(e, "in2", rect_b(), "inside two");
     label(e, "out", Rect::new(10.0, 200.0, 200.0, 20.0), "outside");
@@ -1512,7 +1543,7 @@ fn ctrl_a_escalates_widget_panel_window() {
 }
 
 #[test]
-fn a_focused_field_consumes_ctrl_c() {
+fn a_focused_field_without_selection_copies_the_page_selection() {
     let mut e = with_fields();
     frame_sel(&mut e, 0.5, |e| {
         two_fields(e.registrar(W).unwrap());
@@ -1533,9 +1564,10 @@ fn a_focused_field_consumes_ctrl_c() {
         one_label(e);
     });
     let fx = key(&mut e, 2.0, KeyCode::C, ctrl());
-    // The field consumed the chord: no field selection -> no copy at all,
-    // and the label selection is not copied either.
-    assert!(!has_copy(&fx, "hello"));
+    // The field consumed the chord (it is not passed on), and having no
+    // selection of its own it copies the page's text selection, as a
+    // chat composer that keeps focus while thread text is selected must.
+    assert!(has_copy(&fx, "hello"));
     assert!(!has_passed(&fx));
 }
 

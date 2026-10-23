@@ -362,7 +362,7 @@ impl<S: Spec> Kernel<S> {
     /// hover / press / focus / capture from the input engine's evaluated
     /// state, the last frame's clicks and the pending scroll, the open
     /// overlay stack bottom to top.
-    fn visual_view(&self, win: WindowId) -> VisualView<S> {
+    fn visual_view(&mut self, win: WindowId) -> VisualView<S> {
         let iview = self.input.view();
         let input = iview.window(win).unwrap_or_default();
         let mut view = VisualView::<S>::default();
@@ -372,6 +372,12 @@ impl<S: Spec> Kernel<S> {
         view.focus_visible = input.focus_visible;
         view.captured = input.captured;
         view.clicked = iview.clicked(win).to_vec();
+        // DOM propagation paths from last frame's parent chain (the
+        // registrations the clicks and the hover were evaluated against).
+        if let Some(coord) = iview.coordinator(win) {
+            view.hover_path = view.hovered.as_ref().map(|h| coord.path_of(h)).unwrap_or_default();
+            view.click_paths = view.clicked.iter().map(|(w, _)| coord.path_of(w)).collect();
+        }
         view.scroll = iview.pending_scroll(win);
         view.scroll_precise = iview.pending_scroll_precise(win);
         (view.pointer, view.button_down) = iview.pointer(win);
@@ -384,6 +390,7 @@ impl<S: Spec> Kernel<S> {
             .iter()
             .map(|o| o.id)
             .collect();
+        view.prev_hover_path = self.hover_paths.insert(win, view.hover_path.clone()).unwrap_or_default();
         view
     }
 }

@@ -491,6 +491,24 @@ impl InputCoordinator {
         self.widgets.iter().rev().find(|w| w.id == *id).and_then(|w| w.parent.clone())
     }
 
+    /// The DOM propagation path of `id`, root first, `id` last — the chain
+    /// `register_child` parents built (see [`super::events`]).
+    pub fn path_of(&self, id: &WidgetId) -> Vec<WidgetId> {
+        super::events::propagation_path(id, |w| self.widget_parent(w))
+    }
+
+    /// The hovered widget and its ancestors, root first (empty when nothing
+    /// is hovered) — the set CSS `:hover` matches.
+    pub fn hover_path(&self) -> Vec<WidgetId> {
+        self.hovered_widget().map(|h| self.path_of(h)).unwrap_or_default()
+    }
+
+    /// `id` is hovered or contains the hovered widget (CSS `:hover` on a
+    /// parent, `:hover-within`).
+    pub fn is_hover_within(&self, id: &WidgetId) -> bool {
+        self.hover_path().contains(id)
+    }
+
 
     /// Push a new layer with an explicit `chrome` flag.
     ///
@@ -2152,6 +2170,24 @@ mod tests {
         assert_eq!(coord.widget_kind(&WidgetId::new("btn")), Some(WidgetKind::Button));
         assert_eq!(coord.widget_parent(&WidgetId::new("btn")), Some(WidgetId::new("panel")));
         assert_eq!(coord.widget_parent(&WidgetId::new("panel")), None);
+    }
+
+    #[test]
+    fn hover_path_includes_composite_parents() {
+        let mut coord = make_coordinator();
+        let layer = LayerId::main();
+        for _ in 0..2 {
+            coord.begin_frame(make_input_at(15.0, 15.0));
+            let panel = coord.register_composite("panel", WidgetKind::Panel, Rect::new(0.0, 0.0, 200.0, 200.0), Sense::NONE, &layer);
+            coord.register_child(&panel, "btn", WidgetKind::Button, Rect::new(10.0, 10.0, 80.0, 30.0), Sense::CLICK);
+            coord.register_atomic("other", WidgetKind::Button, Rect::new(300.0, 0.0, 10.0, 10.0), Sense::CLICK, &layer);
+            coord.end_frame();
+        }
+        assert_eq!(coord.hovered_widget(), Some(&WidgetId::new("btn")));
+        assert_eq!(coord.hover_path(), vec![WidgetId::new("panel"), WidgetId::new("btn")]);
+        assert!(coord.is_hover_within(&WidgetId::new("panel")));
+        assert!(!coord.is_hover_within(&WidgetId::new("other")));
+        assert_eq!(coord.path_of(&WidgetId::new("other")), vec![WidgetId::new("other")]);
     }
 
     #[test]

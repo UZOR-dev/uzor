@@ -119,6 +119,8 @@ pub(crate) struct Kernel<S: Spec> {
     default_tick: TickRate,
     /// Per-window clock of the last painted frame (for `FrameTime::dt`).
     last_frame: VecMap<WindowId, Seconds>,
+    /// Per-window hover path the last compose saw (enter/leave diffs).
+    hover_paths: VecMap<WindowId, Vec<uzor::types::WidgetId>>,
     /// Hop names of the last routed event (design §4.4 `RouteTrace`):
     /// route-phase crossings only; with the `push_input` hop the total
     /// must stay `<= 3`. Always on (the hop tests run in release).
@@ -150,6 +152,7 @@ impl<S: Spec> Kernel<S> {
             outbox: Outbox::default(),
             default_tick: cfg.tick,
             last_frame: VecMap::new(),
+            hover_paths: VecMap::new(),
             trace: Vec::new(),
             trace_max: 0,
             touches: Vec::new(),
