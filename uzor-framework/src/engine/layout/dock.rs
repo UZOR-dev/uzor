@@ -129,10 +129,10 @@ impl DockObs {
                 )
             })
             .collect();
-        leaves.sort_by_key(|l| l.0 .0);
+        uzor::sort::sort_by_key(&mut leaves, |l| l.0 .0);
         let mut headers: Vec<(LeafId, PanelRect)> =
             dock.panel_headers().iter().map(|(k, v)| (*k, *v)).collect();
-        headers.sort_by_key(|h| h.0 .0);
+        uzor::sort::sort_by_key(&mut headers, |h| h.0 .0);
         let mut bars: Vec<_> = dock
             .tab_bars()
             .iter()
@@ -147,7 +147,7 @@ impl DockObs {
                 )
             })
             .collect();
-        bars.sort_by_key(|b: &BarObs| b.0 .0);
+        uzor::sort::sort_by_key(&mut bars, |b: &BarObs| b.0 .0);
         Self {
             leaves,
             headers,
@@ -345,7 +345,7 @@ pub(super) fn set_ratios<P: DockPanel>(
 fn sorted_leaf_rects<P: DockPanel>(dock: &DockState<P>) -> Vec<(LeafId, PanelRect)> {
     let mut v: Vec<(LeafId, PanelRect)> =
         dock.panel_rects().iter().map(|(k, r)| (*k, *r)).collect();
-    v.sort_by_key(|(k, _)| k.0);
+    uzor::sort::sort_by_key(&mut v, |(k, _)| k.0);
     v
 }
 
@@ -442,7 +442,7 @@ pub(super) fn dock_hit<P: DockPanel>(
 
     // Multi-tab bars: the leaf's top strip.
     let mut bars: Vec<_> = dock.tab_bars().iter().collect();
-    bars.sort_by_key(|b| b.container_id.0);
+    uzor::sort::sort_by_key(&mut bars, |b| b.container_id.0);
     for bar in bars {
         let leaf = bar.container_id;
         let Some((_, r)) = leaves.iter().find(|(id, _)| *id == leaf) else {
@@ -474,7 +474,7 @@ pub(super) fn dock_hit<P: DockPanel>(
     // Single-tab headers.
     let mut headers: Vec<(LeafId, PanelRect)> =
         dock.panel_headers().iter().map(|(k, v)| (*k, *v)).collect();
-    headers.sort_by_key(|(k, _)| k.0);
+    uzor::sort::sort_by_key(&mut headers, |(k, _)| k.0);
     for (leaf, h) in headers {
         if rects::contains_panel(&h, p) {
             if tab_new_rect(dock, policy, leaf).is_some_and(|n| rects::contains(n, p)) {
@@ -724,7 +724,7 @@ pub(super) fn take_all<P: DockPanel>(dock: &mut DockState<P>) -> Option<(LeafId,
         .iter()
         .map(|l| (l.id, l.panels.clone(), l.active_tab))
         .collect();
-    leaves.sort_by_key(|l| l.0 .0);
+    uzor::sort::sort_by_key(&mut leaves, |l| l.0 .0);
     let (first, active) = leaves.first().map(|l| (l.0, l.2))?;
     let size = dock
         .panel_rects()
@@ -996,7 +996,7 @@ pub(super) fn dock_view<P: DockPanel>(dock: &DockState<P>, dock_rev: Revision) -
             hidden: l.hidden,
         })
         .collect();
-    leaves.sort_by_key(|l| l.leaf.0);
+    uzor::sort::sort_by_key(&mut leaves, |l| l.leaf.0);
     let separators = dock
         .separators()
         .iter()

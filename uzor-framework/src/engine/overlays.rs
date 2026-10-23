@@ -404,7 +404,7 @@ impl<O: Copy + Eq> OverlayEngine<O> {
             OverlayOp::CloseWindow(win) => match self.windows.remove(&win) {
                 Some(mut s) => {
                     let had = !s.entries.is_empty();
-                    s.entries.sort_by_key(|e| std::cmp::Reverse(e.key.seq));
+                    uzor::sort::sort_by_key(&mut s.entries, |e| std::cmp::Reverse(e.key.seq));
                     for e in &s.entries {
                         fx.push(closed(win, e, CloseCause::WindowClosed));
                     }
@@ -1020,7 +1020,7 @@ fn close_at<O: Copy>(
 ) {
     if s.entries[i].policy.modal {
         let mut above = s.entries.split_off(i + 1);
-        above.sort_by_key(|e| std::cmp::Reverse(e.key.seq));
+        uzor::sort::sort_by_key(&mut above, |e| std::cmp::Reverse(e.key.seq));
         for e in above {
             forget_press(s, e.slot);
             fx.push(closed(win, &e, cause));

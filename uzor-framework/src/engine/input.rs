@@ -825,7 +825,7 @@ impl PerWindowInput {
                 (r.y, r.x, w.clone())
             })
             .collect();
-        ids.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
+        uzor::sort::sort_by(&mut ids, |a, b| a.0.total_cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
         ids.into_iter().map(|(_, _, w)| w).collect()
     }
 

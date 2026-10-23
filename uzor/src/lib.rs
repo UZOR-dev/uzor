@@ -53,6 +53,7 @@ pub use self::core as engine;
 /// Per-cluster text shaper (requires feature `shaper` / cosmic-text).
 #[cfg(feature = "shaper")]
 pub mod shaper;
+pub mod sort;
 
 /// Headless event-synthesis + a11y-tree query test harness. Enable only in
 /// a test crate's `[dev-dependencies]` (feature-unified automatically for

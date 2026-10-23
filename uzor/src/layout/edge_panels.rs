@@ -102,7 +102,7 @@ impl EdgePanels {
             .iter()
             .filter(move |s| s.side == side && s.visible)
             .collect();
-        v.sort_by_key(|s| s.order);
+        crate::sort::sort_by_key(&mut v, |s| s.order);
         v.into_iter()
     }
 

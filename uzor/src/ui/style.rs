@@ -428,7 +428,7 @@ impl Sheet {
             s.custom = p.custom.clone();
         }
         let mut hits: Vec<&Rule> = self.rules.iter().filter(|r| r.sel.matches(n)).collect();
-        hits.sort_by_key(|r| (r.sel.specificity(), r.order));
+        crate::sort::sort_by_key(&mut hits, |r| (r.sel.specificity(), r.order));
         // Custom properties first (they cascade, then every var() sees the element's values).
         for r in &hits {
             for (k, v) in &r.decls {

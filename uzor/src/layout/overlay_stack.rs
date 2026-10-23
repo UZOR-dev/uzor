@@ -54,7 +54,7 @@ impl OverlayStack {
 
     /// Sort entries ascending by z (lowest z rendered first — highest drawn on top).
     pub fn sort_by_z(&mut self, table: &ZLayerTable) {
-        self.entries.sort_by_key(|e| table.z_for(e.kind));
+        crate::sort::sort_by_key(&mut self.entries, |e| table.z_for(e.kind));
     }
 
     /// Return the entries slice (use after `sort_by_z` for draw order).

@@ -623,7 +623,7 @@ impl InputCoordinator {
     ) -> Option<&RegisteredWidget> {
         // Sort layers by z-order (highest first)
         let mut sorted_layers = self.layers.clone();
-        sorted_layers.sort_by(|a, b| b.z_order.cmp(&a.z_order));
+        crate::sort::sort_by(&mut sorted_layers, |a, b| b.z_order.cmp(&a.z_order));
 
         // Once a modal layer has been crossed with no match, only layers
         // flagged `chrome` remain reachable for the rest of the scan —
