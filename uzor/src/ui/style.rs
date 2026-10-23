@@ -164,8 +164,17 @@ impl Selector {
 #[derive(Clone, Debug)]
 struct Rule {
     sel: Selector,
+    src: String,
     order: usize,
     decls: Vec<(String, String)>,
+}
+
+/// One applied declaration, as reported by [`Sheet::resolve_traced`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Applied {
+    pub property: String,
+    pub value: String,
+    pub selector: String,
 }
 
 /// A parsed style sheet.
@@ -208,7 +217,7 @@ impl Sheet {
                     continue;
                 }
                 let order = sheet.rules.len();
-                sheet.rules.push(Rule { sel: Selector::parse(s)?, order, decls: decls.clone() });
+                sheet.rules.push(Rule { sel: Selector::parse(s)?, src: s.trim().to_string(), order, decls: decls.clone() });
             }
             rest = &rest[close + 1..];
         }
@@ -236,6 +245,13 @@ impl Sheet {
     /// Cascade every matching rule (specificity, then source order) over the inherited
     /// properties of `parent`.
     pub fn resolve(&self, n: &Node<'_>, parent: Option<&Style>) -> Style {
+        self.resolve_traced(n, parent).0
+    }
+
+    /// [`Sheet::resolve`] plus, per applied declaration in cascade order, the property, its
+    /// substituted value and the selector of the rule it came from (what an inspector shows).
+    pub fn resolve_traced(&self, n: &Node<'_>, parent: Option<&Style>) -> (Style, Vec<Applied>) {
+        let mut trace = Vec::new();
         let mut s = Style::default();
         if let Some(p) = parent {
             s.color = p.color.clone();
@@ -254,6 +270,7 @@ impl Sheet {
                     lh_raw = Some(v.clone());
                 }
                 apply(&mut s, k, &v);
+                trace.push(Applied { property: k.clone(), value: v, selector: r.src.clone() });
             }
         }
         // A unitless line-height multiplies the final font size.
@@ -262,7 +279,7 @@ impl Sheet {
                 s.line_height = Some(m * s.font_size.unwrap_or(16.0));
             }
         }
-        s
+        (s, trace)
     }
 }
 
@@ -373,6 +390,16 @@ mod tests {
         // colour and line-height inherit (a computed px line-height, as in CSS); background does not
         assert_eq!((pill.color.as_deref(), pill.font_size, pill.line_height, pill.background), (Some("#f5f5f5"), Some(11.5), Some(21.0), None));
         assert_eq!(pill.padding, Some([0.0, 8.0, 0.0, 8.0]));
+    }
+
+    #[test]
+    fn trace_reports_rule_sources_in_cascade_order() {
+        let sh = Sheet::parse(":root{--a:#111} #x{color:var(--a)} .b, button{color:#222;gap:2px}").unwrap();
+        let (s, tr) = sh.resolve_traced(&Node::new("button").class("b").id("x"), None);
+        assert_eq!(s.color.as_deref(), Some("#111"));
+        let sel: Vec<_> = tr.iter().map(|a| (a.property.as_str(), a.selector.as_str())).collect();
+        assert_eq!(sel, [("color", "button"), ("gap", "button"), ("color", ".b"), ("gap", ".b"), ("color", "#x")]);
+        assert_eq!(tr.last().unwrap().value, "#111");
     }
 
     #[test]

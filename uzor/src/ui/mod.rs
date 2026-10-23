@@ -6,5 +6,7 @@ pub mod effects;
 pub mod i18n;
 pub mod style;
 pub mod flow;
+#[cfg(feature = "inspector")]
+pub mod inspector;
 pub mod themes;
 pub mod widgets;

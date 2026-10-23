@@ -44,6 +44,8 @@ shaper = ["dep:cosmic-text"]
 # EventProcessor / a11y types. Enable only in a test crate's
 # `[dev-dependencies]`, never in a shipped app's `[dependencies]`.
 testing = []
+# DevTools-like overlay (`uzor::ui::inspector`). Off by default; adds nothing when off.
+inspector = []
 
 [dev-dependencies]
 env_logger = "0.10"
