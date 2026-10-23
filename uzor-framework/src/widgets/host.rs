@@ -21,10 +21,17 @@ pub trait ContentCx<'a> {
         &mut self,
         f: impl FnOnce(&mut dyn RenderContext, &mut Widgets<'a>, &VisualView<Self::Spec>, &Tokens) -> R,
     ) -> R;
+
+    /// Report the focused field's caret rect so the OS IME window opens there.
+    fn ime_area(&mut self, _rect: uzor::Rect) {}
 }
 
 impl<'a, S: Spec> ContentCx<'a> for PanelCx<'a, S> {
     type Spec = S;
+
+    fn ime_area(&mut self, rect: uzor::Rect) {
+        self.out.ime_area(rect);
+    }
 
     fn with_paint<R>(
         &mut self,
@@ -36,6 +43,10 @@ impl<'a, S: Spec> ContentCx<'a> for PanelCx<'a, S> {
 
 impl<'a, S: Spec> ContentCx<'a> for OverlayCx<'a, S> {
     type Spec = S;
+
+    fn ime_area(&mut self, rect: uzor::Rect) {
+        self.out.ime_area(rect);
+    }
 
     fn with_paint<R>(
         &mut self,

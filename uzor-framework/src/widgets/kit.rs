@@ -19,7 +19,7 @@
 //! | Piece    | Start                          | Reports                         |
 //! |----------|--------------------------------|---------------------------------|
 //! | button   | [`button`]`(id, rect)`         | `.on_click`, `.bind_count`      |
-//! | input    | [`input`]`(id, rect, text)`    | hovered / focused / clicked     |
+//! | input    | [`input`]`(id, rect, &mut text)` | `changed`, focused; edits itself |
 //! | select   | [`select`]`(id, rect, options)`| `index` picked, `changed`       |
 //! | menu     | [`menu`]`(id, at, items, open)`| `index` picked                  |
 //! | dialog   | [`dialog`]`(id, rect)`         | `index` footer button, `clicked` close |
@@ -28,6 +28,10 @@
 //! | splitter | [`splitter`]`(id, axis, span, &mut pos)` | `changed`, `pressed` while dragging |
 //! | tooltip  | [`tooltip`]`(id, rect)`        | —                               |
 //! | toast    | [`toasts`]`(id, area, &mut stack, now_ms)` | `changed` while any is shown |
+//! | checkbox | [`checkbox`]`(id, rect)` + `.bind(&mut b)` | `.build_response`: `checked`, `changed` |
+//! | switch   | [`switch`]`(id, rect)` + `.bind(&mut b)`   | `.build_response`: `checked`, `changed` |
+//! | table    | [`table`]`(id, rect, columns, rows)`       | `index` row, `column` header, `changed` |
+//! | drawer   | [`drawer`]`(id, area, &mut open)`          | `changed` when the scrim closes it |
 //!
 //! Overlay-like pieces (select's list, menu, dialog) paint where they are
 //! built: build them last in a panel, or inside an overlay hook, so they sit
@@ -36,7 +40,7 @@
 //! ```ignore
 //! use uzor_framework::widgets::kit;
 //! let r = kit::tabs("settings-tabs", tabs_rect, &["General", "Usage"]).bind(&mut self.tab).build(cx);
-//! kit::input("name", name_rect, &self.name).placeholder("Name").build(cx);
+//! kit::input("name", name_rect, &mut self.name).placeholder("Name").build(cx);
 //! if kit::button("save", save_rect).text("Save").build_response(cx).clicked { self.save(); }
 //! ```
 
@@ -48,7 +52,7 @@ use uzor::ui::widgets::atomic::separator::{
 };
 use uzor::ui::widgets::atomic::tab::{draw_tab, register_tab_on_layer, TabConfig, TabSettings, TabView};
 use uzor::ui::widgets::atomic::text_input::{
-    draw_input, InputType, InputView, TextFieldConfig, TextInputSettings,
+    draw_input, draw_input_cursor, InputType, InputView, TextFieldConfig as InputConfig, TextInputSettings,
 };
 use uzor::ui::widgets::atomic::toast::{draw_toast_stack, ToastStackState};
 use uzor::ui::widgets::composite::context_menu::{
@@ -65,6 +69,7 @@ use uzor::ui::widgets::composite::modal::{
     ModalSettings, ModalState, ModalView,
 };
 use uzor::ui::widgets::atomic::button::ButtonView;
+use uzor::render::RenderContext;
 use uzor::{Rect, WidgetId, WidgetState};
 
 use crate::handle::VisualView;
@@ -75,7 +80,10 @@ use super::host::ContentCx;
 use super::paint::{interaction_state, parts, theme_of};
 use super::splitter::{grab_rect, register as register_splitter, Splitter, SplitterEvent};
 
-pub use super::lm::{button, tooltip, ButtonBuilder, TooltipBuilder};
+pub use super::lm::{
+    button, checkbox, toggle as switch, tooltip, ButtonBuilder, CheckboxBuilder, ToggleBuilder as SwitchBuilder,
+    TooltipBuilder,
+};
 pub use super::splitter::Axis;
 pub use uzor::ui::widgets::atomic::toast::{ToastSeverity, ToastType};
 
@@ -94,6 +102,10 @@ pub struct Response {
     pub changed: bool,
     /// The part picked this frame: tab, row, option, menu item or footer button.
     pub index: Option<usize>,
+    /// A table's header column clicked this frame (for sorting).
+    pub column: Option<usize>,
+    /// The state a checkbox or switch shows after this frame.
+    pub checked: bool,
 }
 
 impl Response {
@@ -138,31 +150,71 @@ impl<'a> ButtonBuilder<'a> {
     }
 }
 
+// -- checkbox / switch ------------------------------------------------------
+
+impl<'a> CheckboxBuilder<'a> {
+    /// [`build`](Self::build), name it for assistive tech, and report:
+    /// `checked` is the new state, `changed` a user flip.
+    pub fn build_response<'c, C: ContentCx<'c>>(self, cx: &mut C) -> Response {
+        let (id, label) = self.id_label();
+        let (id, label) = (id.clone(), label.unwrap_or("").to_owned());
+        let on = self.build(cx);
+        cx.with_paint(|_, w, v, _| {
+            w.coord.set_a11y(&id, &label, Some(on));
+            let r = Response::of(v, &id);
+            Response { changed: r.clicked, checked: on, ..r }
+        })
+    }
+}
+
+impl<'a> SwitchBuilder<'a> {
+    /// [`build`](Self::build), name it for assistive tech, and report:
+    /// `checked` is the new state, `changed` a user flip.
+    pub fn build_response<'c, C: ContentCx<'c>>(self, cx: &mut C) -> Response {
+        let (id, label, disabled) = self.id_label();
+        let (id, label) = (id.clone(), label.unwrap_or("").to_owned());
+        let on = self.build(cx);
+        cx.with_paint(|_, w, v, _| {
+            w.coord.set_a11y(&id, &label, Some(on));
+            let r = Response::of(v, &id);
+            Response { changed: r.clicked && !disabled, checked: on, ..r }
+        })
+    }
+}
+
 // -- input ------------------------------------------------------------------
 
-/// Single-line text field. Start with [`input`].
+/// Single-line editable text field. Start with [`input`].
+///
+/// The framework's text store edits it: caret, selection (drag, double and
+/// triple click, Shift+arrows, select all), clipboard, IME composition with
+/// the candidate window at the caret, and undo / redo (Ctrl+Z, Ctrl+Shift+Z
+/// or Ctrl+Y; typing undoes a word at a time). The bound `String` is
+/// two-way: a user edit is written back to it (`changed`), and a value the
+/// app sets is pushed into the field, which drops its undo history the way
+/// `input.value = ..` does. Enter reports `TextIntent::Submitted`.
 pub struct InputBuilder<'a> {
     id: WidgetId,
     rect: Rect,
-    text: &'a str,
+    value: &'a mut String,
     placeholder: &'a str,
     label: Option<&'a str>,
-    cursor: Option<usize>,
     kind: InputType,
     disabled: bool,
+    max_len: Option<usize>,
 }
 
-/// A text field showing `text` (the app owns the value).
-pub fn input<'a>(id: impl Into<WidgetId>, rect: Rect, text: &'a str) -> InputBuilder<'a> {
+/// An editable text field bound to `value`.
+pub fn input<'a>(id: impl Into<WidgetId>, rect: Rect, value: &'a mut String) -> InputBuilder<'a> {
     InputBuilder {
         id: id.into(),
         rect,
-        text,
+        value,
         placeholder: "",
         label: None,
-        cursor: None,
         kind: InputType::Text,
         disabled: false,
+        max_len: None,
     }
 }
 
@@ -177,49 +229,99 @@ impl<'a> InputBuilder<'a> {
         self.label = Some(l);
         self
     }
-    /// Caret position in chars (default: end of text).
-    pub fn cursor(mut self, c: usize) -> Self {
-        self.cursor = Some(c);
-        self
-    }
     /// Field kind (text, number, search, password).
     pub fn kind(mut self, k: InputType) -> Self {
         self.kind = k;
         self
     }
-    /// Masked password field.
+    /// Masked password field (copy and cut are refused).
     pub fn password(self) -> Self {
         self.kind(InputType::Password)
     }
-    /// Disabled colours; no focus.
+    /// Most chars the field takes, like `maxlength`.
+    pub fn max_len(mut self, n: usize) -> Self {
+        self.max_len = Some(n);
+        self
+    }
+    /// Disabled colours; not focusable or editable.
     pub fn disabled(mut self, on: bool) -> Self {
         self.disabled = on;
         self
     }
 
-    /// Register and draw.
+    /// Register, sync the value, and draw.
     pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> Response {
         let theme = theme_of(cx);
-        cx.with_paint(|render, widgets, v, _| {
-            let r = Response::of(v, &self.id);
-            let config = if self.kind == InputType::Password { TextFieldConfig::password() } else { TextFieldConfig::text() };
-            let settings = TextInputSettings::with_config(config).with_theme(Box::new(theme));
-            let (coord, _, layer) = parts(widgets);
-            uzor::ui::widgets::atomic::text_input::register(coord, self.id.clone(), self.rect, layer, &settings);
-            coord.set_a11y(&self.id, self.label.unwrap_or(self.placeholder), None);
+        let InputBuilder { id, rect, value, placeholder, label, kind, disabled, max_len } = self;
+        let (r, ime) = cx.with_paint(|render, widgets, v, _| {
+            let mut r = Response::of(v, &id);
+            let settings = TextInputSettings::with_config(InputConfig::text()).with_theme(Box::new(theme));
+            let (coord, states, layer) = parts(widgets);
+            if disabled {
+                coord.register_atomic(id.clone(), WidgetKind::Custom, rect, Sense::HOVER, layer);
+            } else {
+                let mut config = if kind == InputType::Password { uzor::TextFieldConfig::password() } else { uzor::TextFieldConfig::text() };
+                if let Some(n) = max_len {
+                    config = config.with_max_len(n);
+                }
+                coord.set_default_layer(Some(layer.clone()));
+                coord.register_text_field(id.clone(), rect, config);
+                coord.set_default_layer(None);
+            }
+            coord.set_a11y(&id, label.unwrap_or(placeholder), None);
+            // Two-way sync against the value both sides saw last frame.
+            let synced = states.get_or_insert_with(WidgetId::from(format!("{}:value", id.as_str())), String::new);
+            let fields = coord.text_fields_mut();
+            if fields.has_field(&id) {
+                let now = fields.text(&id).to_owned();
+                if now != *synced {
+                    *value = now.clone();
+                    *synced = now;
+                    r.changed = true;
+                } else if *value != *synced {
+                    fields.set_text(&id, value);
+                    *synced = value.clone();
+                }
+            }
+            let st = fields.field_state(&id);
+            let (shown, caret, preedit) = st.map(|s| s.display()).unwrap_or_else(|| (value.clone(), value.chars().count(), None));
+            let selection = st.filter(|_| preedit.is_none()).and_then(|s| s.selection_range());
+            let shown = if kind == InputType::Password { "\u{2022}".repeat(shown.chars().count()) } else { shown };
+            let focused = !disabled && (r.focused || fields.is_focused(&id));
+            r.focused = focused;
             let view = InputView {
-                text: self.text,
-                placeholder: self.placeholder,
-                cursor: self.cursor.unwrap_or_else(|| self.text.chars().count()),
-                selection: None,
-                focused: r.focused && !self.disabled,
-                disabled: self.disabled,
-                input_type: self.kind,
+                text: &shown,
+                placeholder,
+                cursor: caret,
+                selection,
+                focused,
+                disabled,
+                input_type: kind,
             };
-            let ws = interaction_state(v, &self.id, self.disabled);
-            draw_input(render, self.rect, ws, &view, &settings);
-            r
-        })
+            let ws = interaction_state(v, &id, disabled);
+            let res = draw_input(render, rect, ws, &view, &settings);
+            let tint = settings.theme.cursor();
+            let mut ime = None;
+            if focused {
+                draw_input_cursor(render, res.cursor_x, res.cursor_y, res.cursor_height, 1.0, tint);
+                ime = Some(Rect::new(res.cursor_x, res.cursor_y, 1.0, res.cursor_height));
+            }
+            if let Some((a, b)) = preedit {
+                // Composition text is underlined, as the DOM draws it.
+                let x = |i: usize| res.char_x_positions.get(i).copied().unwrap_or(res.cursor_x);
+                draw_input_cursor(render, x(a), res.cursor_y + res.cursor_height, (x(b) - x(a)).max(0.0), 1.0, tint);
+            }
+            let fields = coord.text_fields_mut();
+            if let Some(s) = fields.field_state(&id) {
+                let pos = s.buffer_positions(res.char_x_positions);
+                fields.update_field(&id, (rect.x, rect.y, rect.width, rect.height), pos);
+            }
+            (r, ime)
+        });
+        if let Some(at) = ime {
+            cx.ime_area(at);
+        }
+        r
     }
 }
 
@@ -365,6 +467,255 @@ impl<'a> ListBuilder<'a> {
             if let Some(b) = self.bind {
                 *b = Some(i);
             }
+        }
+        r
+    }
+}
+
+// -- table ------------------------------------------------------------------
+
+/// A table with a header row and selectable body rows. Start with [`table`].
+pub struct TableBuilder<'a> {
+    id: WidgetId,
+    rect: Rect,
+    columns: &'a [&'a str],
+    rows: &'a [Vec<String>],
+    tracks: Option<&'a str>,
+    row_height: f64,
+    scroll: f64,
+    selected: Option<usize>,
+    bind: Option<&'a mut Option<usize>>,
+    font: &'a str,
+}
+
+/// A table of `rows` under `columns` in `rect`. Parts are `"{id}:col:{j}"`
+/// (header cells, a click reports `column`) and `"{id}:row:{i}"` (rows, a
+/// click reports `index`). Rows outside `rect` after `.scroll` are skipped.
+pub fn table<'a>(id: impl Into<WidgetId>, rect: Rect, columns: &'a [&'a str], rows: &'a [Vec<String>]) -> TableBuilder<'a> {
+    TableBuilder {
+        id: id.into(),
+        rect,
+        columns,
+        rows,
+        tracks: None,
+        row_height: 28.0,
+        scroll: 0.0,
+        selected: None,
+        bind: None,
+        font: "13px sans-serif",
+    }
+}
+
+impl<'a> TableBuilder<'a> {
+    /// Column widths as CSS grid tracks (`"2fr 1fr 80px"`, `minmax()`); default equal `1fr`.
+    pub fn columns(mut self, tracks: &'a str) -> Self {
+        self.tracks = Some(tracks);
+        self
+    }
+    /// Header and row height in px (default 28).
+    pub fn row_height(mut self, h: f64) -> Self {
+        self.row_height = h;
+        self
+    }
+    /// Body scroll offset in px (the header stays put, like `position: sticky`).
+    pub fn scroll(mut self, y: f64) -> Self {
+        self.scroll = y;
+        self
+    }
+    /// The highlighted row.
+    pub fn selected(mut self, i: Option<usize>) -> Self {
+        self.selected = i;
+        self
+    }
+    /// Read the selection from `i` and write a row click back to it.
+    pub fn bind(mut self, i: &'a mut Option<usize>) -> Self {
+        self.selected = *i;
+        self.bind = Some(i);
+        self
+    }
+    /// Cell font shorthand.
+    pub fn font(mut self, f: &'a str) -> Self {
+        self.font = f;
+        self
+    }
+    /// Body content height, for a scrollbar.
+    pub fn content_height(&self) -> f64 {
+        self.rows.len() as f64 * self.row_height
+    }
+
+    /// Register and draw.
+    pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> Response {
+        use uzor::ui::widgets::atomic::text::theme::TextTheme;
+        use uzor::ui::widgets::composite::panel::theme::PanelTheme;
+        let theme = theme_of(cx);
+        let Self { id, rect, columns, rows, tracks, row_height, scroll, selected, bind, font } = self;
+        let mut r = cx.with_paint(|render, widgets, v, _| {
+            let mut r = Response::of(v, &id);
+            r.index = picked(v, &id, "row");
+            r.column = picked(v, &id, "col");
+            let (coord, _, layer) = parts(widgets);
+            let even = vec!["1fr"; columns.len().max(1)].join(" ");
+            let spec = tracks.unwrap_or(&even);
+            let cols = uzor::ui::flow::grid_tracks(rect.width, &uzor::ui::flow::parse_tracks(spec, rect.width, 0.0), 0.0);
+            let sel = r.index.or(selected);
+            render.set_font(font);
+            render.set_text_align(uzor::render::TextAlign::Left);
+            render.set_text_baseline(uzor::render::TextBaseline::Middle);
+            let cells = |render: &mut dyn RenderContext, y: f64, texts: &mut dyn Iterator<Item = &str>, color: &str| {
+                render.set_fill_color(color);
+                for ((x, w), t) in cols.iter().zip(texts) {
+                    render.save();
+                    render.clip_rect(rect.x + x, y, *w, row_height);
+                    render.fill_text(t, rect.x + x + 8.0, y + row_height / 2.0);
+                    render.restore();
+                }
+            };
+            // Header.
+            render.set_fill_color(theme.column_header_bg());
+            render.fill_rect(rect.x, rect.y, rect.width, row_height);
+            for (j, (x, w)) in cols.iter().enumerate().take(columns.len()) {
+                let cid = child(&id, "col", j);
+                coord.register_atomic(cid.clone(), WidgetKind::Item, Rect::new(rect.x + x, rect.y, *w, row_height), focusable(), layer);
+                coord.set_a11y(&cid, columns[j], None);
+                r.hovered |= v.is_hovered(&cid);
+                r.focused |= v.is_focused(&cid);
+            }
+            cells(render, rect.y, &mut columns.iter().copied(), theme.column_header_text());
+            // Body.
+            let (top, bottom) = (rect.y + row_height, rect.y + rect.height);
+            for (i, row) in rows.iter().enumerate() {
+                let y = top + i as f64 * row_height - scroll;
+                if y < top || y + row_height > bottom {
+                    continue;
+                }
+                let rid = child(&id, "row", i);
+                let rr = Rect::new(rect.x, y, rect.width, row_height);
+                coord.register_atomic(rid.clone(), WidgetKind::Item, rr, focusable(), layer);
+                coord.set_a11y(&rid, &row.join(", "), Some(sel == Some(i)));
+                let hov = v.is_hovered(&rid);
+                r.hovered |= hov;
+                r.focused |= v.is_focused(&rid);
+                let bg = if sel == Some(i) { theme.row_bg_selected() } else if hov { theme.row_bg_hover() } else { theme.row_bg_normal() };
+                render.set_fill_color(bg);
+                render.fill_rect(rr.x, rr.y, rr.width, rr.height);
+                render.set_fill_color(theme.divider());
+                render.fill_rect(rr.x, rr.y + rr.height - 1.0, rr.width, 1.0);
+                cells(render, y, &mut row.iter().map(String::as_str), theme.text_color());
+            }
+            r
+        });
+        if let Some(i) = r.index {
+            r.changed = Some(i) != selected;
+            if let Some(b) = bind {
+                *b = Some(i);
+            }
+        }
+        r
+    }
+}
+
+// -- drawer -----------------------------------------------------------------
+
+/// The edge a drawer slides from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Side {
+    /// From the left edge.
+    Left,
+    /// From the right edge (default).
+    #[default]
+    Right,
+}
+
+/// A side panel over the content with a scrim. Start with [`drawer`].
+pub struct DrawerBuilder<'a> {
+    id: WidgetId,
+    area: Rect,
+    open: &'a mut bool,
+    side: Side,
+    width: f64,
+    title: Option<&'a str>,
+    progress: f64,
+    dim: bool,
+}
+
+/// A drawer over `area`, shown while `*open`. A click on the scrim
+/// (`"{id}:scrim"`) clears `open` and reports `changed`. Paint the body in
+/// [`DrawerBuilder::body_rect`] after `build`.
+pub fn drawer<'a>(id: impl Into<WidgetId>, area: Rect, open: &'a mut bool) -> DrawerBuilder<'a> {
+    DrawerBuilder { id: id.into(), area, open, side: Side::Right, width: 320.0, title: None, progress: 1.0, dim: true }
+}
+
+impl<'a> DrawerBuilder<'a> {
+    /// Edge it slides from.
+    pub fn side(mut self, s: Side) -> Self {
+        self.side = s;
+        self
+    }
+    /// Panel width in px (default 320, capped to the area).
+    pub fn width(mut self, w: f64) -> Self {
+        self.width = w;
+        self
+    }
+    /// Accessible name.
+    pub fn title(mut self, t: &'a str) -> Self {
+        self.title = Some(t);
+        self
+    }
+    /// Slide position, 0 (hidden) to 1 (shown): drive it from a
+    /// [`Motion`](uzor::ui::motion::Motion) value or a timer for an animated open.
+    pub fn progress(mut self, t: f64) -> Self {
+        self.progress = t.clamp(0.0, 1.0);
+        self
+    }
+    /// Dim the content behind (default on).
+    pub fn dim(mut self, on: bool) -> Self {
+        self.dim = on;
+        self
+    }
+    /// The panel's rect at the current progress.
+    pub fn body_rect(&self) -> Rect {
+        let w = self.width.min(self.area.width);
+        let shown = w * self.progress;
+        let x = match self.side {
+            Side::Left => self.area.x - w + shown,
+            Side::Right => self.area.x + self.area.width - shown,
+        };
+        Rect::new(x, self.area.y, w, self.area.height)
+    }
+
+    /// Register and draw the scrim and the panel frame.
+    pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> Response {
+        use uzor::ui::widgets::composite::modal::theme::ModalTheme;
+        use uzor::ui::widgets::composite::panel::theme::PanelTheme;
+        if !*self.open {
+            return Response::default();
+        }
+        let theme = theme_of(cx);
+        let body = self.body_rect();
+        let scrim = WidgetId::from(format!("{}:scrim", self.id.as_str()));
+        let r = cx.with_paint(|render, widgets, v, _| {
+            let (coord, _, layer) = parts(widgets);
+            coord.register_atomic(scrim.clone(), WidgetKind::Custom, self.area, Sense::CLICK, layer);
+            coord.register_atomic(self.id.clone(), WidgetKind::Custom, body, Sense::CLICK | Sense::HOVER, layer);
+            coord.set_a11y(&self.id, self.title.unwrap_or(""), None);
+            if self.dim {
+                render.set_global_alpha(self.progress);
+                render.set_fill_color(ModalTheme::backdrop_dim(&theme));
+                render.fill_rect(self.area.x, self.area.y, self.area.width, self.area.height);
+                render.set_global_alpha(1.0);
+            }
+            render.set_fill_color(PanelTheme::bg(&theme));
+            render.fill_rect(body.x, body.y, body.width, body.height);
+            let edge = if self.side == Side::Right { body.x } else { body.x + body.width - 1.0 };
+            render.set_fill_color(PanelTheme::border(&theme));
+            render.fill_rect(edge, body.y, 1.0, body.height);
+            let mut r = Response::of(v, &self.id);
+            r.clicked = v.clicked(&scrim);
+            r
+        });
+        if r.clicked {
+            *self.open = false;
+            return Response { changed: true, ..r };
         }
         r
     }

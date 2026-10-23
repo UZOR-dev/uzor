@@ -308,8 +308,13 @@ impl<'a> CheckboxBuilder<'a> {
         self
     }
 
-    /// Register and draw into `cx`.
-    pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) {
+    /// The checkbox's id and label.
+    pub(crate) fn id_label(&self) -> (&WidgetId, Option<&'a str>) {
+        (&self.id, self.label)
+    }
+
+    /// Register and draw into `cx`. Returns the checked state it painted.
+    pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> bool {
         let explicit = self.settings.is_some();
         let theme = theme_of(cx);
         cx.with_paint(|render, widgets, visual, _tokens| {
@@ -333,7 +338,8 @@ impl<'a> CheckboxBuilder<'a> {
                 render, widgets, visual, self.id, self.rect, &view, &settings, &self.kind,
                 self.font,
             );
-        });
+            checked
+        })
     }
 }
 
@@ -397,8 +403,13 @@ impl<'a> ToggleBuilder<'a> {
         self
     }
 
-    /// Register and draw into `cx`.
-    pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) {
+    /// The toggle's id, label and disabled flag.
+    pub(crate) fn id_label(&self) -> (&WidgetId, Option<&'a str>, bool) {
+        (&self.id, self.label, self.disabled)
+    }
+
+    /// Register and draw into `cx`. Returns the on state it painted.
+    pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> bool {
         let explicit = self.settings.is_some();
         let theme = theme_of(cx);
         cx.with_paint(|render, widgets, visual, _tokens| {
@@ -422,7 +433,8 @@ impl<'a> ToggleBuilder<'a> {
             paint_toggle(
                 render, widgets, visual, self.id, self.rect, &view, &settings, &self.kind,
             );
-        });
+            toggled
+        })
     }
 }
 

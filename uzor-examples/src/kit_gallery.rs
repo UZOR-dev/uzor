@@ -38,6 +38,14 @@ pub struct Gallery {
     pub saves: u32,
     /// The last menu item picked.
     pub last_action: Option<usize>,
+    /// The notify checkbox.
+    pub notify: bool,
+    /// The compact switch.
+    pub compact: bool,
+    /// Selected table row.
+    pub table_row: Option<usize>,
+    /// The drawer is open.
+    pub drawer_open: bool,
 }
 
 const TABS: [&str; 3] = ["Profile", "Limits", "Nodes"];
@@ -59,7 +67,7 @@ impl Gallery {
         kit::tabs("gallery:tabs", Rect::new(x, y, w, ROW), &TABS).bind(&mut self.tab).build(cx);
         y += ROW + GAP;
 
-        kit::input("gallery:name", Rect::new(x, y, w, ROW), &self.name).placeholder("Name").build(cx);
+        kit::input("gallery:name", Rect::new(x, y, w, ROW), &mut self.name).placeholder("Name").build(cx);
         y += ROW + GAP;
 
         let half = (w - GAP) / 2.0;
@@ -84,6 +92,20 @@ impl Gallery {
         let menu_at = (x + w * 0.5, y + list_h * 0.5);
         y += list_h + GAP;
 
+        kit::checkbox("gallery:notify", Rect::new(x, y, half, ROW)).label("Notify").bind(&mut self.notify).build_response(cx);
+        if kit::switch("gallery:compact", Rect::new(x + half + GAP, y, 44.0, ROW)).label("Compact").bind(&mut self.compact).build_response(cx).changed {
+            self.drawer_open = self.compact;
+        }
+        y += ROW + GAP;
+
+        let table_rows: Vec<Vec<String>> = ROWS.iter().enumerate().map(|(i, r)| vec![r.to_string(), (i * 7).to_string()]).collect();
+        kit::table("gallery:table", Rect::new(x, y, w, ROW * 4.0), &["Name", "Count"], &table_rows)
+            .columns("1fr 80px")
+            .row_height(ROW)
+            .bind(&mut self.table_row)
+            .build(cx);
+        y += ROW * 4.0 + GAP;
+
         // Right pane, past the splitter.
         let rx = self.split + PAD;
         let rw = (area.x + area.width - rx - PAD).max(80.0);
@@ -106,6 +128,14 @@ impl Gallery {
             }
         }
         let _ = y;
+        let d = kit::drawer("gallery:drawer", area, &mut self.drawer_open).title("Settings").width(280.0);
+        let body = d.body_rect();
+        if d.build(cx).changed {
+            self.compact = false;
+        }
+        if self.drawer_open {
+            kit::button("gallery:drawer:done", Rect::new(body.x + PAD, body.y + PAD, body.width - 2.0 * PAD, ROW)).text("Done").build(cx);
+        }
         kit::toasts("gallery:toasts", area, &mut self.toasts, now_ms).build(cx);
     }
 }
@@ -152,7 +182,7 @@ mod tests {
         let mut render = NullRenderContext::default();
         let mut hooks = HookOps::<G>::default();
         let view = VisualView::<G>::default();
-        let mut gallery = Gallery { menu_open: true, dialog_open: true, ..Default::default() };
+        let mut gallery = Gallery { menu_open: true, dialog_open: true, drawer_open: true, ..Default::default() };
         let mut cx = PanelCx {
             window: WindowId(1),
             leaf: LeafId(0),
@@ -177,6 +207,12 @@ mod tests {
             "gallery:level",
             "gallery:menu:item:2",
             "gallery:dialog:footer:0",
+            "gallery:notify",
+            "gallery:compact",
+            "gallery:table:col:1",
+            "gallery:table:row:2",
+            "gallery:drawer:scrim",
+            "gallery:drawer:done",
         ] {
             assert!(coord.widget_rect(&WidgetId::from(id)).is_some(), "{id} not registered");
         }
