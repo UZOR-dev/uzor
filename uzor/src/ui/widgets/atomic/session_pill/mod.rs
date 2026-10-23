@@ -63,6 +63,11 @@ pub struct SessionPillStyle {
     pub chevron_on_hover: bool,
 }
 
+crate::styled!(SessionPillStyle {
+    bg = "background", bg_hover, border = "border-color", text = "color", sub, font, font_px = "font-size",
+    height = "height", top, pad_l = "padding-left", pad_r = "padding-right", avatar, gap = "gap", chevron_on_hover,
+});
+
 impl Default for SessionPillStyle {
     fn default() -> Self {
         Self {

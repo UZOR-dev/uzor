@@ -104,6 +104,12 @@ pub struct ComposerStyle {
     pub voice_when_empty: bool,
 }
 
+crate::styled!(ComposerStyle {
+    height = "height", max_width = "width", side, bottom, radius = "border-radius", pad = "padding-left", gap = "gap", btn,
+    bg = "background", border = "border-color", border_focus, font, font_px = "font-size", text = "color", placeholder, caret,
+    btn_bg, btn_hover, btn_fg, send_bg, send_hover, voice_when_empty,
+});
+
 impl Default for ComposerStyle {
     fn default() -> Self {
         Self {

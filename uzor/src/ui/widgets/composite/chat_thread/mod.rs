@@ -165,6 +165,14 @@ pub struct ThreadStyle {
     pub rx_who_fg: &'static str,
 }
 
+crate::styled!(ThreadStyle {
+    them_bg = "background", me_bg, them_fg = "color", me_fg, px = "font-size", lh = "line-height",
+    pad_x = "padding-left", pad_y = "padding-top", radius = "border-radius", max_w = "width", max_share,
+    hdr_px, hdr_lh, hdr_weight, hdr_gap, q_px, q_lh, q_bg, q_bar, q_fg, q_who_weight, q_pad_x, q_pad_y, q_mt, q_mb,
+    sys_px, sys_lh, sys_fg, sys_pad_y, sys_margin, family = "font-family",
+    rx_gap, rx_top, rx_h, rx_pad, rx_out, rx_bg, rx_border_mine, rx_px, rx_n_px, rx_n_fg, rx_who_px, rx_who_fg,
+});
+
 impl Default for ThreadStyle {
     fn default() -> Self {
         Self {

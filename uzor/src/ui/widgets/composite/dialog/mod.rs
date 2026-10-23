@@ -89,6 +89,33 @@ pub struct CardStyle {
     pub shadow: Option<Shadow>,
 }
 
+impl crate::ui::style::StyleField for Option<Shadow> {
+    /// `box-shadow: <x> <dy> <blur> <color>` (x is ignored), or `none`.
+    fn from_css(v: &str) -> Option<Self> {
+        let v = v.trim();
+        if v == "none" {
+            return Some(None);
+        }
+        let mut nums = Vec::new();
+        let mut rest = v;
+        while let Some((head, tail)) = rest.split_once(' ') {
+            match head.trim_end_matches("px").parse::<f64>() {
+                Ok(n) => {
+                    nums.push(n);
+                    rest = tail.trim_start();
+                }
+                Err(_) => break,
+            }
+        }
+        match nums[..] {
+            [_, dy, blur] | [_, dy, blur, _] => Some(Some(Shadow { dy, blur, color: crate::ui::style::intern(rest) })),
+            _ => None,
+        }
+    }
+}
+
+crate::styled!(CardStyle { bg = "background", border = "border-color", radius = "border-radius", shadow = "box-shadow" });
+
 /// Rounded rect path with cubic corners (matches browser corner curves).
 pub fn path_round_rect(ctx: &mut dyn RenderContext, r: Rect, rad: f64) {
     let rad = rad.min(r.width / 2.0).min(r.height / 2.0).max(0.0);

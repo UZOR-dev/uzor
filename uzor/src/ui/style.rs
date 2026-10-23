@@ -52,6 +52,33 @@ impl<'a> Node<'a> {
     pub fn new(kind: &'a str) -> Self {
         Node { kind, ..Default::default() }
     }
+    /// A node from a selector-like spec: `span.tq-pill.ok#x:hover`.
+    pub fn parse(spec: &'a str) -> Self {
+        let head = spec.find(['#', '.', ':']).unwrap_or(spec.len());
+        let mut n = Node::new(&spec[..head]);
+        let mut rest = &spec[head..];
+        while !rest.is_empty() {
+            let (sig, body) = rest.split_at(1);
+            let end = body.find(['#', '.', ':']).unwrap_or(body.len());
+            let name = &body[..end];
+            match sig {
+                "#" => n.id = Some(name),
+                "." => n.classes.push(name),
+                _ => {
+                    n.state = n.state
+                        | match name {
+                            "hover" => State::HOVER,
+                            "active" => State::ACTIVE,
+                            "focus-visible" => State::FOCUS_VISIBLE,
+                            "disabled" => State::DISABLED,
+                            _ => State::NONE,
+                        }
+                }
+            }
+            rest = &body[end..];
+        }
+        n
+    }
     pub fn id(mut self, id: &'a str) -> Self {
         self.id = Some(id);
         self
@@ -88,6 +115,60 @@ pub struct Style {
     pub gap: Option<f64>,
     pub box_shadow: Option<String>,
     pub cursor: Option<String>,
+    pub text_align: Option<String>,
+    /// Custom properties (`--name: value`) set on the element or inherited, as in CSS.
+    pub custom: std::collections::BTreeMap<String, String>,
+}
+
+impl Style {
+    /// A custom property of the element (`--name`), e.g. a widget-specific knob.
+    pub fn custom(&self, name: &str) -> Option<&str> {
+        self.custom.get(name).map(String::as_str)
+    }
+    /// The colour, or `fallback` when unset.
+    pub fn color_or<'a>(&'a self, fallback: &'a str) -> &'a str {
+        self.color.as_deref().unwrap_or(fallback)
+    }
+    /// The background, or `fallback` when unset.
+    pub fn background_or<'a>(&'a self, fallback: &'a str) -> &'a str {
+        self.background.as_deref().unwrap_or(fallback)
+    }
+    /// Padding (top, right, bottom, left), zero when unset.
+    pub fn pad(&self) -> [f64; 4] {
+        self.padding.unwrap_or_default()
+    }
+    /// Margin (top, right, bottom, left), zero when unset.
+    pub fn mar(&self) -> [f64; 4] {
+        self.margin.unwrap_or_default()
+    }
+    /// Font size in px (16 when unset, the CSS initial value).
+    pub fn px(&self) -> f64 {
+        self.font_size.unwrap_or(16.0)
+    }
+    /// Line height in px (`normal` ≈ 1.2 × font size when unset).
+    pub fn lh(&self) -> f64 {
+        self.line_height.unwrap_or(self.px() * 1.2)
+    }
+    /// Font weight (400 when unset).
+    pub fn weight(&self) -> u32 {
+        self.font_weight.unwrap_or(400)
+    }
+}
+
+/// A string with `'static` lifetime for the `&'static str` fields of widget style
+/// structs. Each distinct value is leaked once and reused, so a stable sheet costs a
+/// bounded amount of memory.
+pub fn intern(s: &str) -> &'static str {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static POOL: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    let mut pool = POOL.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(v) = pool.get(s) {
+        return v;
+    }
+    let v: &'static str = Box::leak(s.to_string().into_boxed_str());
+    pool.insert(v);
+    v
 }
 
 /// A parse error with the offending text.
@@ -178,10 +259,17 @@ pub struct Applied {
 }
 
 /// A parsed style sheet.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct Sheet {
     rules: Vec<Rule>,
     vars: HashMap<String, String>,
+    cache: std::sync::Mutex<HashMap<String, Style>>,
+}
+
+impl Clone for Sheet {
+    fn clone(&self) -> Self {
+        Sheet { rules: self.rules.clone(), vars: self.vars.clone(), cache: Default::default() }
+    }
 }
 
 impl Sheet {
@@ -232,14 +320,59 @@ impl Sheet {
         self.vars.get(name).map(|v| self.subst(v, 0))
     }
 
+    /// [`Sheet::var`] interned for `&'static str` style fields; `fallback` when unset.
+    pub fn var_static(&self, name: &str, fallback: &'static str) -> &'static str {
+        self.var(name).map(|v| intern(&v)).unwrap_or(fallback)
+    }
+
+    /// The style of a parentless element given as a spec (`span.tq-pill.ok`), cached.
+    pub fn el(&self, spec: &str) -> Style {
+        if let Some(s) = self.cache.lock().unwrap_or_else(|e| e.into_inner()).get(spec) {
+            return s.clone();
+        }
+        let s = self.resolve(&Node::parse(spec), None);
+        self.cache.lock().unwrap_or_else(|e| e.into_inner()).insert(spec.to_string(), s.clone());
+        s
+    }
+
+    /// [`Sheet::resolve`] for a registered widget: with the `inspector` feature the
+    /// matched declarations are kept under `widget` for the inspector panel.
+    pub fn resolve_for(&self, widget: &str, n: &Node<'_>, parent: Option<&Style>) -> Style {
+        #[cfg(feature = "inspector")]
+        {
+            let (s, tr) = self.resolve_traced(n, parent);
+            trace::record(widget, tr);
+            s
+        }
+        #[cfg(not(feature = "inspector"))]
+        {
+            let _ = widget;
+            self.resolve(n, parent)
+        }
+    }
+
+    /// [`Sheet::el`] for a registered widget (see [`Sheet::resolve_for`]).
+    pub fn el_for(&self, widget: &str, spec: &str) -> Style {
+        #[cfg(feature = "inspector")]
+        trace::record(widget, self.resolve_traced(&Node::parse(spec), None).1);
+        #[cfg(not(feature = "inspector"))]
+        let _ = widget;
+        self.el(spec)
+    }
+
     fn subst(&self, v: &str, depth: u32) -> String {
+        self.subst_in(v, depth, None)
+    }
+
+    fn subst_in(&self, v: &str, depth: u32, local: Option<&std::collections::BTreeMap<String, String>>) -> String {
         let Some(i) = v.find("var(") else { return v.to_string() };
         let Some(j) = v[i..].find(')').map(|j| i + j) else { return v.to_string() };
         let inner = &v[i + 4..j];
         let (name, fb) = inner.split_once(',').map(|(a, b)| (a.trim(), Some(b.trim()))).unwrap_or((inner.trim(), None));
-        let val = if depth > 8 { None } else { self.vars.get(name).map(|x| self.subst(x, depth + 1)) };
+        let found = local.and_then(|l| l.get(name)).or_else(|| self.vars.get(name));
+        let val = if depth > 8 { None } else { found.map(|x| self.subst_in(x, depth + 1, local)) };
         let val = val.or(fb.map(str::to_string)).unwrap_or_default();
-        format!("{}{}{}", &v[..i], val, self.subst(&v[j + 1..], depth))
+        format!("{}{}{}", &v[..i], val, self.subst_in(&v[j + 1..], depth, local))
     }
 
     /// Cascade every matching rule (specificity, then source order) over the inherited
@@ -259,13 +392,29 @@ impl Sheet {
             s.font_weight = p.font_weight;
             s.font_family = p.font_family.clone();
             s.line_height = p.line_height;
+            s.text_align = p.text_align.clone();
+            s.custom = p.custom.clone();
         }
         let mut hits: Vec<&Rule> = self.rules.iter().filter(|r| r.sel.matches(n)).collect();
         hits.sort_by_key(|r| (r.sel.specificity(), r.order));
+        // Custom properties first (they cascade, then every var() sees the element's values).
+        for r in &hits {
+            for (k, v) in &r.decls {
+                if k.starts_with("--") {
+                    s.custom.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        let local = std::mem::take(&mut s.custom);
+        s.custom = local.iter().map(|(k, v)| (k.clone(), self.subst_in(v, 0, Some(&local)))).collect();
         let mut lh_raw: Option<String> = None;
         for r in hits {
             for (k, v) in &r.decls {
-                let v = self.subst(v, 0);
+                let v = self.subst_in(v, 0, Some(&s.custom));
+                if k.starts_with("--") {
+                    trace.push(Applied { property: k.clone(), value: v, selector: r.src.clone() });
+                    continue;
+                }
                 if k == "line-height" {
                     lh_raw = Some(v.clone());
                 }
@@ -334,8 +483,157 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         "gap" => s.gap = px(v),
         "box-shadow" => s.box_shadow = Some(v.into()),
         "cursor" => s.cursor = Some(v.into()),
+        "text-align" => s.text_align = Some(v.into()),
         _ => {}
     }
+}
+
+/// Per-widget traces of matched declarations, read by the inspector.
+#[cfg(feature = "inspector")]
+pub mod trace {
+    use super::Applied;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    thread_local! {
+        static TRACES: RefCell<HashMap<String, Vec<Applied>>> = RefCell::new(HashMap::new());
+    }
+
+    /// Keep `tr` as the style trace of `widget` (replacing the previous frame's).
+    pub fn record(widget: &str, tr: Vec<Applied>) {
+        TRACES.with(|t| {
+            t.borrow_mut().insert(widget.to_string(), tr);
+        });
+    }
+
+    /// The last recorded trace of `widget`.
+    pub fn of(widget: &str) -> Option<Vec<Applied>> {
+        TRACES.with(|t| t.borrow().get(widget).cloned())
+    }
+
+    /// Forget every trace (an app that re-registers its widgets each frame rebuilds them).
+    pub fn clear() {
+        TRACES.with(|t| t.borrow_mut().clear());
+    }
+}
+
+/// A widget style struct that a style sheet can configure. Each field is reachable as a
+/// custom property named after it (`them_bg` → `--them-bg`); common fields also answer
+/// to the standard CSS property (`bg` ← `background`, `radius` ← `border-radius`, ...).
+pub trait Styled {
+    /// Override the fields the resolved style sets; untouched fields keep their value.
+    fn apply_style(&mut self, s: &Style);
+
+    /// `self` overridden by the element `spec` of `sheet`.
+    fn styled(mut self, sheet: &Sheet, spec: &str) -> Self
+    where
+        Self: Sized,
+    {
+        self.apply_style(&sheet.el(spec));
+        self
+    }
+
+    /// `Default` overridden by the element `spec` of `sheet`.
+    fn from_sheet(sheet: &Sheet, spec: &str) -> Self
+    where
+        Self: Default + Sized,
+    {
+        let mut v = Self::default();
+        v.apply_style(&sheet.el(spec));
+        v
+    }
+}
+
+/// Field conversion used by [`styled!`].
+pub trait StyleField: Sized {
+    fn from_css(v: &str) -> Option<Self>;
+}
+
+impl StyleField for &'static str {
+    fn from_css(v: &str) -> Option<Self> {
+        Some(intern(v.trim()))
+    }
+}
+
+impl StyleField for Option<&'static str> {
+    fn from_css(v: &str) -> Option<Self> {
+        Some(if v.trim() == "none" { None } else { Some(intern(v.trim())) })
+    }
+}
+
+impl StyleField for f64 {
+    fn from_css(v: &str) -> Option<Self> {
+        px(v)
+    }
+}
+
+impl StyleField for u32 {
+    fn from_css(v: &str) -> Option<Self> {
+        match v.trim() {
+            "normal" => Some(400),
+            "bold" => Some(700),
+            n => n.parse().ok(),
+        }
+    }
+}
+
+impl StyleField for bool {
+    fn from_css(v: &str) -> Option<Self> {
+        match v.trim() {
+            "true" | "1" | "yes" => Some(true),
+            "false" | "0" | "no" => Some(false),
+            _ => None,
+        }
+    }
+}
+
+/// The CSS text of a standard property in a resolved [`Style`].
+pub fn standard(s: &Style, prop: &str) -> Option<String> {
+    let n = |v: Option<f64>| v.map(|x| x.to_string());
+    match prop {
+        "color" => s.color.clone(),
+        "background" => s.background.clone(),
+        "border-color" => s.border_color.clone(),
+        "border-width" => n(s.border_width),
+        "border-radius" => n(s.border_radius),
+        "font-size" => n(s.font_size),
+        "font-weight" => s.font_weight.map(|w| w.to_string()),
+        "line-height" => n(s.line_height),
+        "font-family" => s.font_family.clone(),
+        "width" => n(s.width),
+        "height" => n(s.height),
+        "gap" => n(s.gap),
+        "padding-top" => n(s.padding.map(|p| p[0])),
+        "padding-right" => n(s.padding.map(|p| p[1])),
+        "padding-bottom" => n(s.padding.map(|p| p[2])),
+        "padding-left" => n(s.padding.map(|p| p[3])),
+        "box-shadow" => s.box_shadow.clone(),
+        _ => None,
+    }
+}
+
+/// Implement [`Styled`] for a style struct: `styled!(T { field [= "css-prop", ...], ... })`.
+/// The custom property `--field-name` always applies, after (and so over) the aliases.
+#[macro_export]
+macro_rules! styled {
+    ($t:ty { $($f:ident $(= $($alias:literal),+)?),* $(,)? }) => {
+        impl $crate::ui::style::Styled for $t {
+            fn apply_style(&mut self, s: &$crate::ui::style::Style) {
+                use $crate::ui::style::StyleField;
+                $(
+                    $($(
+                        if let Some(v) = $crate::ui::style::standard(s, $alias).and_then(|v| StyleField::from_css(&v)) {
+                            self.$f = v;
+                        }
+                    )+)?
+                    let name = concat!("--", stringify!($f)).replace('_', "-");
+                    if let Some(v) = s.custom(&name).and_then(StyleField::from_css) {
+                        self.$f = v;
+                    }
+                )*
+            }
+        }
+    };
 }
 
 #[cfg(test)]
@@ -402,6 +700,49 @@ mod tests {
         assert_eq!(tr.last().unwrap().value, "#111");
     }
 
+    #[test]
+    fn custom_properties_cascade_inherit_and_feed_var() {
+        let sh = Sheet::parse(":root{--acc:#3b82f6} .t{--me-bg:var(--acc);--pad:4px} .t.dim{--pad:2px;padding:var(--pad)} .c{color:var(--me-bg)}").unwrap();
+        let t = sh.resolve(&Node::parse("div.t.dim"), None);
+        assert_eq!((t.custom("--me-bg"), t.custom("--pad"), t.padding), (Some("#3b82f6"), Some("2px"), Some([2.0; 4])));
+        let c = sh.resolve(&Node::parse("span.c"), Some(&t));
+        assert_eq!(c.color.as_deref(), Some("#3b82f6"), "inherited custom property feeds var()");
+        assert_eq!(sh.el("div.t").custom("--pad"), Some("4px"));
+        assert_eq!(sh.var_static("--acc", "#000"), "#3b82f6");
+        assert_eq!(sh.var_static("--nope", "#000"), "#000");
+    }
+
+    #[derive(Default, Debug, PartialEq)]
+    struct Demo {
+        bg: &'static str,
+        border: Option<&'static str>,
+        radius: f64,
+        hdr_weight: u32,
+        chevron_on_hover: bool,
+    }
+    crate::styled!(Demo { bg = "background", border = "border-color", radius = "border-radius", hdr_weight, chevron_on_hover });
+
+    #[test]
+    fn styled_structs_read_standard_and_custom_properties() {
+        let sh = Sheet::parse(".pill{background:#111;border-radius:9px;--hdr-weight:600;--chevron-on-hover:true} .pill.flat{--border:none} .pill.edge{border:1px solid #222;--bg:#333}").unwrap();
+        let d = Demo::from_sheet(&sh, "div.pill");
+        assert_eq!(d, Demo { bg: "#111", border: None, radius: 9.0, hdr_weight: 600, chevron_on_hover: true });
+        let e = Demo::from_sheet(&sh, "div.pill.edge");
+        assert_eq!((e.bg, e.border), ("#333", Some("#222")), "the custom property wins over the alias");
+        assert_eq!(Demo::from_sheet(&sh, "div.pill.flat").border, None);
+        let n = Node::parse("button.a.b#x:hover");
+        assert_eq!((n.kind, n.id, n.classes.clone(), n.state), ("button", Some("x"), vec!["a", "b"], State::HOVER));
+    }
+
+    #[test]
+    fn dialog_card_style_reads_the_sheet() {
+        let sh = Sheet::parse(":root{--el:#1b1b1b} .dlg{background:var(--el);border:1px solid #2c2c2c;border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,0.8)} .flat{box-shadow:none;--border:none}").unwrap();
+        let base = crate::ui::widgets::composite::dialog::CardStyle { bg: "a", border: None, radius: 0.0, shadow: None };
+        let c = base.styled(&sh, "div.dlg");
+        assert_eq!(c, crate::ui::widgets::composite::dialog::CardStyle { bg: "#1b1b1b", border: Some("#2c2c2c"), radius: 14.0, shadow: Some(crate::ui::widgets::composite::dialog::Shadow { dy: 30.0, blur: 80.0, color: "rgba(0,0,0,0.8)" }) });
+        let f = base.styled(&sh, "div.dlg.flat");
+        assert_eq!((f.shadow, f.border), (None, None));
+    }
     #[test]
     fn border_shorthand_and_comments() {
         let sh = Sheet::parse("/* x */ .c{border:1px solid #1b1b1b;border-radius:12px;margin:0 0 8px}").unwrap();
