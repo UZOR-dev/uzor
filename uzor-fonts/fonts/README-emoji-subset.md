@@ -8,5 +8,5 @@ has no colour-emoji font of its own. Never compiled into a wasm.
 
 Regenerate (fontTools + brotli):
 
-    pyftsubset NotoColorEmoji.ttf --unicodes-file=UzorEmoji-subset.unicodes.txt \
+    pyftsubset ../../uzor-fonts-emoji/fonts/NotoColorEmoji.ttf --unicodes-file=UzorEmoji-subset.unicodes.txt \
       --layout-features='*' --flavor=woff2 --output-file=UzorEmoji-subset.woff2

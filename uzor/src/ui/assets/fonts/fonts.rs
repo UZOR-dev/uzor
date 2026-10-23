@@ -16,9 +16,9 @@
 //! - **Noto Sans Symbols2** — wide symbol / mathematical coverage
 //! - **Noto Color Emoji** — color emoji (COLRv1/v0 + CBDT bitmaps) for vello-gpu
 //! - **Noto Emoji** — color-neutral emoji fallback (legacy bitmap-compatible)
-//! - **Noto Sans CJK SC** — Simplified Chinese, Japanese kana, Korean Hangul (downloaded)
-//! - **Noto Sans Arabic** — Arabic script (downloaded)
-//! - **Noto Sans Devanagari** — Devanagari / Hindi script (downloaded)
+//! - **Noto Sans CJK SC** — Simplified Chinese, Japanese kana, Korean Hangul (via the uzor-fonts-cjk-a/-b crates)
+//! - **Noto Sans Arabic** — Arabic script
+//! - **Noto Sans Devanagari** — Devanagari / Hindi script
 
 // Re-export all font byte constants from the dedicated assets crate.
 pub use uzor_fonts::{

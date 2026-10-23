@@ -1,100 +1,28 @@
-//! Download large font assets that aren't bundled in `fonts/` (kept out of the
-//! crate to avoid bloating crates.io publishes). Files land in `OUT_DIR` and
-//! `lib.rs` references them via `include_bytes!(concat!(env!("OUT_DIR"), …))`.
+//! Put the two big fonts into `OUT_DIR`, where `lib.rs` `include_bytes!`es them. They are
+//! too large for this crate's crates.io upload (10 MB), so they come from build-dependency
+//! crates published next to it: `uzor-fonts-emoji` (Noto Color Emoji) and
+//! `uzor-fonts-cjk-a` + `uzor-fonts-cjk-b` (Noto Sans CJK SC in two halves). No network:
+//! builds work offline, behind proxies and on docs.rs.
+
+use std::path::Path;
+
+fn put(out: &Path, name: &str, parts: &[&[u8]], len: usize) {
+    let total: usize = parts.iter().map(|p| p.len()).sum();
+    assert_eq!(total, len, "uzor-fonts build.rs: {name} is {total} bytes, expected {len}");
+    let dest = out.join(name);
+    // Rewrite only on change: a fresh mtime would rebuild `uzor-fonts` for nothing.
+    let bytes = parts.concat();
+    if std::fs::read(&dest).is_ok_and(|have| have == bytes) {
+        return;
+    }
+    std::fs::write(&dest, &bytes)
+        .unwrap_or_else(|e| panic!("uzor-fonts build.rs: writing {}: {e}", dest.display()));
+}
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-env-changed=DOCS_RS");
-
-    // (filename in OUT_DIR, download URL, min expected size in bytes)
-    let downloads: &[(&str, &str, u64)] = &[
-        (
-            "NotoColorEmoji.ttf",
-            "https://github.com/ZENG3LD/uzor/releases/download/fonts-v1/NotoColorEmoji.ttf",
-            1_000_000,
-        ),
-        (
-            "NotoSansCJKsc-Regular.otf",
-            "https://github.com/ZENG3LD/uzor/releases/download/fonts-v1/NotoSansCJKsc-Regular.otf",
-            15_000_000,
-        ),
-        (
-            "NotoSansArabic-Regular.ttf",
-            "https://github.com/ZENG3LD/uzor/releases/download/fonts-v1/NotoSansArabic-Regular.ttf",
-            100_000,
-        ),
-        (
-            "NotoSansDevanagari-Regular.ttf",
-            "https://github.com/ZENG3LD/uzor/releases/download/fonts-v1/NotoSansDevanagari-Regular.ttf",
-            100_000,
-        ),
-    ];
-
-    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR must be set by cargo");
-
-    // docs.rs builds in a network-isolated sandbox, so the downloads below can
-    // never succeed there — and `cargo doc` only needs the crates to compile,
-    // not to render text. Emit empty placeholder files so `include_bytes!`
-    // resolves and skip the fetch entirely. Real builds are unaffected.
-    if std::env::var_os("DOCS_RS").is_some() {
-        for (name, _, _) in downloads {
-            let dest = std::path::Path::new(&out_dir).join(name);
-            if !dest.exists() {
-                std::fs::write(&dest, [])
-                    .expect("build.rs: failed to write docs.rs placeholder font");
-            }
-        }
-        println!(
-            "cargo:warning=DOCS_RS detected: skipping font downloads; \
-             embedding empty placeholders (documentation build only)"
-        );
-        return;
-    }
-
-    for (name, url, min_size) in downloads {
-        let dest = std::path::Path::new(&out_dir).join(name);
-
-        if dest.exists() {
-            let size = dest.metadata().map(|m| m.len()).unwrap_or(0);
-            if size >= *min_size {
-                continue;
-            }
-        }
-
-        // `--retry` makes the large-asset fetch resilient to transient TLS /
-        // network blips (a 15 MB download over a flaky link otherwise aborts the
-        // whole build on a single hiccup).
-        let status = std::process::Command::new("curl")
-            .arg("-sSL")
-            .arg("--fail")
-            .arg("--retry")
-            .arg("6")
-            .arg("--retry-delay")
-            .arg("3")
-            .arg("--retry-all-errors")
-            .arg("--connect-timeout")
-            .arg("30")
-            .arg("-o")
-            .arg(&dest)
-            .arg(url)
-            .status()
-            .expect("build.rs: failed to spawn curl — ensure curl is installed and on PATH");
-
-        if !status.success() {
-            panic!(
-                "build.rs: curl failed to download {name} from {url} (exit: {status:?})"
-            );
-        }
-
-        let downloaded_size = std::fs::metadata(&dest)
-            .expect("build.rs: downloaded file missing after curl succeeded")
-            .len();
-
-        if downloaded_size < *min_size {
-            panic!(
-                "build.rs: downloaded {name} is suspiciously small \
-                 ({downloaded_size} bytes < expected {min_size}) — likely an error page from {url}"
-            );
-        }
-    }
+    let out = std::env::var("OUT_DIR").expect("OUT_DIR must be set by cargo");
+    let out = Path::new(&out);
+    put(out, "NotoColorEmoji.ttf", &[uzor_fonts_emoji::NOTO_COLOR_EMOJI], 10_673_480);
+    put(out, "NotoSansCJKsc-Regular.otf", &[uzor_fonts_cjk_a::PART, uzor_fonts_cjk_b::PART], 16_437_364);
 }

@@ -10,11 +10,11 @@
 //! - **JetBrains Mono** — monospace with full Unicode box-drawing coverage
 //! - **Symbols Nerd Font Mono** — Powerline / Nerd Font PUA / dev icons
 //! - **Noto Sans Symbols 2** — wide symbol / mathematical coverage
-//! - **Noto Color Emoji** — color emoji (COLRv1/v0 + CBDT bitmaps)
+//! - **Noto Color Emoji** — color emoji (COLRv1/v0 + CBDT bitmaps; via the uzor-fonts-emoji crate)
 //! - **Noto Emoji** — color-neutral emoji fallback (legacy, all backends)
-//! - **Noto Sans CJK SC** — CJK Simplified Chinese + kana + Hangul (downloaded)
-//! - **Noto Sans Arabic** — Arabic script (downloaded)
-//! - **Noto Sans Devanagari** — Devanagari / Hindi script (downloaded)
+//! - **Noto Sans CJK SC** — CJK Simplified Chinese + kana + Hangul (via the uzor-fonts-cjk-a/-b crates)
+//! - **Noto Sans Arabic** — Arabic script
+//! - **Noto Sans Devanagari** — Devanagari / Hindi script
 
 // ── Roboto ────────────────────────────────────────────────────────────────────
 
@@ -109,27 +109,26 @@ pub static NOTO_SANS_SYMBOLS2: &[u8] =
 
 /// Noto Color Emoji — color emoji font containing both COLRv1/v0 vectors and CBDT bitmaps.
 /// Supported natively by vello-gpu (skrifa 0.40+); other backends fall through
-/// to the monochrome outline or skip to the next fallback.
+/// to the monochrome outline or skip to the next fallback. Comes from the
+/// `uzor-fonts-emoji` crate via build.rs (too big for this crate's upload).
 pub static NOTO_COLOR_EMOJI: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/NotoColorEmoji.ttf"));
 
 // ── i18n script fonts ─────────────────────────────────────────────────────────
 //
-// Heavy script fonts are not bundled (crates.io 10 MB limit). They are
-// downloaded by build.rs from GitHub release `fonts-v1` into OUT_DIR, then
-// referenced here via include_bytes!.
+// Arabic and Devanagari are bundled. CJK SC (like Noto Color Emoji above) is too big for
+// this crate's crates.io upload: build.rs copies it into OUT_DIR from the `uzor-fonts-cjk-a`
+// and `-b` build-dependency crates (two halves), and it is included from there.
 
 /// Noto Sans CJK SC Regular — covers Simplified Chinese (zh), Japanese kana
-/// (ja), and Korean Hangul (ko). ~16 MB; downloaded by build.rs.
+/// (ja), and Korean Hangul (ko). ~16 MB; from the uzor-fonts-cjk-a/-b crates via build.rs.
 pub static NOTO_SANS_CJK_SC: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/NotoSansCJKsc-Regular.otf"));
 
-/// Noto Sans Arabic Regular — covers Arabic script (ar). ~170 KB; downloaded by build.rs.
-pub static NOTO_SANS_ARABIC: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/NotoSansArabic-Regular.ttf"));
+/// Noto Sans Arabic Regular — covers Arabic script (ar). ~170 KB; bundled.
+pub static NOTO_SANS_ARABIC: &[u8] = include_bytes!("../fonts/NotoSansArabic-Regular.ttf");
 
-/// Noto Sans Devanagari Regular — covers Devanagari script (hi). ~157 KB; downloaded by build.rs.
-pub static NOTO_SANS_DEVANAGARI: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/NotoSansDevanagari-Regular.ttf"));
+/// Noto Sans Devanagari Regular — covers Devanagari script (hi). ~157 KB; bundled.
+pub static NOTO_SANS_DEVANAGARI: &[u8] = include_bytes!("../fonts/NotoSansDevanagari-Regular.ttf");
 
 /// DejaVu Sans Regular — broad BMP coverage. Fills the gap left by subsetted
 /// Roboto (no arrows / dingbats / geometric shapes) and NotoSansSymbols2
@@ -143,3 +142,22 @@ pub static DEJAVU_SANS: &[u8] = include_bytes!("../fonts/DejaVuSans.ttf");
 
 /// Noto Emoji — color-neutral emoji coverage (legacy, works on all backends).
 pub static NOTO_EMOJI: &[u8] = include_bytes!("../fonts/NotoEmoji-Regular.ttf");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fonts that used to be downloaded arrive whole (sfnt magic + exact size).
+    #[test]
+    fn big_and_i18n_fonts_are_complete() {
+        for (name, bytes, len, magic) in [
+            ("emoji", NOTO_COLOR_EMOJI, 10_673_480, &[0u8, 1, 0, 0][..]),
+            ("cjk", NOTO_SANS_CJK_SC, 16_437_364, b"OTTO"),
+            ("arabic", NOTO_SANS_ARABIC, 170_196, &[0, 1, 0, 0]),
+            ("devanagari", NOTO_SANS_DEVANAGARI, 157_068, &[0, 1, 0, 0]),
+        ] {
+            assert_eq!(bytes.len(), len, "{name}");
+            assert_eq!(&bytes[..4], magic, "{name}");
+        }
+    }
+}
