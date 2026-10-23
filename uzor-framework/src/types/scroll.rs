@@ -77,7 +77,26 @@ pub struct ScrollView {
     last_precise_ms: Option<f64>,
     fling: Option<(Decay, f64, f64)>,
     drag: Option<(f64, f64)>,
+    /// Programmatic smooth scroll: from, to, start ms (set on the first tick).
+    glide: Option<(f64, f64, Option<f64>)>,
 }
+
+/// Where [`ScrollView::scroll_into_view`] puts the target (CSS
+/// `scrollIntoView({block})`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollAlign {
+    /// Target top at the viewport top.
+    Start,
+    /// Target centred.
+    Center,
+    /// Target bottom at the viewport bottom.
+    End,
+    /// Move only as far as needed to show it (no move when visible).
+    Nearest,
+}
+
+/// Duration of a smooth programmatic scroll, ms (Chrome's is ~300).
+const GLIDE_MS: f64 = 300.0;
 
 impl ScrollView {
     /// A view that starts at the end and follows it.
@@ -109,7 +128,7 @@ impl ScrollView {
     pub fn set_extent(&mut self, content: f64, view: f64) {
         self.content = content.max(0.0);
         self.view = view.max(0.0);
-        if self.follow_end && self.drag.is_none() && self.fling.is_none() {
+        if self.follow_end && self.drag.is_none() && self.fling.is_none() && self.glide.is_none() {
             self.offset = self.max();
         }
         self.offset = self.offset.clamp(0.0, self.max());
@@ -134,6 +153,7 @@ impl ScrollView {
         }
         let before = self.offset;
         self.fling = None;
+        self.glide = None;
         if precise {
             self.offset -= dy * st.pixel_unit;
             if st.fling && (dy * st.pixel_unit).abs() <= st.fling_max_step {
@@ -154,6 +174,18 @@ impl ScrollView {
 
     /// Advance inertia. Returns `true` while animating (request a frame).
     pub fn tick(&mut self, now_ms: f64, st: &ScrollStyle) -> bool {
+        if let Some((from, to, t0)) = &mut self.glide {
+            let t0 = *t0.get_or_insert(now_ms);
+            let p = ((now_ms - t0) / GLIDE_MS).clamp(0.0, 1.0);
+            // ease-out cubic
+            let e = 1.0 - (1.0 - p).powi(3);
+            self.offset = *from + (*to - *from) * e;
+            if p >= 1.0 {
+                self.glide = None;
+            }
+            self.moved();
+            return self.glide.is_some();
+        }
         if let Some(t) = self.last_precise_ms {
             if now_ms - t >= st.release_ms {
                 self.last_precise_ms = None;
@@ -183,16 +215,40 @@ impl ScrollView {
         true
     }
 
-    /// Animating (fling or a gesture that may still fling).
+    /// Animating (fling, smooth scroll, or a gesture that may still fling).
     pub fn animating(&self) -> bool {
-        self.fling.is_some() || self.last_precise_ms.is_some()
+        self.fling.is_some() || self.glide.is_some() || self.last_precise_ms.is_some()
     }
 
     /// Jump (programmatic).
     pub fn scroll_to(&mut self, offset: f64) {
         self.fling = None;
+        self.glide = None;
         self.offset = offset;
         self.moved();
+    }
+
+    /// Scroll so the content rect `[y, y+h)` sits at `align`
+    /// (`element.scrollIntoView({block, behavior})`). `smooth` eases there
+    /// over ~300 ms through [`Self::tick`] (keep requesting frames while
+    /// [`Self::animating`]); user input (wheel, thumb) cancels it.
+    pub fn scroll_into_view(&mut self, y: f64, h: f64, align: ScrollAlign, smooth: bool) {
+        let target = match align {
+            ScrollAlign::Start => y,
+            ScrollAlign::Center => y + h / 2.0 - self.view / 2.0,
+            ScrollAlign::End => y + h - self.view,
+            ScrollAlign::Nearest if y < self.offset => y,
+            ScrollAlign::Nearest if y + h > self.offset + self.view => y + h - self.view,
+            ScrollAlign::Nearest => self.offset,
+        }
+        .clamp(0.0, self.max());
+        if !smooth || (target - self.offset).abs() < 0.5 {
+            self.scroll_to(target);
+            return;
+        }
+        self.fling = None;
+        self.follow_end = false;
+        self.glide = Some((self.offset, target, None));
     }
 
     /// Keep the content rect `[y, y+h)` (content coordinates) visible.
@@ -222,6 +278,7 @@ impl ScrollView {
     /// Start a thumb drag at pointer `y`.
     pub fn begin_drag(&mut self, y: f64) {
         self.fling = None;
+        self.glide = None;
         self.drag = Some((y, self.offset));
     }
 
@@ -260,6 +317,49 @@ impl ScrollView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scroll_into_view_aligns_like_the_dom() {
+        let mut sv = ScrollView::default();
+        sv.set_extent(1000.0, 200.0);
+        sv.scroll_into_view(500.0, 20.0, ScrollAlign::Start, false);
+        assert_eq!(sv.offset, 500.0);
+        sv.scroll_into_view(500.0, 20.0, ScrollAlign::Center, false);
+        assert_eq!(sv.offset, 410.0);
+        sv.scroll_into_view(500.0, 20.0, ScrollAlign::End, false);
+        assert_eq!(sv.offset, 320.0);
+        // Nearest: visible -> no move; below -> bottom-aligned; clamped at the ends.
+        sv.scroll_into_view(400.0, 20.0, ScrollAlign::Nearest, false);
+        assert_eq!(sv.offset, 320.0);
+        sv.scroll_into_view(600.0, 20.0, ScrollAlign::Nearest, false);
+        assert_eq!(sv.offset, 420.0);
+        sv.scroll_into_view(990.0, 20.0, ScrollAlign::Start, false);
+        assert_eq!(sv.offset, 800.0);
+    }
+
+    #[test]
+    fn smooth_scroll_into_view_eases_and_wheel_cancels() {
+        let st = ScrollStyle::default();
+        let mut sv = ScrollView::at_end();
+        sv.set_extent(1000.0, 200.0);
+        assert_eq!(sv.offset, 800.0);
+        sv.scroll_into_view(100.0, 0.0, ScrollAlign::Start, true);
+        assert!(sv.animating() && !sv.follow_end);
+        // Content growth does not yank a gliding follower back to the end.
+        sv.set_extent(1100.0, 200.0);
+        assert!(sv.tick(0.0, &st));
+        assert_eq!(sv.offset, 800.0);
+        assert!(sv.tick(150.0, &st));
+        let mid = sv.offset;
+        assert!(mid < 450.0 && mid > 100.0, "ease-out: past halfway at half time ({mid})");
+        assert!(!sv.tick(300.0, &st));
+        assert_eq!(sv.offset, 100.0);
+        assert!(!sv.animating());
+        sv.scroll_into_view(500.0, 0.0, ScrollAlign::Start, true);
+        sv.tick(1000.0, &st);
+        sv.wheel(1.0, false, 1010.0, &st);
+        assert!(!sv.animating(), "user input cancels the glide");
+    }
 
     fn sv() -> (ScrollView, ScrollStyle) {
         let mut s = ScrollView::default();
