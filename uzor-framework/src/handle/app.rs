@@ -182,6 +182,8 @@ pub struct VisualView<S: Spec> {
     pub(crate) hover_path: Vec<WidgetId>,
     pub(crate) prev_hover_path: Vec<WidgetId>,
     pub(crate) click_paths: Vec<Vec<WidgetId>>,
+    pub(crate) focus_path: Vec<WidgetId>,
+    pub(crate) prev_focus_path: Vec<WidgetId>,
 }
 
 // Manual impl: a derive would demand `S: Default` of the marker type.
@@ -204,6 +206,8 @@ impl<S: Spec> Default for VisualView<S> {
             hover_path: Vec::new(),
             prev_hover_path: Vec::new(),
             click_paths: Vec::new(),
+            focus_path: Vec::new(),
+            prev_focus_path: Vec::new(),
         }
     }
 }
@@ -236,6 +240,24 @@ impl<S: Spec> VisualView<S> {
     /// neither (they do not bubble).
     pub fn hover_changes(&self) -> (Vec<WidgetId>, Vec<WidgetId>) {
         uzor::input::core::events::enter_leave(&self.prev_hover_path, &self.hover_path)
+    }
+
+    /// The focused widget and its ancestors, root first (empty when nothing
+    /// is focused): everything CSS `:focus-within` matches.
+    pub fn focus_path(&self) -> &[WidgetId] {
+        &self.focus_path
+    }
+
+    /// `id` is focused or contains the focused widget (`:focus-within`).
+    pub fn is_focus_within(&self, id: &WidgetId) -> bool {
+        self.focus_path.contains(id)
+    }
+
+    /// Dispatch the focus move since the last compose DOM-style: `blur`
+    /// and `focusout` (bubbling) on the old focus path, then `focus` and
+    /// `focusin` (bubbling) on the new one. Nothing fires without a move.
+    pub fn dispatch_focus(&self, handler: impl FnMut(uzor::input::core::events::FocusEvent, &mut uzor::input::core::events::EventCx<'_>)) {
+        uzor::input::core::events::dispatch_focus_change(&self.prev_focus_path, &self.focus_path, handler);
     }
 
     /// Dispatch last frame's clicks DOM-style: per click a capture leg

@@ -377,6 +377,7 @@ impl<S: Spec> Kernel<S> {
         if let Some(coord) = iview.coordinator(win) {
             view.hover_path = view.hovered.as_ref().map(|h| coord.path_of(h)).unwrap_or_default();
             view.click_paths = view.clicked.iter().map(|(w, _)| coord.path_of(w)).collect();
+            view.focus_path = view.focused.as_ref().map(|f| coord.path_of(f)).unwrap_or_default();
         }
         view.scroll = iview.pending_scroll(win);
         view.scroll_precise = iview.pending_scroll_precise(win);
@@ -391,6 +392,7 @@ impl<S: Spec> Kernel<S> {
             .map(|o| o.id)
             .collect();
         view.prev_hover_path = self.hover_paths.insert(win, view.hover_path.clone()).unwrap_or_default();
+        view.prev_focus_path = self.focus_paths.insert(win, view.focus_path.clone()).unwrap_or_default();
         view
     }
 }

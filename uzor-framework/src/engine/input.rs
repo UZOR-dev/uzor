@@ -387,14 +387,14 @@ impl PerWindowInput {
     }
 
     /// Tab order candidates: the active scope's members registered this
-    /// frame, in list order.
+    /// frame, in list order, without negative-`tabindex` ones.
     fn scoped_candidates(&self) -> Option<Vec<WidgetId>> {
         let scope = self.scopes.last()?;
         Some(
             scope
                 .members
                 .iter()
-                .filter(|m| self.coord.widget_rect(m).is_some())
+                .filter(|m| self.coord.widget_rect(m).is_some() && self.coord.tab_index(m) >= 0)
                 .cloned()
                 .collect(),
         )

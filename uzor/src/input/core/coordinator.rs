@@ -179,6 +179,11 @@ pub struct InputCoordinator {
     /// `feed_cook`, `None` otherwise). A drag-release is not a click for
     /// the text store: it keeps the selection the drag made.
     cook_drag_release: Option<(f64, f64)>,
+    /// This frame's `tabindex` values (`set_tab_index`); unset = 0.
+    tab_indices: Vec<(WidgetId, i32)>,
+    /// This frame's focus trap root (`set_focus_trap`): Tab / Shift+Tab
+    /// stay inside its subtree, like focus in a modal `<dialog>`.
+    focus_trap: Option<WidgetId>,
 }
 
 impl InputCoordinator {
@@ -202,6 +207,8 @@ impl InputCoordinator {
             cook: CookState::default(),
             cook_prev_down: None,
             cook_drag_release: None,
+            tab_indices: Vec::new(),
+            focus_trap: None,
         }
     }
 
@@ -242,6 +249,8 @@ impl InputCoordinator {
         });
         self.frame += 1;
         self.text_fields.begin_frame();
+        self.tab_indices.clear();
+        self.focus_trap = None;
     }
 
     /// Bake this frame's `mouse_pressed` flag and press-origin widget from
@@ -915,19 +924,105 @@ impl InputCoordinator {
     }
 
     /// Ids of the widgets registered this frame that want keyboard focus,
-    /// in registration order; `layer` restricts the listing to one layer,
+    /// in `tabindex` order (negative ones last); `layer` restricts the listing to one layer,
     /// `None` lists every layer.
     ///
     /// Read-only. The framework's compose phase uses it to refresh a focus
     /// scope's member list once the scope owner's body has been composed
     /// and its widgets are known (registration order is the tab order).
     pub fn focusable_ids(&self, layer: Option<&LayerId>) -> Vec<WidgetId> {
-        self.widgets
-            .iter()
-            .filter(|w| w.sense.focus)
-            .filter(|w| layer.is_none_or(|l| &w.layer == l))
-            .map(|w| w.id.clone())
-            .collect()
+        self.sequential(true, |w| layer.is_none_or(|l| &w.layer == l))
+    }
+
+    /// Set `id`'s `tabindex` for this frame (reset every frame). As in the
+    /// DOM: positive values come first, ascending, ties in registration
+    /// order; then 0 (the default) in registration order; a negative value
+    /// keeps the widget focusable by pointer or `FocusOp::Set` but takes it
+    /// out of Tab / Shift+Tab.
+    pub fn set_tab_index(&mut self, id: &WidgetId, index: i32) {
+        match self.tab_indices.iter_mut().find(|(w, _)| w == id) {
+            Some(e) => e.1 = index,
+            None => self.tab_indices.push((id.clone(), index)),
+        }
+    }
+
+    /// `id`'s `tabindex` this frame (0 when unset).
+    pub fn tab_index(&self, id: &WidgetId) -> i32 {
+        self.tab_indices.iter().find(|(w, _)| w == id).map_or(0, |e| e.1)
+    }
+
+    /// Trap Tab / Shift+Tab inside `root`'s subtree this frame (reset every
+    /// frame; `None` lifts it): the modal `<dialog>` behaviour. A focus
+    /// outside the trap moves to the trap's first (Tab) or last (Shift+Tab)
+    /// stop on the next cycle.
+    pub fn set_focus_trap(&mut self, root: Option<&WidgetId>) {
+        self.focus_trap = root.cloned();
+    }
+
+    /// The trap root set this frame.
+    pub fn focus_trap(&self) -> Option<&WidgetId> {
+        self.focus_trap.as_ref()
+    }
+
+    /// Attach `id` (registered this frame, by any `register_*` call) under
+    /// `parent` in the propagation tree: its event and focus paths, and the
+    /// focus trap, then see it inside `parent`. Hit-testing is unchanged.
+    /// A no-op when `id` is not registered or would become its own ancestor.
+    pub fn set_widget_parent(&mut self, id: &WidgetId, parent: &WidgetId) {
+        if id == parent || self.path_of(parent).contains(id) {
+            return;
+        }
+        if let Some(w) = self.widgets.iter_mut().rev().find(|w| w.id == *id) {
+            w.parent = Some(parent.clone());
+        }
+    }
+
+    /// The sequential focus order (Tab order) this frame: focus-wanting
+    /// widgets in `tabindex` order, inside the focus trap when one is set.
+    pub fn tab_order(&self) -> Vec<WidgetId> {
+        match &self.focus_trap {
+            Some(root) => self.sequential(false, |w| w.id == *root || self.path_of(&w.id).contains(root)),
+            None => self.sequential(false, |_| true),
+        }
+    }
+
+    /// Focus-wanting widgets passing `keep`, in `tabindex` order; negative
+    /// ones last (registration order) with `negative`, dropped without.
+    fn sequential(&self, negative: bool, keep: impl Fn(&RegisteredWidget) -> bool) -> Vec<WidgetId> {
+        let mut seen: Vec<&WidgetId> = Vec::new();
+        let mut v: Vec<(i64, WidgetId)> = Vec::new();
+        for w in self.widgets.iter().filter(|w| w.sense.focus && keep(w)) {
+            if seen.contains(&&w.id) {
+                continue;
+            }
+            seen.push(&w.id);
+            let t = self.tab_index(&w.id);
+            let key = match t {
+                1.. => t as i64,
+                0 => i64::from(i32::MAX) + 1,
+                _ if negative => i64::from(i32::MAX) + 2,
+                _ => continue,
+            };
+            v.push((key, w.id.clone()));
+        }
+        crate::sort::sort_by_key(&mut v, |e| e.0);
+        v.into_iter().map(|e| e.1).collect()
+    }
+
+    fn focus_step(&mut self, forward: bool) {
+        let order = self.tab_order();
+        let n = order.len();
+        if n == 0 {
+            return;
+        }
+        let at = self.widget_state.focus.focused.as_ref().and_then(|f| order.iter().position(|w| w == f));
+        let next = match (at, forward) {
+            (Some(i), true) => (i + 1) % n,
+            (None, true) => 0,
+            (Some(i), false) => (i + n - 1) % n,
+            (None, false) => n - 1,
+        };
+        self.widget_state.focus.set_focus(order[next].clone());
     }
 
 
@@ -1091,6 +1186,8 @@ impl crate::input::driver::CoordinatorDriver for InputCoordinator {
         self.input = input.clone();
         self.frame += 1;
         self.text_fields.begin_frame();
+        self.tab_indices.clear();
+        self.focus_trap = None;
 
         // Propagate to scoped regions with coordinate conversion.
         for region in &mut self.scoped_regions {
@@ -1345,53 +1442,14 @@ impl crate::input::driver::CoordinatorDriver for InputCoordinator {
         self.text_fields.on_key(key)
     }
 
-    /// Focus next widget (Tab)
+    /// Focus next widget (Tab): [`Self::tab_order`], wrapping.
     fn focus_next(&mut self) {
-        let focusable: Vec<_> = self.widgets.iter().filter(|w| w.sense.focus).collect();
-
-        if focusable.is_empty() {
-            return;
-        }
-
-        let current_idx = if let Some(ref focused) = self.widget_state.focus.focused {
-            focusable.iter().position(|w| &w.id == focused)
-        } else {
-            None
-        };
-
-        let next_idx = match current_idx {
-            Some(idx) => (idx + 1) % focusable.len(),
-            None => 0,
-        };
-
-        self.widget_state
-            .focus
-            .set_focus(focusable[next_idx].id.clone());
+        self.focus_step(true);
     }
 
-    /// Focus previous widget (Shift+Tab)
+    /// Focus previous widget (Shift+Tab): [`Self::tab_order`], wrapping.
     fn focus_prev(&mut self) {
-        let focusable: Vec<_> = self.widgets.iter().filter(|w| w.sense.focus).collect();
-
-        if focusable.is_empty() {
-            return;
-        }
-
-        let current_idx = if let Some(ref focused) = self.widget_state.focus.focused {
-            focusable.iter().position(|w| &w.id == focused)
-        } else {
-            None
-        };
-
-        let prev_idx = match current_idx {
-            Some(idx) if idx > 0 => idx - 1,
-            Some(_) => focusable.len() - 1,
-            None => focusable.len() - 1,
-        };
-
-        self.widget_state
-            .focus
-            .set_focus(focusable[prev_idx].id.clone());
+        self.focus_step(false);
     }
 
     /// Process a click at `(x, y)` against registered widgets.
@@ -2188,6 +2246,60 @@ mod tests {
         assert!(coord.is_hover_within(&WidgetId::new("panel")));
         assert!(!coord.is_hover_within(&WidgetId::new("other")));
         assert_eq!(coord.path_of(&WidgetId::new("other")), vec![WidgetId::new("other")]);
+    }
+
+    #[test]
+    fn tab_order_follows_tabindex_and_the_focus_trap() {
+        let mut coord = make_coordinator();
+        let layer = LayerId::main();
+        let f = Sense::focusable();
+        let ids = |v: Vec<WidgetId>| v.into_iter().map(|w| w.0.to_string()).collect::<Vec<_>>();
+        let frame = |coord: &mut InputCoordinator, trap: bool| {
+            coord.begin_frame(make_input_at(500.0, 500.0));
+            for (i, n) in ["a", "b", "c", "d", "e"].iter().enumerate() {
+                coord.register_atomic(*n, WidgetKind::Button, Rect::new(i as f64 * 20.0, 0.0, 10.0, 10.0), f, &layer);
+            }
+            coord.register_atomic("dlg", WidgetKind::Button, Rect::new(0.0, 50.0, 100.0, 100.0), Sense::CLICK, &layer);
+            coord.register_atomic("ok", WidgetKind::Button, Rect::new(0.0, 60.0, 10.0, 10.0), f, &layer);
+            coord.register_text_field("q", Rect::new(20.0, 60.0, 50.0, 10.0), TextFieldConfig::text());
+            coord.set_tab_index(&WidgetId::new("c"), 2);
+            coord.set_tab_index(&WidgetId::new("e"), 1);
+            coord.set_tab_index(&WidgetId::new("b"), -1);
+            coord.set_widget_parent(&WidgetId::new("ok"), &WidgetId::new("dlg"));
+            coord.set_widget_parent(&WidgetId::new("q"), &WidgetId::new("dlg"));
+            // A cycle is refused.
+            coord.set_widget_parent(&WidgetId::new("dlg"), &WidgetId::new("ok"));
+            if trap {
+                coord.set_focus_trap(Some(&WidgetId::new("dlg")));
+            }
+            coord.end_frame();
+        };
+        frame(&mut coord, false);
+        // Positive first (ascending), then 0 in registration order; -1 out.
+        assert_eq!(ids(coord.tab_order()), ["e", "c", "a", "d", "ok", "q"]);
+        assert_eq!(ids(coord.focusable_ids(None)), ["e", "c", "a", "d", "ok", "q", "b"]);
+        assert_eq!(coord.path_of(&WidgetId::new("q")), vec![WidgetId::new("dlg"), WidgetId::new("q")]);
+        assert_eq!(coord.widget_parent(&WidgetId::new("dlg")), None);
+        coord.focus_next();
+        assert_eq!(coord.focused_widget(), Some(&WidgetId::new("e")));
+        coord.focus_prev();
+        assert_eq!(coord.focused_widget(), Some(&WidgetId::new("q")), "Shift+Tab wraps to the last stop");
+        // The trap keeps Tab inside the dialog; a focus outside enters at its first stop.
+        frame(&mut coord, true);
+        coord.set_focus(WidgetId::new("a"));
+        coord.focus_next();
+        assert_eq!(coord.focused_widget(), Some(&WidgetId::new("ok")));
+        coord.focus_next();
+        assert_eq!(coord.focused_widget(), Some(&WidgetId::new("q")));
+        coord.focus_next();
+        assert_eq!(coord.focused_widget(), Some(&WidgetId::new("ok")), "wraps inside the trap");
+        coord.focus_prev();
+        coord.focus_prev();
+        assert_eq!(coord.focused_widget(), Some(&WidgetId::new("ok")));
+        // The trap and the tabindex values last one frame.
+        coord.begin_frame(make_input_at(500.0, 500.0));
+        assert!(coord.focus_trap().is_none());
+        assert_eq!(coord.tab_index(&WidgetId::new("c")), 0);
     }
 
     #[test]

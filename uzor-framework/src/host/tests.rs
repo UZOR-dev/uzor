@@ -91,6 +91,12 @@ struct TestApp {
     /// Answered to EVERY intent (the settle test's feedback loop).
     answer: Option<AppCommand<TS>>,
     request_frame: bool,
+    /// `set_widget_parent` pairs (child, parent) applied after registering.
+    parents: Vec<(WidgetId, WidgetId)>,
+    /// The focus trap root set each frame.
+    trap: Option<WidgetId>,
+    /// Focus events the panel hook dispatched (event, current, at target).
+    seen_focus: Vec<(uzor::input::core::events::FocusEvent, String, bool)>,
 }
 
 impl App for TestApp {
@@ -106,6 +112,12 @@ impl App for TestApp {
                 .coord
                 .register_on_layer(id.clone(), *rect, *sense, &cx.widgets.layer);
         }
+        for (c, p) in &self.parents {
+            cx.widgets.coord.set_widget_parent(c, p);
+        }
+        cx.widgets.coord.set_focus_trap(self.trap.as_ref());
+        let seen = &mut self.seen_focus;
+        cx.view.dispatch_focus(|ev, e| seen.push((ev, e.current.as_str().to_string(), e.at_target())));
         if let Some(field) = &mut self.field {
             cx.widgets.coord.register_text_field(
                 field.id.clone(),
@@ -495,6 +507,57 @@ fn focus_restores_after_overlay_scope() {
         Some(wid("fld")),
         "the scope's saved focus must return"
     );
+}
+
+/// Tab follows `tabindex` and stays inside a focus trap; focus moves
+/// reach the panel as blur / focusout / focus / focusin over the parent
+/// chain.
+#[test]
+fn tab_order_trap_and_focus_events() {
+    use uzor::input::core::events::FocusEvent::*;
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    let f = Sense::CLICK.union(Sense::FOCUSABLE);
+    {
+        let app = h.runtime_mut().app_mut();
+        app.panel_widgets.push((wid("a"), Rect::new(10.0, 100.0, 60.0, 24.0), f));
+        app.panel_widgets.push((wid("dlg"), Rect::new(100.0, 100.0, 200.0, 100.0), Sense::CLICK));
+        app.panel_widgets.push((wid("ok"), Rect::new(110.0, 110.0, 40.0, 24.0), f));
+        app.panel_widgets.push((wid("no"), Rect::new(160.0, 110.0, 40.0, 24.0), f));
+        app.parents = vec![(wid("ok"), wid("dlg")), (wid("no"), wid("dlg"))];
+    }
+    h.advance(0.017);
+    let tab = |h: &mut Host<TS, TestApp>, shift: bool| {
+        let m = ModifierKeys { shift, ..ModifierKeys::default() };
+        key(h, win, KeyCode::Tab, m, None);
+        h.advance(0.017);
+    };
+    tab(&mut h, false);
+    assert_eq!(focused(&h, win), Some(wid("a")));
+    tab(&mut h, false);
+    assert_eq!(focused(&h, win), Some(wid("ok")));
+    h.advance(0.017);
+    let seen = std::mem::take(&mut h.runtime_mut().app_mut().seen_focus);
+    let at: Vec<_> = seen.iter().filter(|e| e.2).map(|e| (e.0, e.1.as_str())).collect();
+    assert_eq!(at, [(Focus, "a"), (FocusIn, "a"), (Blur, "a"), (FocusOut, "a"), (Focus, "ok"), (FocusIn, "ok")]);
+    assert!(seen.contains(&(FocusIn, "dlg".into(), false)), "focusin bubbles to the dialog: {seen:?}");
+    h.runtime_mut().app_mut().trap = Some(wid("dlg"));
+    h.advance(0.017);
+    for _ in 0..3 {
+        tab(&mut h, false);
+        assert_ne!(focused(&h, win), Some(wid("a")), "Tab must not leave the trap");
+    }
+    for _ in 0..3 {
+        tab(&mut h, true);
+        assert_ne!(focused(&h, win), Some(wid("a")), "Shift+Tab must not leave the trap");
+    }
+    // Lifting the trap lets Tab out again.
+    h.runtime_mut().app_mut().trap = None;
+    h.advance(0.017);
+    for _ in 0..3 {
+        tab(&mut h, false);
+    }
+    assert!(h.runtime().app().seen_focus.iter().any(|e| e.0 == Focus && e.1 == "a"));
 }
 
 // -- §9.2: keymap ------------------------------------------------------------

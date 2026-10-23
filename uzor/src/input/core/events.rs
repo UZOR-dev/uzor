@@ -101,6 +101,41 @@ pub fn enter_leave(old: &[WidgetId], new: &[WidgetId]) -> (Vec<WidgetId>, Vec<Wi
     (left, entered)
 }
 
+/// The four events a focus move fires, in the DOM order the move fires
+/// them: `blur` and `focusout` on the old focus, then `focus` and
+/// `focusin` on the new one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FocusEvent {
+    /// The old focus lost it (capture + target, no bubble).
+    Blur,
+    /// The old focus lost it (bubbles: `:focus-within` ancestors hear it).
+    FocusOut,
+    /// The new focus got it (capture + target, no bubble).
+    Focus,
+    /// The new focus got it (bubbles).
+    FocusIn,
+}
+
+impl FocusEvent {
+    /// The event bubbles.
+    pub fn bubbles(self) -> bool {
+        matches!(self, Self::FocusOut | Self::FocusIn)
+    }
+}
+
+/// Dispatch a focus move between two root-first focus paths (empty = no
+/// focus): blur, focusout over `old`, then focus, focusin over `new`. Each
+/// event propagates on its own (stopping one does not cancel the next).
+/// Nothing fires when the focused widget did not change.
+pub fn dispatch_focus_change(old: &[WidgetId], new: &[WidgetId], mut handler: impl FnMut(FocusEvent, &mut EventCx<'_>)) {
+    if old.last() == new.last() {
+        return;
+    }
+    for (path, ev) in [(old, FocusEvent::Blur), (old, FocusEvent::FocusOut), (new, FocusEvent::Focus), (new, FocusEvent::FocusIn)] {
+        dispatch(path, ev.bubbles(), |cx| handler(ev, cx));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,5 +227,42 @@ mod tests {
         assert!(l.is_empty() && e.is_empty());
         let (l, e) = enter_leave(&[], &new);
         assert!(l.is_empty() && e == new);
+    }
+
+    #[test]
+    fn focus_change_fires_blur_focusout_focus_focusin() {
+        let old = vec![w("dlg"), w("field")];
+        let new = vec![w("dlg"), w("ok")];
+        let mut seen = Vec::new();
+        dispatch_focus_change(&old, &new, |ev, cx| seen.push((ev, cx.current.0.to_string(), cx.phase)));
+        use FocusEvent::*;
+        use Phase::*;
+        let s = |e, c: &str, p| (e, c.to_string(), p);
+        assert_eq!(
+            seen,
+            vec![
+                s(Blur, "dlg", Capture),
+                s(Blur, "field", Target),
+                s(FocusOut, "dlg", Capture),
+                s(FocusOut, "field", Target),
+                s(FocusOut, "dlg", Bubble),
+                s(Focus, "dlg", Capture),
+                s(Focus, "ok", Target),
+                s(FocusIn, "dlg", Capture),
+                s(FocusIn, "ok", Target),
+                s(FocusIn, "dlg", Bubble),
+            ]
+        );
+        // Gaining focus from nowhere fires only focus + focusin; no move, nothing.
+        let mut evs = Vec::new();
+        dispatch_focus_change(&[], &new, |ev, cx| {
+            if cx.at_target() {
+                evs.push(ev)
+            }
+        });
+        assert_eq!(evs, vec![Focus, FocusIn]);
+        let mut n = 0;
+        dispatch_focus_change(&new, &new, |_, _| n += 1);
+        assert_eq!(n, 0);
     }
 }
