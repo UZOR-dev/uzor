@@ -319,6 +319,24 @@ struct PerWindowInput {
     /// `:focus-visible` modality: a non-modifier key press turns it on, a
     /// pointer press turns it off; programmatic focus keeps the current one.
     focus_visible: bool,
+    /// Clicks from Enter / Space on a focused control, joined to the next
+    /// `EndFrame`'s clicks.
+    key_clicks: Vec<WidgetId>,
+    /// The control a Space press armed; its release activates it.
+    space_armed: Option<WidgetId>,
+}
+
+/// Which keys activate a focused widget of `kind`, as `(Enter, Space)`,
+/// matching the DOM: a `<button>` clicks on Enter press and Space release,
+/// a link on Enter only, a checkbox / radio / switch on Space only.
+fn activation(kind: Option<WidgetKind>) -> (bool, bool) {
+    use WidgetKind as K;
+    match kind {
+        Some(K::Link) => (true, false),
+        Some(K::Checkbox | K::Radio | K::Toggle) => (false, true),
+        Some(K::Button | K::CloseButton | K::ChromeTab | K::DropdownTrigger | K::Item | K::ColorSwatch | K::Custom) | None => (true, true),
+        Some(_) => (false, false),
+    }
 }
 
 impl PerWindowInput {
@@ -352,6 +370,8 @@ impl PerWindowInput {
             drag_ended: false,
             escalation: None,
             focus_visible: false,
+            key_clicks: Vec::new(),
+            space_armed: None,
         }
     }
 
@@ -1079,6 +1099,11 @@ impl PerWindowInput {
                 clicked.push((id, count));
             }
         }
+        for w in self.key_clicks.drain(..) {
+            if !clicked.iter().any(|(c, _)| *c == w) {
+                clicked.push((w, 1));
+            }
+        }
         let mut changed = hover != self.hover || clicked != self.clicked;
         self.hover = hover;
         self.clicked = clicked.clone();
@@ -1117,6 +1142,15 @@ impl PerWindowInput {
         next_ticket: &mut u64,
         fx: &mut InputEffects,
     ) -> bool {
+        let m = input.mods;
+        if input.code == KeyCode::Space && input.state == KeyState::Up {
+            if let Some(w) = self.space_armed.take() {
+                if self.focused_id() == Some(&w) {
+                    self.key_clicks.push(w);
+                    return true;
+                }
+            }
+        }
         if input.state == KeyState::Up {
             fx.push(InputEffect::KeyPassed { win, key: input });
             return false;
@@ -1124,7 +1158,22 @@ impl PerWindowInput {
         if input.code != KeyCode::Unknown {
             self.focus_visible = true;
         }
-        let m = input.mods;
+        // Enter / Space on a focused control (not a text field) activate it.
+        if matches!(input.code, KeyCode::Enter | KeyCode::Space) && !(m.ctrl || m.alt || m.meta) {
+            if let Some(f) = self.focus.as_ref().filter(|f| !f.field).map(|f| f.id.clone()) {
+                if self.coord.widget_sense(&f).is_some_and(|s| s.click) {
+                    let (enter, space) = activation(self.coord.widget_kind(&f));
+                    if input.code == KeyCode::Enter && enter {
+                        self.key_clicks.push(f);
+                        return true;
+                    }
+                    if input.code == KeyCode::Space && space {
+                        self.space_armed = Some(f);
+                        return false;
+                    }
+                }
+            }
+        }
         if input.code == KeyCode::Tab && !(m.ctrl || m.alt || m.meta) {
             return match self.cycle(!m.shift) {
                 Some(changed) => changed,

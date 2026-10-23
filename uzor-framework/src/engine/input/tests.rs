@@ -1697,3 +1697,67 @@ fn aliased_regions_select_across_one_owner() {
     frame_sel(&mut e, 2.15, scene);
     assert_eq!(sel(&e, "doc"), Some(TextSelection::new(12, 18)));
 }
+
+/// DOM activation: a focused `<button>` clicks on Enter press and on Space
+/// release, a link on Enter only, a checkbox on Space only; a text field
+/// keeps both keys, and neither key passes on once it activated.
+#[test]
+fn enter_and_space_activate_the_focused_control() {
+    use uzor::input::WidgetKind;
+    let scene = |c: &mut InputCoordinator| {
+        let layer = uzor::input::LayerId::main();
+        let s = Sense { focus: true, ..Sense::CLICK };
+        c.register_atomic(id("ok"), WidgetKind::Button, Rect::new(10.0, 10.0, 50.0, 20.0), s, &layer);
+        c.register_atomic(id("ln"), WidgetKind::Link, Rect::new(10.0, 40.0, 50.0, 20.0), s, &layer);
+        c.register_atomic(id("cb"), WidgetKind::Checkbox, Rect::new(10.0, 70.0, 50.0, 20.0), s, &layer);
+        field(c, "f", Rect::new(10.0, 100.0, 100.0, 20.0), TextFieldConfig::text());
+    };
+    let clicks = |e: &InputEngine| e.view().clicked(W).iter().map(|(w, _)| w.as_str().to_owned()).collect::<Vec<_>>();
+    let up = |e: &mut InputEngine, t: f64, code: KeyCode| {
+        let mut k = key_input(code, None, no_mods());
+        k.state = KeyState::Up;
+        e.apply(InputOp::Key { win: W, now: s(t), input: k })
+    };
+    let mut e = engine();
+    frame(&mut e, 0.5, scene);
+    key(&mut e, 1.0, KeyCode::Tab, no_mods());
+    assert_eq!(e.view().focused(W), Some(&id("ok")));
+    let fx = key(&mut e, 1.1, KeyCode::Enter, no_mods());
+    assert!(!passed(&fx));
+    frame(&mut e, 1.2, scene);
+    assert_eq!(clicks(&e), ["ok"], "Enter clicks a button on press");
+    frame(&mut e, 1.3, scene);
+    assert!(clicks(&e).is_empty(), "one click per press");
+    let fx = key(&mut e, 1.4, KeyCode::Space, no_mods());
+    assert!(!passed(&fx), "Space on a button does not scroll the page");
+    frame(&mut e, 1.5, scene);
+    assert!(clicks(&e).is_empty(), "Space waits for its release");
+    up(&mut e, 1.6, KeyCode::Space);
+    frame(&mut e, 1.7, scene);
+    assert_eq!(clicks(&e), ["ok"]);
+
+    key(&mut e, 2.0, KeyCode::Tab, no_mods());
+    assert_eq!(e.view().focused(W), Some(&id("ln")));
+    let fx = key(&mut e, 2.1, KeyCode::Space, no_mods());
+    assert!(passed(&fx), "Space does not activate a link");
+    up(&mut e, 2.2, KeyCode::Space);
+    key(&mut e, 2.3, KeyCode::Enter, no_mods());
+    frame(&mut e, 2.4, scene);
+    assert_eq!(clicks(&e), ["ln"]);
+
+    key(&mut e, 3.0, KeyCode::Tab, no_mods());
+    assert_eq!(e.view().focused(W), Some(&id("cb")));
+    let fx = key(&mut e, 3.1, KeyCode::Enter, no_mods());
+    assert!(passed(&fx), "Enter does not toggle a checkbox");
+    key(&mut e, 3.2, KeyCode::Space, no_mods());
+    // Focus moving away before the release cancels it, as in the DOM.
+    key(&mut e, 3.3, KeyCode::Tab, no_mods());
+    up(&mut e, 3.4, KeyCode::Space);
+    frame(&mut e, 3.5, scene);
+    assert!(clicks(&e).is_empty());
+
+    assert_eq!(e.view().focused(W), Some(&id("f")));
+    key(&mut e, 4.0, KeyCode::Space, no_mods());
+    frame(&mut e, 4.1, scene);
+    assert!(clicks(&e).is_empty(), "a text field keeps Space");
+}
