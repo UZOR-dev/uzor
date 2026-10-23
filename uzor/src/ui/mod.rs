@@ -4,6 +4,7 @@ pub mod css_box;
 pub mod css_text;
 pub mod effects;
 pub mod i18n;
+pub mod motion;
 pub mod style;
 pub mod flow;
 #[cfg(feature = "inspector")]

@@ -139,6 +139,10 @@ pub struct Style {
     pub text_align: Option<String>,
     /// Custom properties (`--name: value`) set on the element or inherited, as in CSS.
     pub custom: std::collections::BTreeMap<String, String>,
+    /// `transition` entries (see [`crate::ui::motion`]).
+    pub transitions: Vec<super::motion::Transition>,
+    /// `animation` entries naming `@keyframes` (see [`crate::ui::motion`]).
+    pub animations: Vec<super::motion::Animation>,
 }
 
 impl Style {
@@ -295,12 +299,13 @@ pub fn inline(decls: &str) -> Style {
 pub struct Sheet {
     rules: Vec<Rule>,
     vars: HashMap<String, String>,
+    keyframes: HashMap<String, super::motion::Keyframes>,
     cache: std::sync::Mutex<HashMap<String, Style>>,
 }
 
 impl Clone for Sheet {
     fn clone(&self) -> Self {
-        Sheet { rules: self.rules.clone(), vars: self.vars.clone(), cache: Default::default() }
+        Sheet { rules: self.rules.clone(), vars: self.vars.clone(), keyframes: self.keyframes.clone(), cache: Default::default() }
     }
 }
 
@@ -317,6 +322,22 @@ impl Sheet {
         let mut sheet = Sheet::default();
         let mut rest = src.as_str();
         while let Some(open) = rest.find('{') {
+            if let Some(name) = rest[..open].trim().strip_prefix("@keyframes") {
+                // Nested block: find the brace that closes it.
+                let mut depth = 0;
+                let close = rest[open..]
+                    .char_indices()
+                    .find(|&(_, c)| {
+                        depth += (c == '{') as i32 - (c == '}') as i32;
+                        depth == 0
+                    })
+                    .map(|(i, _)| open + i)
+                    .ok_or_else(|| StyleError("missing `}`".into()))?;
+                let kf = super::motion::Keyframes::parse(&rest[open + 1..close]).ok_or_else(|| StyleError(format!("bad @keyframes `{}`", name.trim())))?;
+                sheet.keyframes.insert(name.trim().to_string(), kf);
+                rest = &rest[close + 1..];
+                continue;
+            }
             let close = rest[open..].find('}').map(|c| open + c).ok_or_else(|| StyleError("missing `}`".into()))?;
             let sels = &rest[..open];
             let decls: Vec<(String, String)> = rest[open + 1..close]
@@ -345,6 +366,11 @@ impl Sheet {
             return Err(StyleError(format!("trailing text `{}`", rest.trim())));
         }
         Ok(sheet)
+    }
+
+    /// The `@keyframes` rule called `name`.
+    pub fn keyframes(&self, name: &str) -> Option<&super::motion::Keyframes> {
+        self.keyframes.get(name)
     }
 
     /// A custom property (`--name`) with `var()` references resolved.
@@ -480,6 +506,11 @@ fn edges(v: &str) -> Option<[f64; 4]> {
     })
 }
 
+/// Apply one declaration (`k` lower-case) to `s`.
+pub(crate) fn apply_decl(s: &mut Style, k: &str, v: &str) {
+    apply(s, k, v)
+}
+
 fn apply(s: &mut Style, k: &str, v: &str) {
     match k {
         "color" => s.color = Some(v.into()),
@@ -560,6 +591,8 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         "box-shadow" => s.box_shadow = Some(v.into()),
         "cursor" => s.cursor = Some(v.into()),
         "text-align" => s.text_align = Some(v.into()),
+        "transition" => s.transitions = super::motion::parse_transitions(v),
+        "animation" => s.animations = super::motion::parse_animations(v),
         _ => {}
     }
 }
