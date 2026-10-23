@@ -592,6 +592,22 @@ fn install_theme_and_dpr(
         out.push(closure);
         held.push(mql);
     }
+    const REDUCE: &str = "(prefers-reduced-motion: reduce)";
+    if let Some(mql) = match_media(window, REDUCE) {
+        q.push_raw(InputEvent::Window(WindowInput::ReducedMotion { reduced: mql.matches() }));
+        let q = q.clone();
+        let wake = wake.clone();
+        let closure = Closure::wrap(Box::new(move |_raw: Event| {
+            let reduced = web_sys::window()
+                .and_then(|w| match_media(&w, REDUCE))
+                .is_some_and(|m| m.matches());
+            q.push_raw(InputEvent::Window(WindowInput::ReducedMotion { reduced }));
+            wake.request();
+        }) as Box<dyn FnMut(Event)>);
+        listen(mql.unchecked_ref(), "change", &closure, true)?;
+        out.push(closure);
+        held.push(mql);
+    }
     let dpr = device_pixel_ratio();
     let query = format!("(resolution: {dpr}dppx)");
     if let Some(mql) = match_media(window, &query) {

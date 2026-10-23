@@ -98,6 +98,11 @@ pub enum WindowEffect {
     },
     /// The app-wide tokens or the dark flag changed.
     ThemeChanged,
+    /// The OS reduced-motion preference changed (or was first reported).
+    ReducedMotionChanged {
+        /// Reduced motion requested.
+        reduced: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------

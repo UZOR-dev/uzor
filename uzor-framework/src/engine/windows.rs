@@ -212,6 +212,7 @@ pub struct WindowEngine {
     tokens: Arc<Tokens>,
     dark: bool,
     os_dark: Option<bool>,
+    reduced_motion: Option<bool>,
     theme_rev: Revision,
     close: ClosePolicy,
     exit_requested: bool,
@@ -229,6 +230,7 @@ impl WindowEngine {
             tokens,
             dark,
             os_dark: None,
+            reduced_motion: None,
             theme_rev: Revision::ZERO,
             close,
             exit_requested: false,
@@ -305,6 +307,14 @@ impl WindowEngine {
     }
 
     fn lifecycle(&mut self, win: WindowId, input: WindowInput, fx: &mut WindowEffects) -> bool {
+        if let WindowInput::ReducedMotion { reduced } = input {
+            if self.reduced_motion == Some(reduced) {
+                return false;
+            }
+            self.reduced_motion = Some(reduced);
+            fx.push(WindowEffect::ReducedMotionChanged { reduced });
+            return true;
+        }
         if let WindowInput::ThemeChanged { dark } = input {
             if !self.windows.contains_key(&win) || self.os_dark == Some(dark) {
                 return false;
@@ -374,7 +384,7 @@ impl WindowEngine {
                 st.geometry.outer_size = size;
             }
             // Handled above.
-            WindowInput::ThemeChanged { .. } | WindowInput::Destroyed => {}
+            WindowInput::ThemeChanged { .. } | WindowInput::ReducedMotion { .. } | WindowInput::Destroyed => {}
         }
         *st != before
     }
@@ -553,6 +563,11 @@ impl<'a> WindowEngineView<'a> {
     /// The app-wide dark flag.
     pub fn dark(&self) -> bool {
         self.e.dark
+    }
+
+    /// The OS reduced-motion preference as last reported (`false` before any report).
+    pub fn reduced_motion(&self) -> bool {
+        self.e.reduced_motion.unwrap_or(false)
     }
 
     /// The OS theme as last reported by a host, if ever.
@@ -1238,5 +1253,17 @@ mod tests {
         e.apply(WindowOp::RenderInfo(info));
         assert_eq!(e.revision(), Revision(1));
         assert_eq!(e.view().render_info().frame_count, 3);
+    }
+
+    #[test]
+    fn reduced_motion_is_reported_once_per_change() {
+        let mut e = engine(ClosePolicy::Auto);
+        assert!(!e.view().reduced_motion());
+        let fx = e.apply(life(W1, WindowInput::ReducedMotion { reduced: true }));
+        assert_eq!(fx.as_slice(), &[WindowEffect::ReducedMotionChanged { reduced: true }]);
+        assert!(e.apply(life(W1, WindowInput::ReducedMotion { reduced: true })).is_empty());
+        assert!(e.view().reduced_motion());
+        let fx = e.apply(life(W1, WindowInput::ReducedMotion { reduced: false }));
+        assert_eq!(fx.as_slice(), &[WindowEffect::ReducedMotionChanged { reduced: false }]);
     }
 }

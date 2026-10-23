@@ -336,6 +336,13 @@ pub enum WindowIntent {
         /// Its app label.
         key: WindowKey,
     },
+    /// The OS reduced-motion preference, reported at start and on change.
+    /// Pass it to [`Motion::new`](uzor::ui::motion::Motion::new) and the app's
+    /// own animations.
+    ReducedMotionChanged {
+        /// Reduced motion requested.
+        reduced: bool,
+    },
     /// A window closed.
     Closed {
         /// The window.

@@ -310,6 +310,12 @@ pub enum WindowInput {
         /// Dark theme active.
         dark: bool,
     },
+    /// The OS reduced-motion preference (`prefers-reduced-motion: reduce`),
+    /// sent once at start and on every change.
+    ReducedMotion {
+        /// Reduced motion requested.
+        reduced: bool,
+    },
     /// The user asked to close the window.
     CloseRequested,
     /// The window is gone.

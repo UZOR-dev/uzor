@@ -312,6 +312,11 @@ impl<S: Spec> Kernel<S> {
                     .intents
                     .push(Intent::Window(WindowIntent::FocusChanged { win, focused }));
             }
+            WindowEffect::ReducedMotionChanged { reduced } => {
+                self.outbox
+                    .intents
+                    .push(Intent::Window(WindowIntent::ReducedMotionChanged { reduced }));
+            }
             WindowEffect::ThemeChanged => {
                 let wins: Vec<WindowId> = self.windows.view().ids().collect();
                 for win in wins {
