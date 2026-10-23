@@ -422,7 +422,10 @@ impl<S: Spec> Kernel<S> {
             }
             self.inspector.record(b);
         }
-        for b in uzor::ui::inspector::take_noted() {
+        for mut b in uzor::ui::inspector::take_noted() {
+            for a in uzor::ui::style::trace::of(&b.id).unwrap_or_default() {
+                b.notes.push(format!("{}: {}  <- {}", a.property, a.value, a.selector));
+            }
             self.inspector.record(b);
         }
         if let Some(p) = view.pointer {
