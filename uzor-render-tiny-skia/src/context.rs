@@ -358,7 +358,11 @@ fn rasterize_cached(family: FontFamily, weight: u16, bold: bool, italic: bool, c
 
     let font = get_font_w(family, weight, bold, italic);
     let (mut metrics, mut bitmap) = font.rasterize(ch, px);
-    if metrics.width == 0 && !ch.is_whitespace() {
+    // A font without `ch` rasterizes its .notdef box, which has a width (Inter's does), so
+    // "no coverage" alone never reached the fallbacks and every emoji drew as tofu. Fall back
+    // when the primary has no glyph for `ch`; a fallback counts only when it maps `ch` and
+    // draws something (the COLR colour font maps emoji but fontdue draws them empty).
+    if (metrics.width == 0 || font.lookup_glyph_index(ch) == 0) && !ch.is_whitespace() {
         let fallbacks: [&fontdue::Font; 7] = [
             get_nerd_font(),
             get_symbols_font(),
@@ -369,6 +373,9 @@ fn rasterize_cached(family: FontFamily, weight: u16, bold: bool, italic: bool, c
             get_emoji_font(),
         ];
         for fb in fallbacks {
+            if fb.lookup_glyph_index(ch) == 0 {
+                continue;
+            }
             let (m, b) = fb.rasterize(ch, px);
             if m.width > 0 {
                 metrics = m;
@@ -2120,5 +2127,24 @@ impl RenderContextExt for TinySkiaCpuRenderContext {
 
     fn set_use_convex_glass_buttons(&mut self, _use_convex: bool) {
         // Not supported in software rasterizer.
+    }
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use uzor::fonts::FontFamily;
+
+    #[test]
+    fn emoji_falls_back_past_notdef() {
+        let primary = super::get_font_w(FontFamily::Inter, 400, false, false);
+        assert_eq!(primary.lookup_glyph_index('\u{1F440}'), 0, "probe needs a codepoint Inter lacks");
+        let notdef = primary.rasterize('\u{1F440}', 16.0).0;
+        let got = super::rasterize_cached(FontFamily::Inter, 400, false, false, '\u{1F440}', 16.0);
+        let emoji = super::get_emoji_font().rasterize('\u{1F440}', 16.0).0;
+        assert_eq!((got.metrics.width, got.metrics.height), (emoji.width, emoji.height));
+        assert_ne!((got.metrics.width, got.metrics.height), (notdef.width, notdef.height));
+        // Latin stays on the primary.
+        let a = super::rasterize_cached(FontFamily::Inter, 400, false, false, 'a', 16.0);
+        assert_eq!(a.metrics.width, primary.rasterize('a', 16.0).0.width);
     }
 }
