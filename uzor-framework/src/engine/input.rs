@@ -225,13 +225,19 @@ struct SelectableText {
 /// face): the DOM's "every text node is selectable" made explicit — a widget reported here
 /// gets press-drag / double / triple-click selection and Ctrl+C copy from the input engine.
 #[derive(Clone, Debug, Default)]
-pub struct Selectables(HashMap<WidgetId, SelectableText>);
+pub struct Selectables(HashMap<WidgetId, SelectableText>, HashMap<WidgetId, WidgetId>);
 
 impl Selectables {
     /// Report one selectable text widget for this frame: its text and, per wrapped line,
     /// the char range, origin and glyph boundaries (`SelectionLine`).
     pub fn report(&mut self, widget: impl Into<WidgetId>, text: impl Into<String>, lines: Vec<SelectionLine>) {
         self.0.insert(widget.into(), SelectableText { text: text.into(), lines });
+    }
+    /// A press / click on `member` (a hit region, e.g. one wrapped line or one
+    /// bubble) acts on the selectable `owner`: one selection spans many regions,
+    /// like a DOM selection dragged across several elements of one container.
+    pub fn alias(&mut self, member: impl Into<WidgetId>, owner: impl Into<WidgetId>) {
+        self.1.insert(member.into(), owner.into());
     }
     fn contains_key(&self, w: &WidgetId) -> bool {
         self.0.contains_key(w)
@@ -303,6 +309,8 @@ struct PerWindowInput {
     // reported set (read by pointer ops); the compose door fills
     // `reported` and EndFrame swaps them.
     selectables: HashMap<WidgetId, SelectableText>,
+    /// Hit regions acting on a selectable (last completed frame's `Selectables::alias`).
+    sel_alias: HashMap<WidgetId, WidgetId>,
     reported: Selectables,
     selections: Vec<(WidgetId, TextSelection)>,
     press_sel: Option<PressSel>,
@@ -337,6 +345,7 @@ impl PerWindowInput {
             ime_allowed: false,
             pending_paste: None,
             selectables: HashMap::new(),
+            sel_alias: HashMap::new(),
             reported: Selectables::default(),
             selections: Vec::new(),
             press_sel: None,
@@ -682,7 +691,8 @@ impl PerWindowInput {
                 let target = self.content_target(self.pointer.pos);
                 let changed = self.pressed != target;
                 self.pressed.clone_from(&target);
-                let sel_changed = self.press_down(win, target.as_ref(), pos.x, pos.y, fx);
+                let t = target.as_ref().map(|t| self.sel_owner(t));
+                let sel_changed = self.press_down(win, t.as_ref(), pos.x, pos.y, fx);
                 (changed | sel_changed, target)
             }
             PointerInput::Up { pos, button, .. } => {
@@ -694,7 +704,8 @@ impl PerWindowInput {
                 }
                 let target = self.content_target(self.pointer.pos);
                 let _ = self.pressed.take();
-                let _ = self.release_select(win, target.as_ref(), fx);
+                let t = target.as_ref().map(|t| self.sel_owner(t));
+                let _ = self.release_select(win, t.as_ref(), fx);
                 // Always repaint on release: only a frame evaluates the click
                 // (`pointer.clicked`), on any cadence.
                 (true, target)
@@ -752,6 +763,11 @@ impl PerWindowInput {
     }
 
     // -- plain-text selection (T2) -------------------------------------------
+
+    /// The selectable a hit widget acts on (itself unless aliased).
+    fn sel_owner(&self, w: &WidgetId) -> WidgetId {
+        self.sel_alias.get(w).unwrap_or(w).clone()
+    }
 
     fn sel_get(&self, widget: &WidgetId) -> Option<TextSelection> {
         self.selections
@@ -981,6 +997,7 @@ impl PerWindowInput {
             changed = true;
         }
         self.selectables = fresh.0;
+        self.sel_alias = fresh.1;
 
         changed
     }
@@ -1173,10 +1190,11 @@ impl PerWindowInput {
                 }
             }
             Edit::Copy => {
-                if !self.masked(&field) {
-                    if let Some(text) = self.coord.text_fields().copy_selection() {
-                        fx.push(InputEffect::CopyText { win, text });
-                    }
+                // A field with no selection of its own (it kept focus while the user
+                // selected page text): the page selection is what the user means.
+                let own = if self.masked(&field) { None } else { self.coord.text_fields().copy_selection().filter(|t| !t.is_empty()) };
+                if let Some(text) = own.or_else(|| self.selected_text_concat()) {
+                    fx.push(InputEffect::CopyText { win, text });
                 }
             }
             Edit::Cut => {
@@ -1608,6 +1626,15 @@ impl InputEngine {
     ) {
         if let Some(w) = self.windows.get_mut(&win) {
             w.reported.report(widget, text, lines);
+        }
+    }
+
+    /// Route presses on the hit region `member` to the selectable `owner` for
+    /// this frame (see `Selectables::alias`).
+    #[allow(dead_code)]
+    pub fn alias_selectable(&mut self, win: WindowId, member: WidgetId, owner: WidgetId) {
+        if let Some(w) = self.windows.get_mut(&win) {
+            w.reported.alias(member, owner);
         }
     }
 

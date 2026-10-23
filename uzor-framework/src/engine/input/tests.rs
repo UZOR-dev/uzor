@@ -1628,3 +1628,40 @@ fn focus_visible_follows_the_last_input_modality() {
     key(&mut e, 1.3, KeyCode::Tab, no_mods());
     assert!(visible(&e));
 }
+
+/// One selectable owner spanning two hit regions (one per wrapped line / bubble):
+/// a drag starting on the first region extends into the second, a double click
+/// on the second selects its word, Ctrl+C copies across the regions.
+#[test]
+fn aliased_regions_select_across_one_owner() {
+    let text = "hello world\nsecond";
+    let (r0, r1) = (Rect::new(10.0, 10.0, 200.0, 20.0), Rect::new(10.0, 40.0, 200.0, 20.0));
+    let scene = |e: &mut InputEngine| {
+        let c = e.registrar(W).unwrap();
+        c.register(id("l0"), r0, Sense::CLICK);
+        c.register(id("l1"), r1, Sense::CLICK);
+        let b0: Vec<f64> = (0..=11).map(|i| i as f64 * CHAR_W).collect();
+        let b1: Vec<f64> = (0..=6).map(|i| i as f64 * CHAR_W).collect();
+        let lines = vec![
+            SelectionLine { start: 0, end: 11, x: r0.x, top: r0.y, height: r0.height, boundaries: b0 },
+            SelectionLine { start: 12, end: 18, x: r1.x, top: r1.y, height: r1.height, boundaries: b1 },
+        ];
+        e.update_selectable(W, id("doc"), text, lines);
+        e.alias_selectable(W, id("l0"), id("doc"));
+        e.alias_selectable(W, id("l1"), id("doc"));
+    };
+    let mut e = engine();
+    frame_sel(&mut e, 0.5, scene);
+    to_content(&mut e, 1.0, down(11.0, 15.0));
+    to_content(&mut e, 1.01, moved(10.0 + 3.0 * CHAR_W + 1.0, 45.0));
+    frame_sel(&mut e, 1.05, scene);
+    assert_eq!(sel(&e, "doc"), Some(TextSelection::new(0, 15)));
+    to_content(&mut e, 1.06, up(10.0 + 3.0 * CHAR_W + 1.0, 45.0));
+    frame_sel(&mut e, 1.1, scene);
+    let fx = key(&mut e, 1.2, KeyCode::C, ctrl());
+    assert!(has_copy(&fx, "hello world\nsec"));
+    click(&mut e, 2.0, 12.0, 45.0);
+    click(&mut e, 2.1, 12.0, 45.0);
+    frame_sel(&mut e, 2.15, scene);
+    assert_eq!(sel(&e, "doc"), Some(TextSelection::new(12, 18)));
+}
