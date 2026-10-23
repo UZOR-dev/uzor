@@ -282,6 +282,8 @@ pub struct InputView {
     pub pressed: Option<WidgetId>,
     /// Widget with keyboard focus.
     pub focused: Option<WidgetId>,
+    /// Focus came from the keyboard (`:focus-visible`): rings show only then.
+    pub focus_visible: bool,
     /// The pointer is captured (by a widget or an engine).
     pub captured: bool,
     /// Number of focus scopes open.

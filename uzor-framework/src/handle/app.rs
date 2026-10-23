@@ -169,6 +169,7 @@ pub struct VisualView<S: Spec> {
     pub(crate) hovered: Option<WidgetId>,
     pub(crate) pressed: Option<WidgetId>,
     pub(crate) focused: Option<WidgetId>,
+    pub(crate) focus_visible: bool,
     pub(crate) clicked: Vec<(WidgetId, u8)>,
     pub(crate) scroll: (f64, f64),
     pub(crate) scroll_precise: bool,
@@ -187,6 +188,7 @@ impl<S: Spec> Default for VisualView<S> {
             hovered: None,
             pressed: None,
             focused: None,
+            focus_visible: false,
             clicked: Vec::new(),
             scroll: (0.0, 0.0),
             scroll_precise: false,
@@ -224,6 +226,12 @@ impl<S: Spec> VisualView<S> {
     /// The widget with keyboard focus, if any.
     pub fn focused(&self) -> Option<&WidgetId> {
         self.focused.as_ref()
+    }
+
+    /// `:focus-visible`: the focus came from the keyboard. Paint focus
+    /// rings only when this is true (text fields show focus regardless).
+    pub fn focus_visible(&self) -> bool {
+        self.focus_visible
     }
 
     /// `id` has keyboard focus.

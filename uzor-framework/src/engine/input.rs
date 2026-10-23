@@ -307,6 +307,9 @@ struct PerWindowInput {
     press_sel: Option<PressSel>,
     drag_ended: bool,
     escalation: Option<(WidgetId, EscLevel)>,
+    /// `:focus-visible` modality: a non-modifier key press turns it on, a
+    /// pointer press turns it off; programmatic focus keeps the current one.
+    focus_visible: bool,
 }
 
 impl PerWindowInput {
@@ -338,6 +341,7 @@ impl PerWindowInput {
             press_sel: None,
             drag_ended: false,
             escalation: None,
+            focus_visible: false,
         }
     }
 
@@ -577,6 +581,12 @@ impl PerWindowInput {
         let mut drag_started = false;
         let mut ended_drag = false;
         let mut changed = false;
+        // Any press (content, chrome, dock) ends keyboard modality; the
+        // ring it hides needs a repaint.
+        if matches!(input, PointerInput::Down { .. }) && self.focus_visible {
+            self.focus_visible = false;
+            changed = true;
+        }
         match input {
             PointerInput::Moved { pos, mods } => {
                 self.pointer.pos = Some((pos.x, pos.y));
@@ -1092,6 +1102,9 @@ impl PerWindowInput {
         if input.state == KeyState::Up {
             fx.push(InputEffect::KeyPassed { win, key: input });
             return false;
+        }
+        if input.code != KeyCode::Unknown {
+            self.focus_visible = true;
         }
         let m = input.mods;
         if input.code == KeyCode::Tab && !(m.ctrl || m.alt || m.meta) {
@@ -1632,6 +1645,7 @@ impl<'a> InputEngineView<'a> {
             hovered: w.hover.clone(),
             pressed: w.pressed.clone(),
             focused: w.focused_id().cloned(),
+            focus_visible: w.focus_visible,
             captured: w.capture.is_some(),
             scope_depth: w.scopes.len(),
         })

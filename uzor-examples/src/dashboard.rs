@@ -406,6 +406,7 @@ impl App for DashboardApp {
             | Intent::Dock(_)
             | Intent::Text(_)
             | Intent::Drop(_)
+            | Intent::PasteImage(_)
             | Intent::Timer(_)
             | Intent::Screenshot { .. }
             | Intent::Tray(_)

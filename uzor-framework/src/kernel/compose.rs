@@ -251,7 +251,8 @@ impl<S: Spec> Kernel<S> {
         // is the last evaluated one; a field focused by the previous tick
         // has re-registered above).
         {
-            let ring = view.focused.as_ref().and_then(|id| {
+            // `:focus-visible`: keyboard focus only, like the browser default.
+            let ring = view.focused.as_ref().filter(|_| view.focus_visible).and_then(|id| {
                 self.input
                     .view()
                     .coordinator(win)
@@ -362,6 +363,7 @@ impl<S: Spec> Kernel<S> {
         view.hovered = input.hovered;
         view.pressed = input.pressed;
         view.focused = input.focused;
+        view.focus_visible = input.focus_visible;
         view.captured = input.captured;
         view.clicked = iview.clicked(win).to_vec();
         view.scroll = iview.pending_scroll(win);

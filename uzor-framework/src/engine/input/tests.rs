@@ -1610,3 +1610,21 @@ fn shift_enter_newline_only_in_multiline_fields() {
     let fx = key(&mut e, 1.3, KeyCode::Enter, shift());
     assert!(fx.contains(&InputEffect::Text(TextIntent::Submitted { win: W, field: id("b") })));
 }
+
+#[test]
+fn focus_visible_follows_the_last_input_modality() {
+    let mut e = engine();
+    frame(&mut e, 0.5, modal_frame);
+    let visible = |e: &InputEngine| e.view().window(W).unwrap_or_default().focus_visible;
+    assert!(!visible(&e));
+    key(&mut e, 1.0, KeyCode::Tab, no_mods());
+    assert!(e.view().focused(W).is_some());
+    assert!(visible(&e), "Tab focus is :focus-visible");
+    cook(&mut e, 1.1, down(10.0, 10.0));
+    assert!(!visible(&e), "a pointer press hides the ring");
+    // Programmatic focus keeps the modality (pointer here: no ring).
+    focus(&mut e, 1.2, FocusOp::Next);
+    assert!(!visible(&e));
+    key(&mut e, 1.3, KeyCode::Tab, no_mods());
+    assert!(visible(&e));
+}
