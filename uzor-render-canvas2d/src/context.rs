@@ -586,27 +586,56 @@ impl ImagePainter for Canvas2dRenderContext {
         if data.len() < (img_width as usize) * (img_height as usize) * 4 {
             return;
         }
-        let Ok(canvas) = OffscreenCanvas::new(img_width, img_height) else { return };
-        let Some(c2) = canvas
-            .get_context("2d")
-            .ok()
-            .flatten()
-            .and_then(|c| c.dyn_into::<OffscreenCanvasRenderingContext2d>().ok())
-        else {
-            return;
-        };
         let n = (img_width as usize) * (img_height as usize) * 4;
-        let Ok(img) = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
-            wasm_bindgen::Clamped(&data[..n]),
-            img_width,
-            img_height,
-        ) else {
-            return;
-        };
-        let _ = c2.put_image_data(&img, 0.0, 0.0);
+        let Some(canvas) = cached_bitmap(&data[..n], img_width, img_height) else { return };
         let _ = match &self.ctx {
             Canvas2dCtx::Root(c) => c.draw_image_with_offscreen_canvas_and_dw_and_dh(&canvas, x, y, width, height),
             Canvas2dCtx::Recording(c) => c.draw_image_with_offscreen_canvas_and_dw_and_dh(&canvas, x, y, width, height),
         };
     }
+}
+
+/// Pixels already uploaded by [`Canvas2dRenderContext::draw_image_rgba`], keyed by the slice
+/// address, size and a sample of its bytes, most recent first. A UI repaints the same image
+/// every frame; without this each frame re-created an `OffscreenCanvas` and re-uploaded every
+/// pixel (several MB for a full-screen photo).
+type BitmapKey = (usize, usize, u32, u32, u64);
+thread_local! {
+    static BITMAPS: core::cell::RefCell<Vec<(BitmapKey, OffscreenCanvas)>> = const { core::cell::RefCell::new(Vec::new()) };
+}
+const BITMAP_CACHE: usize = 32;
+
+fn bitmap_key(data: &[u8], w: u32, h: u32) -> BitmapKey {
+    // FNV-1a over 64 evenly spaced bytes: guards against a freed buffer whose address gets
+    // reused for a different picture of the same size.
+    let mut f: u64 = 0xcbf2_9ce4_8422_2325;
+    let step = (data.len() / 64).max(1);
+    for b in data.iter().step_by(step).take(64) {
+        f = (f ^ u64::from(*b)).wrapping_mul(0x100_0000_01b3);
+    }
+    (data.as_ptr() as usize, data.len(), w, h, f)
+}
+
+fn cached_bitmap(data: &[u8], w: u32, h: u32) -> Option<OffscreenCanvas> {
+    let key = bitmap_key(data, w, h);
+    if let Some(c) = BITMAPS.with(|m| {
+        let mut m = m.borrow_mut();
+        let i = m.iter().position(|(k, _)| *k == key)?;
+        let e = m.remove(i);
+        let c = e.1.clone();
+        m.insert(0, e);
+        Some(c)
+    }) {
+        return Some(c);
+    }
+    let canvas = OffscreenCanvas::new(w, h).ok()?;
+    let c2 = canvas.get_context("2d").ok().flatten()?.dyn_into::<OffscreenCanvasRenderingContext2d>().ok()?;
+    let img = web_sys::ImageData::new_with_u8_clamped_array_and_sh(wasm_bindgen::Clamped(data), w, h).ok()?;
+    c2.put_image_data(&img, 0.0, 0.0).ok()?;
+    BITMAPS.with(|m| {
+        let mut m = m.borrow_mut();
+        m.insert(0, (key, canvas.clone()));
+        m.truncate(BITMAP_CACHE);
+    });
+    Some(canvas)
 }
