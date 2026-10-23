@@ -97,6 +97,9 @@ struct TestApp {
     trap: Option<WidgetId>,
     /// Focus events the panel hook dispatched (event, current, at target).
     seen_focus: Vec<(uzor::input::core::events::FocusEvent, String, bool)>,
+    /// A scroll container (viewport, content height) and the key step queued for it.
+    scroller: Option<(Rect, f64, crate::ScrollView)>,
+    scroll_key: Option<crate::ScrollKey>,
 }
 
 impl App for TestApp {
@@ -146,6 +149,14 @@ impl App for TestApp {
             );
             self.seen_text = Some(cx.widgets.coord.text_fields().text(&field.id).to_string());
         }
+        if let Some((vp, h, sv)) = &mut self.scroller {
+            if let Some(k) = self.scroll_key.take() {
+                crate::widgets::queue_scroll_key(cx, k);
+            }
+            let st = crate::ScrollStyle::default();
+            let _ = crate::widgets::scroll_begin(cx, "list", *vp, sv, *h, true, &st);
+            crate::widgets::scroll_end(cx, "list", *vp, sv, &st);
+        }
         self.seen_clicks.extend(cx.view.clicks().iter().cloned());
         if self.request_frame {
             cx.out.request_frame();
@@ -161,6 +172,11 @@ impl App for TestApp {
     }
 
     fn intent(&mut self, intent: Intent<TS>, cx: &mut IntentCx<'_, TS>) {
+        if let Intent::Unhandled(crate::types::intent::UnhandledInput::Key { key, .. }) = &intent {
+            if key.state != crate::types::bus::KeyState::Up {
+                self.scroll_key = crate::ScrollKey::from_key(key.code, key.mods).or(self.scroll_key);
+            }
+        }
         self.intents.push(intent);
         if let Some(cmd) = &self.answer {
             cx.command(cmd.clone());
@@ -1303,4 +1319,28 @@ fn f12_toggles_the_inspector_and_is_not_reported() {
         i,
         crate::types::intent::Intent::Unhandled(crate::types::intent::UnhandledInput::Key { key, .. }) if key.code == KeyCode::F12
     )));
+}
+
+#[test]
+fn keys_scroll_the_hovered_container() {
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    h.runtime_mut().app_mut().scroller = Some((Rect::new(0.0, 0.0, 400.0, 300.0), 3000.0, crate::ScrollView::default()));
+    h.runtime_mut().app_mut().request_frame = true;
+    h.advance(0.017);
+    mov(&mut h, win, 100.0, 100.0);
+    let off = |h: &Host<TS, TestApp>| h.runtime().app().scroller.as_ref().unwrap().2.offset;
+    let settle = |h: &mut Host<TS, TestApp>| (0..60).for_each(|_| { h.advance(0.017); });
+    key(&mut h, win, KeyCode::PageDown, ModifierKeys::default(), None);
+    settle(&mut h);
+    assert!((off(&h) - 262.5).abs() < 1.0, "PageDown: {}", off(&h));
+    key(&mut h, win, KeyCode::End, ModifierKeys::default(), None);
+    settle(&mut h);
+    assert!((off(&h) - 2700.0).abs() < 1.0, "End: {}", off(&h));
+    key(&mut h, win, KeyCode::ArrowUp, ModifierKeys::default(), None);
+    settle(&mut h);
+    assert!((off(&h) - 2660.0).abs() < 1.0, "ArrowUp: {}", off(&h));
+    key(&mut h, win, KeyCode::Home, ModifierKeys::default(), None);
+    settle(&mut h);
+    assert!(off(&h).abs() < 1.0, "Home: {}", off(&h));
 }

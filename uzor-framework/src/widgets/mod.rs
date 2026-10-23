@@ -29,4 +29,4 @@ pub use atomics::{checkbox, chevron, separator, text, toggle, tooltip};
 pub use button::button;
 pub use composites::{chrome, context_menu, dropdown, modal, panel, popup, sidebar, toolbar};
 pub use host::ContentCx;
-pub use scroll::{scroll_begin, scroll_begin_overlay, scroll_end, scroll_end_overlay};
+pub use scroll::{queue_scroll_key, scroll_begin, scroll_begin_overlay, scroll_end, scroll_end_overlay};

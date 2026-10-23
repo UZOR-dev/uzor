@@ -95,6 +95,51 @@ pub enum ScrollAlign {
     Nearest,
 }
 
+/// A keyboard scroll step (the keys a focused or hovered scroller takes in
+/// a browser when no text control has focus).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollKey {
+    /// ArrowUp: one line (40 px).
+    LineUp,
+    /// ArrowDown: one line.
+    LineDown,
+    /// PageUp, Shift+Space: 87.5 % of the viewport.
+    PageUp,
+    /// PageDown, Space.
+    PageDown,
+    /// Home: the top.
+    Home,
+    /// End: the end.
+    End,
+}
+
+impl ScrollKey {
+    /// The step a key press asks for (no Ctrl/Alt/Meta; Shift only turns
+    /// Space into PageUp). `None` for every other key.
+    pub fn from_key(code: uzor::input::KeyCode, mods: uzor::input::ModifierKeys) -> Option<Self> {
+        use uzor::input::KeyCode as K;
+        if mods.ctrl || mods.alt || mods.meta {
+            return None;
+        }
+        Some(match code {
+            K::ArrowUp if !mods.shift => Self::LineUp,
+            K::ArrowDown if !mods.shift => Self::LineDown,
+            K::PageUp => Self::PageUp,
+            K::PageDown => Self::PageDown,
+            K::Space if mods.shift => Self::PageUp,
+            K::Space => Self::PageDown,
+            K::Home if !mods.shift => Self::Home,
+            K::End if !mods.shift => Self::End,
+            _ => return None,
+        })
+    }
+}
+
+/// Chrome's arrow-key step, px.
+const KEY_LINE_PX: f64 = 40.0;
+/// Chrome's page step, a fraction of the viewport (`kMinFractionToStepWhenPaging`).
+const KEY_PAGE_FRACTION: f64 = 0.875;
+
 /// Duration of a smooth programmatic scroll, ms (Chrome's is ~300).
 const GLIDE_MS: f64 = 300.0;
 
@@ -251,6 +296,38 @@ impl ScrollView {
         self.glide = Some((self.offset, target, None));
     }
 
+    /// One keyboard step. Repeated presses during a smooth scroll add up
+    /// from where the last one was going, as in Chrome. Returns `false`
+    /// when there is no room that way (the key may go to an outer
+    /// scroller, like DOM scroll chaining).
+    pub fn key(&mut self, k: ScrollKey, smooth: bool) -> bool {
+        let from = self.glide.map_or(self.offset, |g| g.1);
+        let page = (self.view * KEY_PAGE_FRACTION).max(1.0);
+        let target = match k {
+            ScrollKey::LineUp => from - KEY_LINE_PX,
+            ScrollKey::LineDown => from + KEY_LINE_PX,
+            ScrollKey::PageUp => from - page,
+            ScrollKey::PageDown => from + page,
+            ScrollKey::Home => 0.0,
+            ScrollKey::End => self.max(),
+        }
+        .clamp(0.0, self.max());
+        if !self.scrollable() || (target - from).abs() < 0.5 {
+            return false;
+        }
+        if smooth {
+            self.fling = None;
+            self.follow_end = false;
+            self.glide = Some((self.offset, target, None));
+            if k == ScrollKey::End {
+                self.follow_end = true;
+            }
+        } else {
+            self.scroll_to(target);
+        }
+        true
+    }
+
     /// Keep the content rect `[y, y+h)` (content coordinates) visible.
     pub fn ensure_visible(&mut self, y: f64, h: f64) {
         if y < self.offset {
@@ -317,6 +394,43 @@ impl ScrollView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_step_like_chrome() {
+        use uzor::input::{KeyCode as K, ModifierKeys};
+        let m = ModifierKeys::default();
+        let sh = ModifierKeys { shift: true, ..m };
+        assert_eq!(ScrollKey::from_key(K::Space, m), Some(ScrollKey::PageDown));
+        assert_eq!(ScrollKey::from_key(K::Space, sh), Some(ScrollKey::PageUp));
+        assert_eq!(ScrollKey::from_key(K::ArrowDown, ModifierKeys { ctrl: true, ..m }), None);
+        assert_eq!(ScrollKey::from_key(K::A, m), None);
+        let mut sv = ScrollView::default();
+        sv.set_extent(1000.0, 200.0);
+        assert!(sv.key(ScrollKey::LineDown, false));
+        assert_eq!(sv.offset, 40.0);
+        assert!(sv.key(ScrollKey::PageDown, false));
+        assert_eq!(sv.offset, 215.0);
+        assert!(sv.key(ScrollKey::End, false));
+        assert_eq!(sv.offset, 800.0);
+        assert!(sv.follow_end);
+        assert!(!sv.key(ScrollKey::LineDown, false), "no room: the key chains outwards");
+        assert!(sv.key(ScrollKey::Home, false));
+        assert_eq!(sv.offset, 0.0);
+        assert!(!sv.key(ScrollKey::PageUp, false));
+        // Smooth presses accumulate from the pending target.
+        assert!(sv.key(ScrollKey::LineDown, true));
+        assert!(sv.key(ScrollKey::LineDown, true));
+        let st = ScrollStyle::default();
+        let mut t = 0.0;
+        while sv.tick(t, &st) {
+            t += 16.0;
+        }
+        assert_eq!(sv.offset, 80.0);
+        // Nothing to scroll: not consumed.
+        let mut short = ScrollView::default();
+        short.set_extent(100.0, 200.0);
+        assert!(!short.key(ScrollKey::PageDown, true));
+    }
 
     #[test]
     fn scroll_into_view_aligns_like_the_dom() {
