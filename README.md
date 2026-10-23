@@ -4,7 +4,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/uzor.svg)](https://crates.io/crates/uzor)
 [![docs.rs](https://docs.rs/uzor/badge.svg)](https://docs.rs/uzor)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/zeng3ld/uzor#license)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/UZOR-dev/uzor#license)
 
 UZOR is a low-level UI stack: it owns widget geometry, hit-testing, and a Canvas2D-style `RenderContext`. The app owns visuals and business logic.
 

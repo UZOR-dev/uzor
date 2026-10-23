@@ -6,6 +6,7 @@ edition.workspace = true
 license = "MIT OR Apache-2.0"
 description = "Lightweight 3D physics (AABB/sphere colliders + simple Verlet rigid bodies) for the URX render family."
 repository.workspace = true
+homepage.workspace = true
 keywords = ["physics", "collision", "3d", "uzor", "urx"]
 categories = ["game-development", "graphics"]
 
