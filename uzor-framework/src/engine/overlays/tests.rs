@@ -769,7 +769,8 @@ fn reclamp_keeps_rects_inside_shrunk_viewport() {
     );
     assert_eq!(
         e.view().get(W, Ov::Ctx).map(|v| v.rect()),
-        Some(r(300.0, 200.0, 100.0, 100.0))
+        // No room below the anchor: it flips above it (y = 290 - 100).
+        Some(r(300.0, 190.0, 100.0, 100.0))
     );
     e.apply(OverlayOp::Cmd {
         cmd: OverlayCmd::Move {
@@ -1425,4 +1426,24 @@ fn auto_size_starts_empty_until_resize_and_modal_centres() {
         e.view().get(W, Ov::Menu).map(|v| v.rect()),
         Some(r(40.0, 44.0, 160.0, 90.0))
     );
+}
+
+#[test]
+fn toasts_and_tooltips_layer_above_modals_and_outlive_them() {
+    let mut e = engine();
+    // A toast shown first still paints above a modal opened later, and above
+    // the modal's dropdown: base < dropdown < modal < toast < tooltip.
+    open_at(&mut e, Ov::Panel, OverlayKind::Toast, r(10.0, 10.0, 80.0, 20.0));
+    modal(&mut e, Ov::Settings, r(0.0, 0.0, 300.0, 300.0));
+    open_at(&mut e, Ov::Menu, OverlayKind::Dropdown, r(20.0, 20.0, 50.0, 50.0));
+    open_at(&mut e, Ov::Tip, OverlayKind::Tooltip, r(30.0, 30.0, 40.0, 10.0));
+    assert_eq!(ids(&e), vec![Ov::Settings, Ov::Menu, Ov::Panel, Ov::Tip]);
+    // Closing the modal closes its dropdown and its own tooltip; the toast stays.
+    let fx = e.apply(OverlayOp::Cmd {
+        cmd: OverlayCmd::Close { win: W, id: Ov::Settings },
+        now: t(1.0),
+    });
+    let closed: Vec<Ov> = closes(&fx).into_iter().map(|(id, _)| id).collect();
+    assert!(closed.contains(&Ov::Menu) && closed.contains(&Ov::Tip) && closed.contains(&Ov::Settings));
+    assert_eq!(ids(&e), vec![Ov::Panel]);
 }

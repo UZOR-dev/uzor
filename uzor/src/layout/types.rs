@@ -47,6 +47,8 @@ pub enum OverlayKind {
     Modal,
     ContextMenu,
     ColorPicker,
+    /// A transient notice (`.toast`): above modals, below tooltips, never hit.
+    Toast,
     Tooltip,
 }
 

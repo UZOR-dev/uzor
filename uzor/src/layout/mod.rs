@@ -15,6 +15,7 @@ mod edge_panels;
 mod handles;
 pub mod window;
 mod overlay_stack;
+pub mod placement;
 mod solve;
 mod tree;
 mod types;
@@ -34,4 +35,5 @@ pub use handles::{
 pub use tree::{LayoutNode, LayoutNodeId, LayoutTree, LayoutTreeEntry, SystemNodeKind, WidgetNode};
 pub use types::{DragOutcome, EdgeRects, EdgeSide, LayoutSolved, OverlayKind, OverlayRect, SlotId};
 pub use z_layers::ZLayerTable;
+pub use placement::{place_anchored, Side};
 pub use dock_state::DockState;

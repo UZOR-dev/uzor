@@ -186,7 +186,7 @@ impl OverlayBody {
                 s.open_raw(rect.x, rect.y, None);
                 Self::ContextMenu(s)
             }
-            OverlayKind::Tooltip => Self::Tooltip,
+            OverlayKind::Tooltip | OverlayKind::Toast => Self::Tooltip,
             OverlayKind::ColorPicker => Self::Custom,
         }
     }
@@ -213,6 +213,9 @@ impl OverlayBody {
 /// is the comparison order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ZKey {
+    /// `1` for the pointer-transparent kinds (toasts, tooltips): a top tier
+    /// above every modal band, like a global `z-index` in the DOM.
+    tier: u8,
     band: u32,
     /// `false` for the band's modal base, `true` for everything above it.
     raised: bool,
@@ -241,7 +244,7 @@ struct Entry<O> {
 impl<O> Entry<O> {
     /// Never hit, never the top overlay, no focus scope.
     fn transparent(&self) -> bool {
-        self.kind == OverlayKind::Tooltip
+        matches!(self.kind, OverlayKind::Tooltip | OverlayKind::Toast)
     }
 
     fn scope(&self) -> Option<ScopeOwner> {
@@ -547,6 +550,7 @@ impl<O: Copy + Eq> OverlayEngine<O> {
             (modals, true)
         };
         let key = ZKey {
+            tier: u8::from(matches!(kind, OverlayKind::Toast | OverlayKind::Tooltip)),
             band,
             raised,
             z: self.z.z_for(kind),
@@ -1019,12 +1023,17 @@ fn close_at<O: Copy>(
     fx: &mut OverlayEffects<O>,
 ) {
     if s.entries[i].policy.modal {
+        let band = s.entries[i].key.band;
         let mut above = s.entries.split_off(i + 1);
+        // The top tier sits above every band: a toast outlives the modal, and so
+        // does a tooltip opened before it; the modal's own tooltips close with it.
+        let (keep, mut above): (Vec<_>, Vec<_>) = above.drain(..).partition(|e| e.key.tier == 1 && (e.kind == OverlayKind::Toast || e.key.band < band));
         uzor::sort::sort_by_key(&mut above, |e| std::cmp::Reverse(e.key.seq));
         for e in above {
             forget_press(s, e.slot);
             fx.push(closed(win, &e, cause));
         }
+        s.entries.extend(keep);
     }
     let e = s.entries.remove(i);
     forget_press(s, e.slot);
@@ -1095,13 +1104,17 @@ fn set_rect<O>(
     true
 }
 
-/// Initial rect: below the anchor (left-aligned), else centred in the
-/// viewport, else at the origin; clamped to the viewport when known.
+/// Initial rect: below the anchor (left-aligned; flipped above it when it
+/// fits better there, see [`uzor::layout::place_anchored`]), else centred in
+/// the viewport, else at the origin; clamped to the viewport when known.
 fn place(anchor: Option<Rect>, size: OverlaySize, viewport: Option<Rect>) -> Rect {
     let (w, h) = match size {
         OverlaySize::Fixed { width, height } => (finite(width), finite(height)),
         OverlaySize::Auto => (0.0, 0.0),
     };
+    if let (Some(a), Some(v)) = (anchor, viewport) {
+        return uzor::layout::place_anchored(a, w, h, v, uzor::layout::Side::Below, 0.0, 0.0, 0.0);
+    }
     let (x, y) = match (anchor, viewport) {
         (Some(a), _) => (a.x, a.y + a.height),
         (None, Some(v)) => (v.x + (v.width - w) / 2.0, v.y + (v.height - h) / 2.0),

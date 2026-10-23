@@ -782,7 +782,7 @@ impl OverlayPolicy {
                 keymap_scope: true,
                 ..none
             },
-            OverlayKind::Tooltip => none,
+            OverlayKind::Toast | OverlayKind::Tooltip => none,
         }
     }
 }

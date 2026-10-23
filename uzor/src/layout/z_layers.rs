@@ -20,6 +20,8 @@ pub struct ZLayerTable {
     pub context_menu: i32,
     /// Z for `OverlayKind::ColorPicker`.
     pub color_picker: i32,
+    /// Z for `OverlayKind::Toast`.
+    pub toast: i32,
     /// Z for `OverlayKind::Tooltip`.
     pub tooltip: i32,
 }
@@ -34,7 +36,8 @@ impl Default for ZLayerTable {
             popup: 4,
             context_menu: 5,
             color_picker: 6,
-            tooltip: 7,
+            toast: 7,
+            tooltip: 8,
         }
     }
 }
@@ -48,6 +51,7 @@ impl ZLayerTable {
             OverlayKind::Modal => self.modal,
             OverlayKind::ContextMenu => self.context_menu,
             OverlayKind::ColorPicker => self.color_picker,
+            OverlayKind::Toast => self.toast,
             OverlayKind::Tooltip => self.tooltip,
         }
     }
@@ -60,6 +64,7 @@ impl ZLayerTable {
             OverlayKind::Modal => self.modal = z,
             OverlayKind::ContextMenu => self.context_menu = z,
             OverlayKind::ColorPicker => self.color_picker = z,
+            OverlayKind::Toast => self.toast = z,
             OverlayKind::Tooltip => self.tooltip = z,
         }
     }
