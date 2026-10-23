@@ -181,6 +181,9 @@ pub struct InputCoordinator {
     cook_drag_release: Option<(f64, f64)>,
     /// This frame's `tabindex` values (`set_tab_index`); unset = 0.
     tab_indices: Vec<(WidgetId, i32)>,
+    /// Accessible names and checked states declared this frame
+    /// ([`Self::set_a11y`]); read by [`Self::a11y_tree`].
+    a11y: Vec<(WidgetId, String, Option<bool>)>,
     /// This frame's focus trap root (`set_focus_trap`): Tab / Shift+Tab
     /// stay inside its subtree, like focus in a modal `<dialog>`.
     focus_trap: Option<WidgetId>,
@@ -208,6 +211,7 @@ impl InputCoordinator {
             cook_prev_down: None,
             cook_drag_release: None,
             tab_indices: Vec::new(),
+            a11y: Vec::new(),
             focus_trap: None,
         }
     }
@@ -239,6 +243,7 @@ impl InputCoordinator {
         self.widget_state.hover.set_hovered(hovered);
 
         self.widgets.clear();
+        self.a11y.clear();
         self.layers.clear();
         self.default_layer = None;
         self.layers.push(Layer {
@@ -845,6 +850,37 @@ impl InputCoordinator {
             .collect()
     }
 
+    /// Declare a widget's accessible name (its visible label, or what an icon
+    /// means) and, for switches and checkboxes, its checked state. Per frame,
+    /// like registration.
+    pub fn set_a11y(&mut self, id: &WidgetId, name: impl Into<String>, checked: Option<bool>) {
+        self.a11y.push((id.clone(), name.into(), checked));
+    }
+
+    /// This frame's accessibility tree: one node per registered widget whose
+    /// kind has a role (text fields are text inputs), in registration order,
+    /// with the declared name, checked state, focus and parent links.
+    pub fn a11y_tree(&self) -> crate::a11y::A11yTree {
+        use crate::a11y::{A11yNode, A11yRole, A11yTree};
+        let mut t = A11yTree::new();
+        let focus = self.focused_widget();
+        for (i, w) in self.widgets.iter().enumerate() {
+            let role = if w.sense.text { Some(A11yRole::TextInput) } else { A11yRole::for_kind(w.kind) };
+            let Some(role) = role else { continue };
+            if self.widgets[i + 1..].iter().any(|o| o.id == w.id) {
+                continue;
+            }
+            let mut n = A11yNode::new(w.id.clone(), role, "", w.rect).with_focused(focus == Some(&w.id));
+            if let Some((_, name, checked)) = self.a11y.iter().rev().find(|a| a.0 == w.id) {
+                n.name = name.clone();
+                n.checked = *checked;
+            }
+            n.children = self.widgets.iter().filter(|c| c.parent.as_ref() == Some(&w.id)).map(|c| c.id.clone()).collect();
+            t.push(n);
+        }
+        t
+    }
+
     pub fn widget_rect(&self, id: &WidgetId) -> Option<Rect> {
         self.widgets.iter().find(|w| &w.id == id).map(|w| w.rect)
     }
@@ -1175,6 +1211,7 @@ impl crate::input::driver::CoordinatorDriver for InputCoordinator {
         self.widget_state.hover.set_hovered(hovered);
 
         self.widgets.clear();
+        self.a11y.clear();
         self.layers.clear();
         self.default_layer = None;
         self.layers.push(Layer {

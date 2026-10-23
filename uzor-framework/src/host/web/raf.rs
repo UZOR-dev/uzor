@@ -56,6 +56,8 @@ struct RafDriver<S: Spec, A: App<Spec = S>> {
     cursor_css: String,
     cursor_hidden: bool,
     ime: Option<super::ime::Ime>,
+    #[cfg(feature = "a11y-dom")]
+    aria: Option<super::aria::Aria>,
     _listeners: Option<listeners::Listeners>,
 }
 
@@ -112,6 +114,8 @@ where
     };
 
     let ime = super::ime::Ime::install(&document, &canvas);
+    #[cfg(feature = "a11y-dom")]
+    let aria = super::aria::Aria::install(&document, &canvas);
     let (runtime, handle) = Runtime::new(app, cfg, waker);
     let queue = Queue::new();
     let driver = Rc::new(RefCell::new(RafDriver {
@@ -132,6 +136,8 @@ where
         cursor_css: "default".into(),
         cursor_hidden: false,
         ime,
+        #[cfg(feature = "a11y-dom")]
+        aria,
         _listeners: None,
     }));
 
@@ -217,6 +223,10 @@ impl<S: Spec, A: App<Spec = S>> RafDriver<S, A> {
         for req in &out.frames {
             if let Err(err) = paint_frame(&mut self.runtime, &self.canvas, req) {
                 log::warn!("paint: {err}");
+            }
+            #[cfg(feature = "a11y-dom")]
+            if let Some(a) = &mut self.aria {
+                a.sync(&self.runtime.a11y_tree(req.window));
             }
         }
         let kicked = {

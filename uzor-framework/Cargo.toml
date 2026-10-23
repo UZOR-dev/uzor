@@ -88,6 +88,8 @@ x11-dl = { version = "2.21", optional = true }
 [features]
 # DevTools-like F12 overlay over every registered widget (debug builds only).
 inspector = ["uzor/inspector"]
+# Web: mirror the accessibility tree into hidden ARIA DOM nodes after each frame.
+a11y-dom = ["web"]
 # Native (winit) host — brief F9.
 native = [
     "dep:winit",

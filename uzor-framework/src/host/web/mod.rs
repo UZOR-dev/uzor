@@ -10,6 +10,8 @@
 //! The driver compiles on any target the `web` feature builds. It only
 //! *runs* in a browser (`wasm32-unknown-unknown`).
 
+#[cfg(feature = "a11y-dom")]
+mod aria;
 mod executor;
 mod ime;
 mod listeners;

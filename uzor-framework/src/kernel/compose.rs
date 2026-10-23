@@ -40,6 +40,15 @@ pub(crate) struct ComposeOut<S: Spec> {
 }
 
 impl<S: Spec> Kernel<S> {
+    /// The accessibility tree of `win`'s last composed frame.
+    pub(crate) fn a11y_tree(&self, win: WindowId) -> uzor::a11y::A11yTree {
+        let v = self.input.view();
+        let mut t = v.coordinator(win).map(|c| c.a11y_tree()).unwrap_or_default();
+        // Focus lives in the input engine, not the coordinator's widget state.
+        t.set_focus(v.focused(win));
+        t
+    }
+
     /// Phases 5-6 for one window. `render` paints at the window's own
     /// scale; time comes from the runtime, never from a clock.
     pub(crate) fn compose(

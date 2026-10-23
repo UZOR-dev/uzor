@@ -34,6 +34,14 @@ impl A11yTree {
         &self.nodes
     }
 
+    /// Mark `id` as the one focused node (hosts that track focus outside the
+    /// coordinator correct the tree with this).
+    pub fn set_focus(&mut self, id: Option<&WidgetId>) {
+        for n in &mut self.nodes {
+            n.focused = Some(&n.id) == id;
+        }
+    }
+
     /// Find a node by its widget id.
     pub fn get(&self, id: &WidgetId) -> Option<&A11yNode> {
         self.nodes.iter().find(|n| &n.id == id)
@@ -77,6 +85,32 @@ mod tests {
         assert_eq!(found.map(|n| n.name.as_str()), Some("b"));
 
         assert!(tree.get(&WidgetId::from("missing")).is_none());
+    }
+
+    #[test]
+    fn coordinator_builds_roles_names_and_states_from_registrations() {
+        use crate::input::core::sense::Sense;
+        use crate::input::{InputCoordinator, LayerId, WidgetKind};
+        use crate::input::text::TextFieldConfig;
+        let mut c = InputCoordinator::new();
+        let main = LayerId::main();
+        let r = Rect::new(0.0, 0.0, 10.0, 10.0);
+        c.register_atomic("card", WidgetKind::Surface, r, Sense::CLICK, &main);
+        c.register_atomic("save", WidgetKind::Button, r, Sense::CLICK, &main);
+        c.register_atomic("sw:dark", WidgetKind::Toggle, r, Sense::CLICK, &main);
+        c.register_text_field("name", r, TextFieldConfig::text());
+        c.set_a11y(&WidgetId::from("save"), "Save", None);
+        c.set_a11y(&WidgetId::from("sw:dark"), "Dark mode", Some(true));
+        let t = c.a11y_tree();
+        let got: Vec<_> = t.nodes().iter().map(|n| (n.id.as_str().to_string(), n.role, n.name.clone(), n.checked)).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("save".into(), A11yRole::Button, "Save".into(), None),
+                ("sw:dark".into(), A11yRole::Switch, "Dark mode".into(), Some(true)),
+                ("name".into(), A11yRole::TextInput, String::new(), None),
+            ]
+        );
     }
 
     #[test]

@@ -22,5 +22,27 @@ pub enum A11yRole {
     Group,
     Dialog,
     Tooltip,
+    Link,
     Unknown,
+}
+
+impl A11yRole {
+    /// The role a registered widget kind implies; `None` for structure the tree
+    /// leaves out (surfaces, scrims, text, separators, scrollbars, panels).
+    pub fn for_kind(kind: crate::input::WidgetKind) -> Option<Self> {
+        use crate::input::WidgetKind as K;
+        Some(match kind {
+            K::Button | K::CloseButton | K::DropdownTrigger | K::ColorSwatch | K::ScrollChevron => Self::Button,
+            K::Checkbox => Self::CheckBox,
+            K::Radio => Self::RadioButton,
+            K::Toggle => Self::Switch,
+            K::Slider => Self::Slider,
+            K::ChromeTab => Self::Tab,
+            K::Item => Self::MenuItem,
+            K::Link => Self::Link,
+            K::Modal => Self::Dialog,
+            K::Tooltip => Self::Tooltip,
+            _ => return None,
+        })
+    }
 }

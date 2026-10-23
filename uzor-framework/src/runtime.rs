@@ -221,6 +221,11 @@ impl<S: Spec, A: App<Spec = S>> Runtime<S, A> {
         self.snap.load_full()
     }
 
+    /// The accessibility tree of `win`'s last composed frame (empty before one).
+    pub fn a11y_tree(&self, win: crate::types::ids::WindowId) -> uzor::a11y::A11yTree {
+        self.kernel.a11y_tree(win)
+    }
+
     /// The published revision.
     pub fn revision(&self) -> Revision {
         self.snap.load().revision
