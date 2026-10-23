@@ -112,7 +112,28 @@ pub struct Style {
     pub opacity: Option<f64>,
     pub width: Option<f64>,
     pub height: Option<f64>,
+    /// `gap` (both axes) / `column-gap`.
     pub gap: Option<f64>,
+    /// `row-gap` (the first value of a two-value `gap`); `None` = same as `gap`.
+    pub row_gap: Option<f64>,
+    pub min_width: Option<f64>,
+    pub max_width: Option<f64>,
+    pub min_height: Option<f64>,
+    pub max_height: Option<f64>,
+    /// `block` (default), `flex`, `grid`, `none`.
+    pub display: Option<String>,
+    /// `row` (default) / `column`.
+    pub flex_direction: Option<String>,
+    pub flex_wrap: Option<String>,
+    pub justify_content: Option<String>,
+    pub align_items: Option<String>,
+    pub align_self: Option<String>,
+    pub flex_grow: Option<f64>,
+    pub flex_shrink: Option<f64>,
+    /// `None` = `auto`.
+    pub flex_basis: Option<f64>,
+    /// Raw `grid-template-columns` (parsed by `ui::flow`).
+    pub grid_template_columns: Option<String>,
     pub box_shadow: Option<String>,
     pub cursor: Option<String>,
     pub text_align: Option<String>,
@@ -256,6 +277,17 @@ pub struct Applied {
     pub property: String,
     pub value: String,
     pub selector: String,
+}
+
+/// Parse an inline `style="..."` declaration list into a [`Style`] (no cascade, no vars).
+pub fn inline(decls: &str) -> Style {
+    let mut s = Style::default();
+    for d in decls.split(';') {
+        if let Some((k, v)) = d.split_once(':') {
+            apply(&mut s, &k.trim().to_ascii_lowercase(), v.trim());
+        }
+    }
+    s
 }
 
 /// A parsed style sheet.
@@ -480,7 +512,51 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         "opacity" => s.opacity = v.parse().ok(),
         "width" => s.width = px(v),
         "height" => s.height = px(v),
-        "gap" => s.gap = px(v),
+        "gap" => {
+            let parts: Vec<f64> = v.split_whitespace().filter_map(px).collect();
+            match parts[..] {
+                [g] => {
+                    s.gap = Some(g);
+                    s.row_gap = Some(g);
+                }
+                [r, c] => {
+                    s.row_gap = Some(r);
+                    s.gap = Some(c);
+                }
+                _ => {}
+            }
+        }
+        "column-gap" => s.gap = px(v),
+        "row-gap" => s.row_gap = px(v),
+        "min-width" => s.min_width = px(v),
+        "max-width" => s.max_width = px(v),
+        "min-height" => s.min_height = px(v),
+        "max-height" => s.max_height = px(v),
+        "display" => s.display = Some(v.into()),
+        "flex-direction" => s.flex_direction = Some(v.into()),
+        "flex-wrap" => s.flex_wrap = Some(v.into()),
+        "justify-content" => s.justify_content = Some(v.into()),
+        "align-items" => s.align_items = Some(v.into()),
+        "align-self" => s.align_self = Some(v.into()),
+        "flex-grow" => s.flex_grow = v.parse().ok(),
+        "flex-shrink" => s.flex_shrink = v.parse().ok(),
+        "flex-basis" => s.flex_basis = px(v),
+        "flex" => {
+            let p: Vec<&str> = v.split_whitespace().collect();
+            let (g, sh, b) = match p[..] {
+                ["none"] => (Some(0.0), Some(0.0), None),
+                ["auto"] => (Some(1.0), Some(1.0), None),
+                [g] if g.parse::<f64>().is_ok() => (g.parse().ok(), Some(1.0), Some(0.0)),
+                [b] => (Some(1.0), Some(1.0), px(b)),
+                [g, sh] => (g.parse().ok(), sh.parse().ok(), Some(0.0)),
+                [g, sh, b] => (g.parse().ok(), sh.parse().ok(), if b == "auto" { None } else { px(b) }),
+                _ => (None, None, None),
+            };
+            s.flex_grow = g;
+            s.flex_shrink = sh;
+            s.flex_basis = b;
+        }
+        "grid-template-columns" => s.grid_template_columns = Some(v.into()),
         "box-shadow" => s.box_shadow = Some(v.into()),
         "cursor" => s.cursor = Some(v.into()),
         "text-align" => s.text_align = Some(v.into()),
