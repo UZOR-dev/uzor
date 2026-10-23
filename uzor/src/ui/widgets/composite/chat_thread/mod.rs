@@ -267,7 +267,7 @@ pub fn wrap_spans(ctx: &mut dyn RenderContext, spans: &[Span], max_w: f64, st: &
     let mut x = 0.0;
     // Some backends trim spaces when measuring: measure runs with spaces between two
     // fixed glyphs so their advance is counted.
-    let mut measure = |ctx: &mut dyn RenderContext, si: usize, t: &str| {
+    let measure = |ctx: &mut dyn RenderContext, si: usize, t: &str| {
         ctx.set_font(&font(st, spans[si].weight, st.px));
         if t.starts_with(' ') || t.ends_with(' ') {
             ctx.measure_text(&format!("x{t}x")) - ctx.measure_text("xx")
