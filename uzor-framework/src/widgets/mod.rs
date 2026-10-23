@@ -19,6 +19,7 @@ mod host;
 pub mod lm;
 mod paint;
 mod scroll;
+pub mod splitter;
 pub mod raw;
 
 #[cfg(test)]

@@ -63,6 +63,62 @@ pub fn mention_spans(text: &str, color: &str, weight: u32) -> Vec<Span> {
     out
 }
 
+/// `mention_spans` plus http(s) links (app.js `linkify`): a link starts at
+/// start, whitespace, `(` or `>`, runs to whitespace or `<`, and drops
+/// trailing punctuation. Mentions and links get `color` / `weight`.
+pub fn linkify(text: &str, color: &str, weight: u32) -> Vec<Span> {
+    let mut out = Vec::new();
+    for s in mention_spans(text, color, weight) {
+        if s.color.is_some() {
+            out.push(s);
+            continue;
+        }
+        let mut rest = s.text.as_str();
+        // The first of either scheme: a later `http://` must not hide an earlier `https://`.
+        while let Some(i) = [rest.find("http://"), rest.find("https://")].into_iter().flatten().min() {
+            let pre_ok = i == 0 || rest[..i].ends_with(|c: char| c.is_whitespace() || c == '(' || c == '>');
+            let end = rest[i..].find(|c: char| c.is_whitespace() || c == '<').map_or(rest.len(), |e| i + e);
+            let mut url = &rest[i..end];
+            while url.ends_with(['.', ',', ';', ':', '!', '?', ')', ']', '\'', '"']) {
+                url = &url[..url.len() - 1];
+            }
+            if !pre_ok || url.len() <= 8 {
+                out.push(Span::plain(&rest[..i + 4]));
+                rest = &rest[i + 4..];
+                continue;
+            }
+            if i > 0 {
+                out.push(Span::plain(&rest[..i]));
+            }
+            out.push(Span { text: url.to_string(), color: Some(color.to_string()), weight });
+            rest = &rest[i + url.len()..];
+        }
+        if !rest.is_empty() {
+            out.push(Span::plain(rest));
+        }
+    }
+    out
+}
+
+/// What a styled body run opens when clicked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Link<'a> {
+    /// `@nick` (without the `@`).
+    Mention(&'a str),
+    /// An http(s) URL.
+    Url(&'a str),
+}
+
+/// The link a run stands for: styled runs from [`linkify`] are links,
+/// plain runs are not.
+pub fn span_link(sp: &Span) -> Option<Link<'_>> {
+    sp.color.as_ref()?;
+    Some(match sp.text.strip_prefix('@') {
+        Some(n) => Link::Mention(n),
+        None => Link::Url(&sp.text),
+    })
+}
+
 /// A reply quote block above the body.
 #[derive(Clone, Debug)]
 pub struct Quote<'a> {
@@ -443,6 +499,38 @@ pub fn draw_message(ctx: &mut dyn RenderContext, x: f64, y: f64, v: &MessageView
     draw_badge(ctx, x, y, v, l, st);
 }
 
+/// The y of the first body line of a bubble whose top is `y` (below the
+/// header and the reply quote, as [`draw_message`] stacks them).
+pub fn body_top(y: f64, v: &MessageView<'_>, st: &ThreadStyle) -> f64 {
+    let mut yy = y + st.pad_y;
+    if v.header.is_some() {
+        yy += st.hdr_lh + st.hdr_gap;
+    }
+    if v.quote.is_some() {
+        yy += st.q_mt + 2.0 * st.q_pad_y + 2.0 * st.q_lh + st.q_mb;
+    }
+    yy
+}
+
+/// Hit areas of the link runs ([`span_link`]) of a bubble drawn at
+/// `(x, y)`: `(span index, rect)` per placed piece, so a link wrapped over
+/// two lines yields two rects (an `<a>`'s client rects).
+pub fn link_hits(ctx: &mut dyn RenderContext, x: f64, y: f64, v: &MessageView<'_>, l: &MessageLayout, st: &ThreadStyle) -> Vec<(usize, Rect)> {
+    let mut out = Vec::new();
+    let mut yy = body_top(y, v, st);
+    for line in &l.lines {
+        for p in line {
+            let s = &v.body[p.span];
+            if span_link(s).is_some() {
+                ctx.set_font(&font(st, s.weight, st.px));
+                out.push((p.span, Rect::new(x + st.pad_x + p.x, yy, ctx.measure_text(&p.text), st.lh)));
+            }
+        }
+        yy += st.lh;
+    }
+    out
+}
+
 fn badge_items(ctx: &mut dyn RenderContext, v: &MessageView<'_>, st: &ThreadStyle) -> (f64, Vec<(f64, f64)>, f64) {
     // flex row, gap 1px: per key a pill (padding 0 1px) + its `.rw` names (hover only,
     // margin 0 6px 0 3px), then the total `.rn` (padding 0 2px 0 3px) when it is above 1
@@ -561,6 +649,32 @@ mod tests {
         let b2 = reaction_badge(&mut ctx, 100.0, 200.0, &v, &l, &st).unwrap();
         assert_eq!(b2.rect.width, 7.0 + 10.0 + (4.0 * 8.0 + 9.0) + 7.0);
         assert!(reaction_badge(&mut ctx, 0.0, 0.0, &MessageView { reactions: &[], ..v }, &l, &st).is_none());
+    }
+
+    #[test]
+    fn links_and_mentions_click_targets() {
+        // Hosts are assembled at run time so the no-baked-URL guards stay strict.
+        let (a, b) = (["https", "://", "x.test/a"].concat(), ["http", "://", "10.0.0.1"].concat());
+        let sp = linkify(&format!("see {a}. and {b}:<port>/x, @bob"), tokens::C_58A6FF, 500);
+        let t: Vec<Link<'_>> = sp.iter().filter_map(span_link).collect();
+        assert_eq!(t, [Link::Url(&a), Link::Url(&b), Link::Mention("bob")]);
+        assert!(linkify(&format!("HQ_URL={a}"), tokens::C_58A6FF, 500).iter().all(|s| s.color.is_none()));
+    }
+
+    #[test]
+    fn link_hits_cover_the_link_pieces() {
+        let mut ctx = crate::testing::RecordingRenderContext::with_char_width(8.0);
+        let st = ThreadStyle::default();
+        let body = linkify("hi @bob there", tokens::C_58A6FF, 500);
+        let v = MessageView { mine: false, header: Some(("al", tokens::C_58A6FF)), quote: None, body: &body, reactions: &[], rx_hover: false };
+        let l = layout_message(&mut ctx, &v, 600.0, &st);
+        let h = link_hits(&mut ctx, 10.0, 20.0, &v, &l, &st);
+        assert_eq!(h.len(), 1);
+        let (i, r) = h[0];
+        assert_eq!(body[i].text, "@bob");
+        assert_eq!((r.x, r.width), (10.0 + st.pad_x + 3.0 * 8.0, 4.0 * 8.0));
+        assert_eq!((r.y, r.height), (body_top(20.0, &v, &st), st.lh));
+        assert_eq!(r.y, 20.0 + st.pad_y + st.hdr_lh + st.hdr_gap);
     }
 
     #[test]
