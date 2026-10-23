@@ -7,7 +7,7 @@ use crate::render::{RenderContext, TextAlign};
 use crate::ui::css_text::{fill_text_css, INTER};
 use crate::types::{Rect, WidgetId};
 
-use super::critter::{draw_critter, CritterView};
+use super::critter::{draw_critter_motion, CritterMotion, CritterView};
 
 /// Plain view data.
 #[derive(Clone, Debug)]
@@ -16,6 +16,8 @@ pub struct SessionPillView<'a> {
     pub label: &'a str,
     /// Avatar on the left, if any.
     pub critter: Option<CritterView>,
+    /// Avatar animation frame (`None`: at rest).
+    pub motion: Option<CritterMotion>,
     /// Hover tint.
     pub hovered: bool,
     /// Panel currently open.
@@ -136,7 +138,8 @@ pub fn draw_session_pill(ctx: &mut dyn RenderContext, rect: Rect, view: &Session
     let mut x = rect.x + 1.0 + style.pad_l;
     let cy = rect.y + rect.height / 2.0;
     if let Some(c) = &view.critter {
-        draw_critter(ctx, Rect::new(x, cy - style.avatar / 2.0, style.avatar, style.avatar), c);
+        let m = view.motion.unwrap_or(CritterMotion { reduced: true, ..Default::default() });
+        draw_critter_motion(ctx, Rect::new(x, cy - style.avatar / 2.0, style.avatar, style.avatar), c, &m);
         x += style.avatar + style.gap;
     }
     ctx.set_font(style.font);
