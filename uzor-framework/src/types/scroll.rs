@@ -62,6 +62,36 @@ impl Default for ScrollStyle {
     }
 }
 
+/// CSS `overscroll-behavior` (the y axis). There is no bounce or glow to suppress, so
+/// `None` behaves as `Contain`: a step the container cannot take stops there.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Overscroll {
+    /// Steps it cannot take pass on to the containers around it.
+    #[default]
+    Auto,
+    /// Steps stop here.
+    Contain,
+    /// As `Contain` (no overscroll effects exist to turn off).
+    None,
+}
+
+impl Overscroll {
+    /// Whether steps chain past this container.
+    pub fn chains(self) -> bool {
+        self == Overscroll::Auto
+    }
+}
+
+/// `position: sticky; top: inset` for a header at `natural` (content y, height `h`) whose
+/// section ends at `section_end` (content y): the screen y to paint it at, in a viewport
+/// at `view_y` scrolled by `offset`. It scrolls normally, sticks at the top, then is
+/// pushed up by the end of its section.
+pub fn sticky_top(view_y: f64, offset: f64, natural: f64, h: f64, section_end: f64, inset: f64) -> f64 {
+    let y = view_y + natural - offset;
+    let stuck = y.max(view_y + inset);
+    stuck.min(view_y + section_end - offset - h).max(y)
+}
+
 /// One scrollable's state. Offset 0 = top.
 #[derive(Clone, Debug, Default)]
 pub struct ScrollView {
@@ -70,6 +100,9 @@ pub struct ScrollView {
     /// Keep the end in view while content grows (chat threads); cleared when
     /// the user scrolls away from the end, set again on reaching it.
     pub follow_end: bool,
+    /// CSS `overscroll-behavior`: whether a wheel or key step this container cannot
+    /// take passes on to the containers around it.
+    pub overscroll: Overscroll,
     content: f64,
     view: f64,
     /// (time ms, offset) samples of the current precise gesture.
@@ -573,5 +606,17 @@ mod tests {
         assert!(!s.follow_end);
         s.set_extent(900.0, 200.0);
         assert_eq!(s.offset, 460.0);
+    }
+
+    #[test]
+    fn sticky_headers_stick_then_get_pushed() {
+        // Header at 100 (h 20), its section ends at 300, viewport at screen y 50.
+        assert_eq!(sticky_top(50.0, 0.0, 100.0, 20.0, 300.0, 0.0), 150.0, "scrolls normally");
+        assert_eq!(sticky_top(50.0, 150.0, 100.0, 20.0, 300.0, 0.0), 50.0, "sticks at the top");
+        assert_eq!(sticky_top(50.0, 150.0, 100.0, 20.0, 300.0, 8.0), 58.0, "top inset");
+        assert_eq!(sticky_top(50.0, 270.0, 100.0, 20.0, 300.0, 0.0), 50.0, "still stuck: its bottom meets the end at 290");
+        assert_eq!(sticky_top(50.0, 290.0, 100.0, 20.0, 300.0, 0.0), 40.0, "pushed by the section end");
+        assert_eq!(sticky_top(50.0, 400.0, 100.0, 20.0, 300.0, 0.0), -70.0, "gone with its section");
+        assert!(Overscroll::Auto.chains() && !Overscroll::Contain.chains() && !Overscroll::None.chains());
     }
 }

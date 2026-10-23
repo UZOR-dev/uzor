@@ -30,7 +30,7 @@ fn inside(r: Rect, p: (f64, f64)) -> bool {
 #[derive(Default)]
 struct Chain {
     t: f64,
-    /// `(id, viewport, can scroll up, can scroll down, painted by an overlay)`.
+    /// `(id, viewport, can scroll up, can scroll down, painted by an overlay, chains on)`.
     prev: Vec<Entry>,
     cur: Vec<Entry>,
     /// The container last clicked in.
@@ -39,7 +39,7 @@ struct Chain {
     key: Option<ScrollKey>,
 }
 
-type Entry = (String, Rect, bool, bool, bool);
+type Entry = (String, Rect, bool, bool, bool, bool);
 
 fn chain_key() -> WidgetId {
     WidgetId::from("uzor.scroll.chain")
@@ -84,7 +84,15 @@ fn key_owner(c: &Chain, p: Option<(f64, f64)>, key: ScrollKey) -> Option<String>
     if let Some(d) = doc.filter(|d| !chain.iter().any(|e| e.0 == d.0)) {
         chain.push(d);
     }
-    chain.iter().find(|e| if up { e.2 } else { e.3 }).map(|e| e.0.clone())
+    for e in chain {
+        if if up { e.2 } else { e.3 } {
+            return Some(e.0.clone());
+        }
+        if !e.5 {
+            return None; // overscroll-behavior: contain
+        }
+    }
+    None
 }
 
 /// Whether container `id` takes a wheel of `dy` at `p` (innermost able one wins; the
@@ -94,7 +102,8 @@ fn wheel_owner(c: &Chain, id: &str, p: (f64, f64), dy: f64) -> bool {
     if under.is_empty() || !under.iter().any(|e| e.0 == id) {
         return true; // first frame of this container: no chain yet
     }
-    let able = under.iter().rev().find(|e| if dy > 0.0 { e.2 } else { e.3 });
+    // Innermost first: the first that can move takes it; one that contains overscroll keeps it.
+    let able = under.iter().rev().find(|e| (if dy > 0.0 { e.2 } else { e.3 }) || !e.5);
     match able {
         Some(e) => e.0 == id,
         None => under.last().is_some_and(|e| e.0 == id),
@@ -167,7 +176,7 @@ pub fn $begin<S: Spec>(cx: &mut $cx<'_, S>, id: &str, viewport: Rect, sv: &mut S
 /// the thumb (nothing when the content fits).
 pub fn $end<S: Spec>(cx: &mut $cx<'_, S>, id: &str, viewport: Rect, sv: &ScrollView, st: &ScrollStyle) {
     let now = cx.time.now.0 * 1000.0;
-    chain(cx.widgets.states, now).cur.push((id.to_string(), viewport, sv.can_scroll(1.0), sv.can_scroll(-1.0), $overlay));
+    chain(cx.widgets.states, now).cur.push((id.to_string(), viewport, sv.can_scroll(1.0), sv.can_scroll(-1.0), $overlay, sv.overscroll.chains()));
     let track = sv.track(viewport, st);
     let Some(th) = sv.thumb(track, st) else { return };
     let (thumb_id, track_id) = ids(id);
@@ -196,7 +205,7 @@ mod tests {
     use super::*;
 
     fn e(id: &str, r: Rect, up: bool, down: bool, ov: bool) -> Entry {
-        (id.to_string(), r, up, down, ov)
+        (id.to_string(), r, up, down, ov, true)
     }
 
     #[test]
@@ -229,5 +238,19 @@ mod tests {
         assert_eq!(key_owner(&c, Some((400.0, 400.0)), ScrollKey::PageDown).as_deref(), Some("dlg"));
         c.active = Some("dlg".into());
         assert_eq!(key_owner(&c, None, ScrollKey::PageDown).as_deref(), Some("dlg"));
+    }
+
+    #[test]
+    fn overscroll_contain_stops_the_chain() {
+        let page = Rect::new(0.0, 0.0, 1000.0, 800.0);
+        let inner = Rect::new(300.0, 100.0, 400.0, 300.0);
+        let mut c = Chain { prev: vec![e("page", page, true, true, false), e("inner", inner, true, false, false)], ..Chain::default() };
+        assert_eq!(key_owner(&c, Some((400.0, 200.0)), ScrollKey::LineDown).as_deref(), Some("page"));
+        assert!(wheel_owner(&c, "page", (400.0, 200.0), -1.0));
+        c.prev[1].5 = false;
+        assert_eq!(key_owner(&c, Some((400.0, 200.0)), ScrollKey::LineDown), None);
+        assert!(!wheel_owner(&c, "page", (400.0, 200.0), -1.0) && wheel_owner(&c, "inner", (400.0, 200.0), -1.0));
+        // What it can take, it still takes.
+        assert_eq!(key_owner(&c, Some((400.0, 200.0)), ScrollKey::LineUp).as_deref(), Some("inner"));
     }
 }
