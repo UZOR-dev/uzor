@@ -55,6 +55,7 @@ struct RafDriver<S: Spec, A: App<Spec = S>> {
     kicked: Arc<AtomicBool>,
     cursor_css: String,
     cursor_hidden: bool,
+    ime: Option<super::ime::Ime>,
     _listeners: Option<listeners::Listeners>,
 }
 
@@ -110,6 +111,7 @@ where
         })
     };
 
+    let ime = super::ime::Ime::install(&document, &canvas);
     let (runtime, handle) = Runtime::new(app, cfg, waker);
     let queue = Queue::new();
     let driver = Rc::new(RefCell::new(RafDriver {
@@ -129,6 +131,7 @@ where
         kicked: Arc::clone(&kicked),
         cursor_css: "default".into(),
         cursor_hidden: false,
+        ime,
         _listeners: None,
     }));
 
@@ -258,6 +261,7 @@ impl<S: Spec, A: App<Spec = S>> RafDriver<S, A> {
                 redraw: &redraw,
                 cursor_css: &mut self.cursor_css,
                 cursor_hidden: &mut self.cursor_hidden,
+                ime: self.ime.as_ref(),
             };
             executor::execute(&mut surface, cmd)
         };
@@ -476,6 +480,7 @@ struct DomSurface<'a> {
     redraw: &'a Cell<bool>,
     cursor_css: &'a mut String,
     cursor_hidden: &'a mut bool,
+    ime: Option<&'a super::ime::Ime>,
 }
 
 impl DomSurface<'_> {
@@ -535,5 +540,15 @@ impl WebSurface for DomSurface<'_> {
     }
     fn request_redraw(&mut self) {
         self.redraw.set(true);
+    }
+    fn set_ime_allowed(&mut self, on: bool) {
+        if let Some(ime) = self.ime {
+            ime.set_allowed(on);
+        }
+    }
+    fn set_ime_area(&mut self, r: uzor::Rect) {
+        if let Some(ime) = self.ime {
+            ime.set_area(r);
+        }
     }
 }

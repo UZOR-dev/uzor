@@ -11,6 +11,7 @@
 //! *runs* in a browser (`wasm32-unknown-unknown`).
 
 mod executor;
+mod ime;
 mod listeners;
 mod paint;
 mod raf;

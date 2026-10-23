@@ -236,6 +236,14 @@ pub fn draw_field_text(ctx: &mut dyn RenderContext, r: Rect, text: &str, placeho
 /// browser's control font).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_field_text_in(ctx: &mut dyn RenderContext, r: Rect, text: &str, placeholder: &str, caret: Option<usize>, px: f64, color: &str, ph_color: &str, family: &str) -> Vec<f64> {
+    draw_field_text_ime(ctx, r, text, placeholder, caret, None, px, color, ph_color, family)
+}
+
+/// [`draw_field_text_in`] with an IME composition: `preedit` is the char
+/// range of `text` (see `TextFieldState::display`) underlined like the
+/// browser's composition text.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_field_text_ime(ctx: &mut dyn RenderContext, r: Rect, text: &str, placeholder: &str, caret: Option<usize>, preedit: Option<(usize, usize)>, px: f64, color: &str, ph_color: &str, family: &str) -> Vec<f64> {
     let lh = (px * 1.5).round();
     let top = r.y + (r.height - lh) / 2.0;
     ctx.set_font(&format!("400 {px}px {family}"));
@@ -256,6 +264,10 @@ pub fn draw_field_text_in(ctx: &mut dyn RenderContext, r: Rect, text: &str, plac
         let x = pos.get(c).copied().unwrap_or(*pos.last().unwrap_or(&r.x)).round();
         ctx.set_fill_color(color);
         ctx.fill_rect(x, (top + (lh - px * 1.2) / 2.0).round(), 1.0, (px * 1.2).round());
+    }
+    if let Some((Some(&x0), Some(&x1))) = preedit.map(|(a, b)| (pos.get(a), pos.get(b))) {
+        ctx.set_fill_color(color);
+        ctx.fill_rect(x0.round(), (top + (lh + px * 1.2) / 2.0).round() - 1.0, (x1 - x0).round(), 1.0);
     }
     pos
 }

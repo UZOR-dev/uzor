@@ -49,6 +49,10 @@ pub trait WebSurface {
     fn focus(&mut self);
     /// Ask the RAF driver for another frame.
     fn request_redraw(&mut self);
+    /// A text field gained / lost focus: route DOM focus to the IME proxy.
+    fn set_ime_allowed(&mut self, _on: bool) {}
+    /// Caret rect (window-local CSS px) for the IME candidate window.
+    fn set_ime_area(&mut self, _r: uzor::Rect) {}
 }
 
 /// Apply one [`WindowCommand`]. OS errors are not reported: the executor
@@ -79,12 +83,18 @@ pub fn execute(window: &mut dyn WebSurface, cmd: WindowCommand) -> Option<WebFol
         | WindowCommand::DragResizeWindow(_)
         | WindowCommand::ShowWindowMenu { .. }
         | WindowCommand::SetCursorPosition(_)
-        | WindowCommand::SetImeAllowed(_)
-        | WindowCommand::SetImeCursorArea(_)
         | WindowCommand::SetImePurpose(_)
         | WindowCommand::RequestAttention(_)
         | WindowCommand::Render(_)
         | WindowCommand::Screenshot(_) => None,
+        WindowCommand::SetImeAllowed(on) => {
+            window.set_ime_allowed(on);
+            None
+        }
+        WindowCommand::SetImeCursorArea(r) => {
+            window.set_ime_area(r);
+            None
+        }
         WindowCommand::SetFullscreen(mode) => {
             window.set_fullscreen(mode);
             None

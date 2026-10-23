@@ -211,6 +211,30 @@ impl TextFieldState {
         }
     }
 
+    /// What a painter shows: the text with any IME preedit spliced in at the
+    /// cursor, the caret (inside the preedit while composing) and the
+    /// preedit's char range, to underline like the DOM's composition text.
+    pub fn display(&self) -> (String, usize, Option<(usize, usize)>) {
+        if self.preedit.is_empty() {
+            return (self.text.clone(), self.cursor, None);
+        }
+        let at = self.text.char_indices().nth(self.cursor).map_or(self.text.len(), |(b, _)| b);
+        let n = self.preedit.chars().count();
+        let shown = format!("{}{}{}", &self.text[..at], self.preedit, &self.text[at..]);
+        (shown, self.cursor + self.preedit_cursor.min(n), Some((self.cursor, self.cursor + n)))
+    }
+
+    /// Map char-boundary x positions measured on [`Self::display`] back to the
+    /// buffer (the preedit's inner boundaries dropped, its end kept).
+    pub fn buffer_positions(&self, mut shown: Vec<f64>) -> Vec<f64> {
+        let n = self.preedit.chars().count();
+        if n > 0 && self.cursor < shown.len() {
+            let end = (self.cursor + n).min(shown.len() - 1);
+            shown.drain(self.cursor..end);
+        }
+        shown
+    }
+
     /// Return `(lo, hi)` if there is a non-empty selection, else `None`.
     pub fn selection_range(&self) -> Option<(usize, usize)> {
         let anchor = self.selection_start?;
@@ -1248,6 +1272,19 @@ mod tests {
     }
 
     // H2 §7 scenario 6, store level — preedit is an overlay, commit inserts.
+    #[test]
+    fn display_splices_the_preedit_at_the_caret() {
+        let mut st = TextFieldState::new(TextFieldConfig::text());
+        st.text = "ab".into();
+        st.cursor = 1;
+        assert_eq!(st.display(), ("ab".to_string(), 1, None));
+        st.preedit = "日本".into();
+        st.preedit_cursor = 1;
+        assert_eq!(st.display(), ("a日本b".to_string(), 2, Some((1, 3))));
+        // Boundaries of "a日本b" (5) map back to those of "ab" (3).
+        assert_eq!(st.buffer_positions(vec![0.0, 1.0, 2.0, 3.0, 4.0]), vec![0.0, 3.0, 4.0]);
+    }
+
     #[test]
     fn preedit_stays_out_of_the_text_until_commit() {
         let mut s = focused_with("x", 1);

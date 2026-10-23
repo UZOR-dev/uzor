@@ -365,6 +365,11 @@ fn install_keys(
             let Ok(ev) = raw.dyn_into::<KeyboardEvent>() else {
                 return;
             };
+            // Keys an input method consumes (the Enter that commits a
+            // composition, `Process`, keyCode 229) are not app keys.
+            if ev.is_composing() || ev.key_code() == 229 {
+                return;
+            }
             if kind_owned == "keydown" && (ev.ctrl_key() || ev.meta_key()) {
                 match ev.code().as_str() {
                     "KeyA" | "KeyS" | "KeyF" | "KeyZ" | "KeyY" => ev.prevent_default(),

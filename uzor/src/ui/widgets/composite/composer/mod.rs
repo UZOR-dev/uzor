@@ -22,6 +22,9 @@ pub struct ComposerView<'a> {
     pub hovered: Option<ComposerPart>,
     /// Caret (char index) when the text line has focus.
     pub cursor: Option<usize>,
+    /// IME composition: the char range of `text` to underline (see
+    /// `TextFieldState::display`).
+    pub preedit: Option<(usize, usize)>,
 }
 
 /// Clickable parts.
@@ -258,6 +261,15 @@ fn draw_text_lines(ctx: &mut dyn RenderContext, x0: f64, top: f64, view: &Compos
             positions.push(x0 + ctx.measure_text(&acc));
         }
         line_of.push(line);
+    }
+    if let Some((a, b)) = view.preedit {
+        ctx.set_fill_color(st.text);
+        for i in a..b.min(positions.len() - 1) {
+            let y = top + line_of[i + 1] as f64 * lh + lh / 2.0 + 8.0;
+            if line_of[i + 1] == line_of[i] && fits(y - lh / 2.0 - 8.0) {
+                ctx.fill_rect(positions[i].round(), y.round(), (positions[i + 1] - positions[i]).round().max(1.0), 1.0);
+            }
+        }
     }
     if let Some(c) = view.cursor {
         let i = c.min(positions.len() - 1);
@@ -602,7 +614,7 @@ mod rich_tests {
         let st = ComposerStyle::default();
         let img = [0u8; 4];
         let one = [ComposerAttach::Image { rgba: &img, w: 1, h: 1 }];
-        let v = |a: &'static [ComposerAttach<'static>], t: &'static str| RichComposerView { base: ComposerView { text: t, placeholder: "", hovered: None, cursor: None }, attach: a, hovered_item: None, hovered_remove: None, scroll: 0.0 };
+        let v = |a: &'static [ComposerAttach<'static>], t: &'static str| RichComposerView { base: ComposerView { text: t, placeholder: "", hovered: None, cursor: None, preedit: None }, attach: a, hovered_item: None, hovered_remove: None, scroll: 0.0 };
         let empty = composer_layout_rich(&mut ctx, area, &v(&[], ""), 300.0, &st);
         assert!(!empty.tall && v(&[], "").is_empty());
         let leaked: &'static [ComposerAttach<'static>] = Box::leak(Box::new([ComposerAttach::Image { rgba: Box::leak(Box::new([0u8; 4])), w: 1, h: 1 }]));
