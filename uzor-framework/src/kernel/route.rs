@@ -129,6 +129,7 @@ impl<S: Spec> Kernel<S> {
         match cooked.target.clone() {
             PointerTarget::Captured(Capture::Widget(_)) => {
                 self.trace_push("capture:widget");
+                self.content_cursor_at(now, win, input);
                 let fx = self.input.apply(InputOp::Deliver { win, input });
                 self.conduct_routed_content(now, win, input, fx);
                 return;
@@ -171,10 +172,12 @@ impl<S: Spec> Kernel<S> {
         match route {
             Some(PointerRoute::Consumed) => {
                 self.trace_push("overlay:consumed");
+                self.content_cursor_at(now, win, input);
                 return;
             }
             Some(PointerRoute::Overlay { .. }) => {
                 self.trace_push("overlay:body");
+                self.content_cursor_at(now, win, input);
                 let fx = self.input.apply(InputOp::Deliver { win, input });
                 self.conduct_routed_content(now, win, input, fx);
                 return;
@@ -485,6 +488,18 @@ impl<S: Spec> Kernel<S> {
     /// The cursor a layout hit suggests, applied when it changes (design
     /// §3.8's cursor row; the engine-only `CursorChanged` effect does not
     /// exist, so the route phase maps `LayoutHit::cursor` itself).
+    /// The cursor over content when no layout zone is consulted: an
+    /// overlay (modal, menu, dropdown) or a widget capture owns the event,
+    /// and the widget under the pointer (or the captured one) still
+    /// declares the cursor, the arrow when it declares none. Without this
+    /// the cursor froze at its pre-overlay value (the hand of the button
+    /// that opened the modal stayed over the whole modal).
+    fn content_cursor_at(&mut self, now: Seconds, win: WindowId, input: PointerInput) {
+        if let Some(pos) = pointer_pos(input) {
+            self.update_cursor(now, win, &LayoutHit::None, pos);
+        }
+    }
+
     fn update_cursor(&mut self, now: Seconds, win: WindowId, hit: &LayoutHit, pos: crate::types::window::Point) {
         // Layout zones decide first; over content the widget under the pointer does.
         let icon = match hit.cursor() {

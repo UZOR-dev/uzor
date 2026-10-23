@@ -527,3 +527,53 @@ fn hover_change_requests_a_follow_up_frame() {
     }
     assert!(host.advance(0.016).frames.is_empty(), "hover kept the window painting");
 }
+
+fn move_to(host: &mut HeadlessHost<demo::DemoSpec, DemoApp>, win: uzor_framework::WindowId, x: f64, y: f64) {
+    pointer(
+        host,
+        win,
+        PointerInput::Moved {
+            pos: uzor_framework::Point::new(x, y),
+            mods: ModifierKeys::default(),
+        },
+    );
+    host.advance(0.016);
+    host.advance(0.016);
+}
+
+/// The cursor follows the topmost hit inside an open modal, like the DOM:
+/// the hand only over the modal's own buttons, the arrow over its scrim and
+/// over the (shielded) buttons below it. Before the fix the overlay route
+/// skipped the cursor update, so the hand of the button that opened the
+/// modal stayed over the whole modal.
+#[test]
+fn cursor_with_modal_over_buttons() {
+    use uzor::input::cursor::CursorIcon;
+    let (mut host, _) = boot(false);
+    let win = window_id(&host, "main");
+    let nav = leaf_rect(&host, "main", "nav");
+    let s = navigator_hits(nav).settings;
+    let (cx, cy) = (s.x + s.width / 2.0, s.y + s.height / 2.0);
+    move_to(&mut host, win, cx, cy);
+    let cur = |h: &HeadlessHost<demo::DemoSpec, DemoApp>| h.snapshot().window(win).unwrap().cursor;
+    assert_eq!(cur(&host), CursorIcon::PointingHand, "a button gets the hand");
+    click(&mut host, win, s);
+    for _ in 0..8 {
+        host.advance(0.016);
+    }
+    assert!(host.snapshot().window(win).unwrap().overlays.iter().any(|o| o.modal));
+    // Wiggle so the move is a real change, then land where the button was:
+    // the modal's own field sits there now (I-beam), never the stale hand.
+    move_to(&mut host, win, cx + 1.0, cy);
+    move_to(&mut host, win, cx, cy);
+    assert_eq!(cur(&host), CursorIcon::Text, "the modal's text field is on top");
+    // The scrim (bottom-right corner, no modal widget there) is inert: arrow.
+    let vp = host.snapshot().window(win).unwrap().geometry.viewport;
+    move_to(&mut host, win, vp.x + vp.width - 4.0, vp.y + vp.height - 4.0);
+    assert_eq!(cur(&host), CursorIcon::Default, "the modal scrim gets the arrow");
+    // Below the field, the shielded navigator rows are not interactive.
+    for row in [navigator_hits(nav).tip, navigator_hits(nav).restore] {
+        move_to(&mut host, win, row.x + row.width / 2.0, row.y + row.height / 2.0);
+        assert_ne!(cur(&host), CursorIcon::PointingHand, "a button behind the modal shield shows the hand");
+    }
+}
