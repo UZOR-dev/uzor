@@ -47,8 +47,7 @@
 //! bookkeeping of last paint instants is not revisioned (it never appears in
 //! the view).
 
-use std::collections::btree_map::Entry;
-use std::collections::BTreeMap;
+use crate::types::vecmap::{Entry, VecMap};
 
 use smallvec::SmallVec;
 use uzor::render::{InvalidateBits, RetainedScope, TickRate, UNCAPPED_FPS};
@@ -88,8 +87,8 @@ fn owner_window(owner: TimerOwner) -> Option<WindowId> {
 /// are unique within a run.
 #[derive(Clone, Debug, Default)]
 pub struct DeadlineWheel {
-    by_time: BTreeMap<(OrderedSeconds, u64), TimerOwner>,
-    by_owner: BTreeMap<TimerOwner, (OrderedSeconds, u64)>,
+    by_time: VecMap<(OrderedSeconds, u64), TimerOwner>,
+    by_owner: VecMap<TimerOwner, (OrderedSeconds, u64)>,
     next_token: u64,
 }
 
@@ -383,7 +382,7 @@ impl<'a> CadenceTickView<'a> {
 /// The CadenceEngine: see the module docs.
 #[derive(Clone, Debug, Default)]
 pub struct CadenceEngine {
-    windows: BTreeMap<WindowId, WindowCadence>,
+    windows: VecMap<WindowId, WindowCadence>,
     wheel: DeadlineWheel,
     rev: Revision,
 }

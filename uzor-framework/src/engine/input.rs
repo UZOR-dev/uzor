@@ -136,7 +136,8 @@
 //! bookkeeping, IME bookkeeping and a pending paste are not revisioned
 //! (they never appear in the snapshot).
 
-use std::collections::{BTreeMap, HashMap};
+use crate::types::vecmap::VecMap;
+use std::collections::HashMap;
 use std::fmt;
 
 use smallvec::SmallVec;
@@ -1421,7 +1422,7 @@ fn editing_chord(input: &KeyInput) -> Option<Edit> {
 /// The InputEngine: see the module docs.
 #[derive(Default)]
 pub struct InputEngine {
-    windows: BTreeMap<WindowId, PerWindowInput>,
+    windows: VecMap<WindowId, PerWindowInput>,
     next_scope: u64,
     next_ticket: u64,
     rev: Revision,
@@ -1454,8 +1455,8 @@ impl InputEngine {
         } = self;
         let changed = match op {
             InputOp::Open(win) => match windows.entry(win) {
-                std::collections::btree_map::Entry::Occupied(_) => false,
-                std::collections::btree_map::Entry::Vacant(slot) => {
+                crate::types::vecmap::Entry::Occupied(_) => false,
+                crate::types::vecmap::Entry::Vacant(slot) => {
                     slot.insert(PerWindowInput::new());
                     true
                 }

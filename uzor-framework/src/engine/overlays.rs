@@ -108,7 +108,7 @@
 //! Routing verdicts that change nothing and the remembered press origin are
 //! not revisioned.
 
-use std::collections::BTreeMap;
+use crate::types::vecmap::VecMap;
 use std::fmt;
 
 use smallvec::SmallVec;
@@ -339,7 +339,7 @@ impl<O> OverlayHit<O> {
 /// identity ([`Spec::Overlay`](crate::Spec::Overlay)).
 #[derive(Clone, Debug)]
 pub struct OverlayEngine<O> {
-    windows: BTreeMap<WindowId, Stack<O>>,
+    windows: VecMap<WindowId, Stack<O>>,
     z: ZLayerTable,
     next_slot: u64,
     next_seq: u64,
@@ -363,7 +363,7 @@ impl<O> OverlayEngine<O> {
     /// them).
     pub fn with_z(z: ZLayerTable) -> Self {
         Self {
-            windows: BTreeMap::new(),
+            windows: VecMap::new(),
             z,
             next_slot: 1,
             next_seq: 0,

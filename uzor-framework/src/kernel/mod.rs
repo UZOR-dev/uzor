@@ -31,7 +31,7 @@ mod phases;
 mod publish;
 mod route;
 
-use std::collections::BTreeMap;
+use crate::types::vecmap::VecMap;
 
 use uzor::render::InvalidateBits;
 
@@ -118,7 +118,7 @@ pub(crate) struct Kernel<S: Spec> {
     /// Default cadence of a window whose spec sets none.
     default_tick: TickRate,
     /// Per-window clock of the last painted frame (for `FrameTime::dt`).
-    last_frame: BTreeMap<WindowId, Seconds>,
+    last_frame: VecMap<WindowId, Seconds>,
     /// Hop names of the last routed event (design §4.4 `RouteTrace`):
     /// route-phase crossings only; with the `push_input` hop the total
     /// must stay `<= 3`. Always on (the hop tests run in release).
@@ -149,7 +149,7 @@ impl<S: Spec> Kernel<S> {
             last_seen: EngineRevisions::default(),
             outbox: Outbox::default(),
             default_tick: cfg.tick,
-            last_frame: BTreeMap::new(),
+            last_frame: VecMap::new(),
             trace: Vec::new(),
             trace_max: 0,
             touches: Vec::new(),

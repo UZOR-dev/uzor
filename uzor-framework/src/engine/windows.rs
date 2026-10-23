@@ -34,7 +34,7 @@
 //! A closing window is [`WindowStatus::Closing`] until the host's `Destroyed`
 //! echo removes it ([`WindowEffect::Closed`]).
 
-use std::collections::BTreeMap;
+use crate::types::vecmap::VecMap;
 use std::sync::Arc;
 
 use smallvec::SmallVec;
@@ -206,7 +206,7 @@ const fn theme_hint(dark: bool) -> ThemeHint {
 /// The WindowEngine: see the module docs.
 #[derive(Debug)]
 pub struct WindowEngine {
-    windows: BTreeMap<WindowId, WindowState>,
+    windows: VecMap<WindowId, WindowState>,
     /// Next id to allocate; `None` once `u32` is exhausted.
     next: Option<WindowId>,
     tokens: Arc<Tokens>,
@@ -224,7 +224,7 @@ impl WindowEngine {
     /// An engine with no windows, the given app-wide theme and close policy.
     pub fn new(tokens: Arc<Tokens>, dark: bool, close: ClosePolicy) -> Self {
         Self {
-            windows: BTreeMap::new(),
+            windows: VecMap::new(),
             next: Some(WindowId::FIRST),
             tokens,
             dark,

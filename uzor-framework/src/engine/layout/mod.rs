@@ -128,7 +128,7 @@ pub mod expand;
 mod rects;
 mod splitter;
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::types::vecmap::{VecMap, VecSet};
 
 use smallvec::SmallVec;
 use uzor::layout::docking::{DockPanel, FloatingWindowId, LeafId, SnapBackAnimation};
@@ -410,11 +410,11 @@ impl<P> Copy for Ctx<P> {}
 
 /// The LayoutEngine. `P` is the app's panel type ([`Spec::Panel`]).
 pub struct LayoutEngine<P: DockPanel> {
-    windows: BTreeMap<WindowId, WindowLayout<P>>,
+    windows: VecMap<WindowId, WindowLayout<P>>,
     dragout: Option<dragout::DragOutSession<P>>,
     policy: LayoutPolicy,
     decode: PanelDecoder<P>,
-    changed: BTreeSet<WindowId>,
+    changed: VecSet<WindowId>,
     clock: Option<Seconds>,
     /// Something observable changed during the current op / tick; the
     /// revision bumps once when it ends.
@@ -434,11 +434,11 @@ impl<P: DockPanel> LayoutEngine<P> {
     /// An engine with no windows and the given policy.
     pub fn with_policy(decode: PanelDecoder<P>, policy: LayoutPolicy) -> Self {
         Self {
-            windows: BTreeMap::new(),
+            windows: VecMap::new(),
             dragout: None,
             policy,
             decode,
-            changed: BTreeSet::new(),
+            changed: VecSet::new(),
             clock: None,
             touched: false,
             rev: Revision::ZERO,

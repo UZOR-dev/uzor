@@ -25,7 +25,7 @@
 //! a target or duration changes, or a value moves. The timing base alone is
 //! not revisioned.
 
-use std::collections::BTreeMap;
+use crate::types::vecmap::VecMap;
 
 use smallvec::SmallVec;
 
@@ -126,7 +126,7 @@ impl Linear {
 /// The AnimationEngine: see the module docs.
 #[derive(Clone, Debug)]
 pub struct AnimationEngine {
-    linear: BTreeMap<AnimKey, Linear>,
+    linear: VecMap<AnimKey, Linear>,
     policy: AnimPolicy,
     rev: Revision,
 }
@@ -135,7 +135,7 @@ impl AnimationEngine {
     /// An engine with no animators and the given durations.
     pub fn new(policy: AnimPolicy) -> Self {
         Self {
-            linear: BTreeMap::new(),
+            linear: VecMap::new(),
             policy,
             rev: Revision::ZERO,
         }

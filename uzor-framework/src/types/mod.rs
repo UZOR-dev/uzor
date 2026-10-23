@@ -35,3 +35,4 @@ pub mod snapshot;
 pub mod spec;
 pub mod window;
 pub mod scroll;
+pub mod vecmap;
