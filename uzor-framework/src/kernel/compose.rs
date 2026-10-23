@@ -266,6 +266,9 @@ impl<S: Spec> Kernel<S> {
             super::furniture::paint_focus_ring(render, &tokens, ring);
         }
 
+        #[cfg(feature = "inspector")]
+        self.paint_inspector(win, &view, render);
+
         // `EndFrame`: this frame's registrations evaluate (hover, clicks).
         let hover_before = self.input.view().window(win).and_then(|v| v.hovered);
         let fx = self.input.apply(InputOp::EndFrame { win, now });
@@ -395,4 +398,33 @@ fn overlay_layer(slot: crate::types::ids::OverlaySlot) -> LayerId {
 /// `ClickDispatcher` resolves `{host}:close` / `{host}:tab:*` under).
 fn ov_host_id(slot: crate::types::ids::OverlaySlot) -> uzor::WidgetId {
     uzor::WidgetId::from(format!("overlay-{}", slot.0))
+}
+
+#[cfg(feature = "inspector")]
+impl<S: Spec> Kernel<S> {
+    /// Record every widget registered this frame (with its matched style rules) and
+    /// paint the F12 overlay on top.
+    fn paint_inspector(&mut self, win: WindowId, view: &VisualView<S>, render: &mut dyn RenderContext) {
+        use uzor::ui::inspector::InspectBox;
+        if !self.inspector.enabled {
+            return;
+        }
+        self.inspector.begin_frame();
+        let widgets = self.input.view().coordinator(win).map(|c| c.widget_snapshot()).unwrap_or_default();
+        for w in widgets {
+            let mut b = InspectBox::new(w.id.as_str(), format!("{:?}", w.kind), w.rect);
+            if let Some(p) = &w.parent {
+                b.notes.push(format!("parent {}", p.as_str()));
+            }
+            for a in uzor::ui::style::trace::of(w.id.as_str()).unwrap_or_default() {
+                b.notes.push(format!("{}: {}  <- {}", a.property, a.value, a.selector));
+            }
+            self.inspector.record(b);
+        }
+        if let Some(p) = view.pointer {
+            self.inspector.pointer_move(p.0, p.1);
+        }
+        let vp = self.windows.view().window(win).map_or_else(Default::default, |w| w.geometry().viewport);
+        self.inspector.paint(render, uzor::Rect::new(0.0, 0.0, vp.width, vp.height));
+    }
 }

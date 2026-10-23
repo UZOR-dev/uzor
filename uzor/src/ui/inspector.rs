@@ -82,6 +82,18 @@ impl Inspector {
         self.pinned = if hit.as_ref().map(|h| &h.id) == self.pinned.as_ref().map(|p| &p.id) { None } else { hit };
         true
     }
+    /// Pin (or unpin) the box under the last pointer position, without a click.
+    pub fn pin_pointer(&mut self) {
+        if let Some((x, y)) = self.pointer {
+            let was = self.enabled;
+            self.enabled = true;
+            self.click(x, y);
+            self.enabled = was;
+        }
+    }
+    pub fn is_pinned(&self) -> bool {
+        self.pinned.is_some()
+    }
     /// The innermost box at a point: the smallest area, later recordings win ties.
     pub fn pick(&self, x: f64, y: f64) -> Option<&InspectBox> {
         let mut best: Option<&InspectBox> = None;

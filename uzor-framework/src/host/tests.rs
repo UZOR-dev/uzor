@@ -1223,3 +1223,21 @@ fn touch_tap_clicks_content() {
     let app = h.runtime().app();
     assert!(app.seen_clicks.iter().any(|(id, _)| *id == wid("btn")), "tap did not click: {:?}", app.seen_clicks);
 }
+
+/// F12 belongs to the inspector: it never reaches the app as an unhandled key.
+#[cfg(feature = "inspector")]
+#[test]
+fn f12_toggles_the_inspector_and_is_not_reported() {
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    key(&mut h, win, KeyCode::F12, ModifierKeys::default(), None);
+    h.advance(0.017);
+    mov(&mut h, win, 40.0, 40.0);
+    h.advance(0.017);
+    key(&mut h, win, KeyCode::F12, ModifierKeys { shift: true, ..ModifierKeys::default() }, None);
+    h.advance(0.017);
+    assert!(!h.runtime().app().intents.iter().any(|i| matches!(
+        i,
+        crate::types::intent::Intent::Unhandled(crate::types::intent::UnhandledInput::Key { key, .. }) if key.code == KeyCode::F12
+    )));
+}

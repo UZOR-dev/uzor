@@ -109,6 +109,11 @@ impl<S: Spec> Kernel<S> {
     /// layout zones -> content -> unhandled.
     fn route_pointer(&mut self, now: Seconds, win: WindowId, input: PointerInput) {
         self.trace_push("route::pointer");
+        #[cfg(feature = "inspector")]
+        if self.inspector.enabled {
+            // The overlay follows the pointer: repaint on every move.
+            self.invalidate(win, None, InvalidateBits::ALL);
+        }
         // Step 1: cook (click count, drag arm).
         let fx = self.input.apply(InputOp::Pointer { win, now, input });
         let Some(cooked) = fx.iter().find_map(|e| match e {
@@ -363,6 +368,19 @@ impl<S: Spec> Kernel<S> {
     /// dropped quietly (a release is not a binding).
     fn route_key(&mut self, now: Seconds, win: WindowId, input: KeyInput) {
         self.trace_push("route::key");
+        // F12 toggles the inspector, Shift+F12 pins the box under the pointer.
+        #[cfg(feature = "inspector")]
+        if input.code == uzor::input::KeyCode::F12 {
+            if input.state == KeyState::Down {
+                if input.mods.shift {
+                    self.inspector.pin_pointer();
+                } else {
+                    self.inspector.toggle();
+                }
+                self.invalidate(win, None, InvalidateBits::ALL);
+            }
+            return;
+        }
         // Step 1: the focused text field's editing chords and text, and
         // Tab / Shift+Tab focus cycling.
         let fx = self.input.apply(InputOp::Key {

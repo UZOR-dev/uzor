@@ -86,6 +86,8 @@ uzor-window-web = { workspace = true, optional = true }
 x11-dl = { version = "2.21", optional = true }
 
 [features]
+# DevTools-like F12 overlay over every registered widget (debug builds only).
+inspector = ["uzor/inspector"]
 # Native (winit) host — brief F9.
 native = [
     "dep:winit",

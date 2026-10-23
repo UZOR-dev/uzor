@@ -129,6 +129,9 @@ pub(crate) struct Kernel<S: Spec> {
     touches: Vec<(u64, crate::types::window::Point)>,
     /// Debug-only phase order assertions (design §4.2 `PhaseClock`).
     clock: PhaseClock,
+    /// F12 inspector (feature `inspector`).
+    #[cfg(feature = "inspector")]
+    inspector: uzor::ui::inspector::Inspector,
 }
 
 impl<S: Spec> Kernel<S> {
@@ -151,6 +154,8 @@ impl<S: Spec> Kernel<S> {
             trace_max: 0,
             touches: Vec::new(),
             clock: PhaseClock::new(),
+            #[cfg(feature = "inspector")]
+            inspector: Default::default(),
         }
     }
 

@@ -58,6 +58,15 @@ impl From<String> for LayerId {
     }
 }
 
+/// A read-only view of one widget registered this frame (for tools like the inspector).
+#[derive(Clone, Debug)]
+pub struct WidgetInfo {
+    pub id: WidgetId,
+    pub rect: Rect,
+    pub kind: WidgetKind,
+    pub parent: Option<WidgetId>,
+}
+
 /// A registered widget in the coordinator
 #[derive(Clone, Debug)]
 struct RegisteredWidget {
@@ -801,6 +810,14 @@ impl InputCoordinator {
     }
 
     /// Get the rect of a registered widget (from last frame)
+    /// Every widget registered this frame, in registration order.
+    pub fn widget_snapshot(&self) -> Vec<WidgetInfo> {
+        self.widgets
+            .iter()
+            .map(|w| WidgetInfo { id: w.id.clone(), rect: w.rect, kind: w.kind, parent: w.parent.clone() })
+            .collect()
+    }
+
     pub fn widget_rect(&self, id: &WidgetId) -> Option<Rect> {
         self.widgets.iter().find(|w| &w.id == id).map(|w| w.rect)
     }
@@ -1541,6 +1558,19 @@ mod tests {
         input.pointer.pos = Some((x, y));
         input.pointer.clicked = Some(MouseButton::Left);
         input
+    }
+
+    #[test]
+    fn widget_snapshot_lists_this_frames_registrations() {
+        let mut coord = make_coordinator();
+        coord.begin_frame(make_input_at(0.0, 0.0));
+        coord.register("a", Rect::new(0.0, 0.0, 10.0, 10.0), Sense::CLICK);
+        coord.register("b", Rect::new(5.0, 5.0, 20.0, 20.0), Sense::HOVER);
+        let snap = coord.widget_snapshot();
+        assert_eq!(snap.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(snap[1].rect, Rect::new(5.0, 5.0, 20.0, 20.0));
+        coord.begin_frame(make_input_at(0.0, 0.0));
+        assert!(coord.widget_snapshot().is_empty());
     }
 
     #[test]
