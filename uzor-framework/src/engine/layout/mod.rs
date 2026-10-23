@@ -143,6 +143,7 @@ use crate::types::command::{
 };
 use crate::types::ids::{Revision, Seconds, WindowId};
 use crate::types::intent::DockIntent;
+#[cfg(feature = "layout-blob")]
 use crate::types::layout_blob::WindowGeometrySnapshot;
 use crate::types::ops::{DockPointer, LayoutEffect, LayoutOp};
 use crate::types::snapshot::{ChromeView, DockView, EdgeSlotView};
@@ -151,6 +152,7 @@ use crate::types::window::{Point, WindowCommand};
 
 // Flat re-export surface for later briefs; not all items are used in-crate yet.
 #[allow(unused_imports)]
+#[cfg(feature = "layout-blob")]
 pub use blob::BLOB_VERSION;
 // Flat re-export surface for later briefs; not all items are used in-crate yet.
 #[allow(unused_imports)]
@@ -324,6 +326,9 @@ const DOUBLE_PRESS_S: f64 = 0.6;
 const DOUBLE_PRESS_PX: f64 = 5.0;
 /// Travel that turns a drag-zone press into an OS window move.
 const DRAG_SLOP_PX: f64 = 3.0;
+/// Why a blob command fails in a build without the `layout-blob` feature.
+#[cfg(not(feature = "layout-blob"))]
+const NO_CODEC: &str = "layout blobs need the uzor-framework `layout-blob` feature";
 
 impl<P: DockPanel> WindowLayout<P> {
     fn new(caps: HostCaps, viewport: Rect, policy: &LayoutPolicy) -> Self {
@@ -394,6 +399,7 @@ impl Observed {
 /// Engine-wide settings an op on one window may read.
 struct Ctx<P> {
     policy: LayoutPolicy,
+    #[cfg_attr(not(feature = "layout-blob"), allow(dead_code))]
     decode: PanelDecoder<P>,
     /// A drag-out panel is held waiting for its micro-window: no second
     /// drag-out may start.
@@ -689,6 +695,21 @@ impl<P: DockPanel> LayoutEngine<P> {
                     dock::open_panel(w, panel, DockTarget::Root)
                 });
             }
+            #[cfg(not(feature = "layout-blob"))]
+            LayoutCmd::RequestBlob { win, ticket } => {
+                if self.windows.contains_key(&win) {
+                    let error = crate::types::layout_blob::LayoutCodecError::Encode(NO_CODEC.into());
+                    fx.push(LayoutEffect::Intent(DockIntent::LayoutBlobFailed { win, ticket, error }));
+                }
+            }
+            #[cfg(not(feature = "layout-blob"))]
+            LayoutCmd::Restore { win, .. } => {
+                if self.windows.contains_key(&win) {
+                    let error = crate::types::layout_blob::LayoutCodecError::Malformed(NO_CODEC.into());
+                    fx.push(LayoutEffect::Intent(DockIntent::LayoutRestoreFailed { win, error }));
+                }
+            }
+            #[cfg(feature = "layout-blob")]
             LayoutCmd::RequestBlob { win, ticket } => {
                 if let Some(w) = self.windows.get(&win) {
                     let wire = blob::WireDock::capture(&w.dock);
@@ -698,6 +719,7 @@ impl<P: DockPanel> LayoutEngine<P> {
                     }));
                 }
             }
+            #[cfg(feature = "layout-blob")]
             LayoutCmd::Restore { win, blob } => {
                 if !self.windows.contains_key(&win) {
                     return;
@@ -730,6 +752,7 @@ impl<P: DockPanel> LayoutEngine<P> {
 }
 
 /// Window geometry stored in a restored blob becomes host commands.
+#[cfg(feature = "layout-blob")]
 fn restore_geometry(
     win: WindowId,
     geometry: Option<WindowGeometrySnapshot>,

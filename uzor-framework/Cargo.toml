@@ -20,8 +20,8 @@ uzor-framework-macros = { workspace = true }
 serde = { workspace = true }
 # The handle's lock-free snapshot slot (SWC: channels + Arc only at the handle).
 arc-swap = "1.7"
-# Layout blob wire format (versioned envelope, §3.2.5).
-postcard = { version = "1", default-features = false, features = ["alloc"] }
+# Layout blob wire format (versioned envelope, §3.2.5); feature `layout-blob`.
+postcard = { version = "1", default-features = false, features = ["alloc"], optional = true }
 smallvec = "1.10"
 thiserror = "1.0"
 
@@ -86,6 +86,10 @@ uzor-window-web = { workspace = true, optional = true }
 x11-dl = { version = "2.21", optional = true }
 
 [features]
+default = ["layout-blob"]
+# Dock layout save/restore (`LayoutCmd::RequestBlob` / `Restore`, postcard codec). Without it
+# both commands answer with their failure intent; apps that never persist a layout can drop it.
+layout-blob = ["dep:postcard"]
 # DevTools-like F12 overlay over every registered widget (debug builds only).
 inspector = ["uzor/inspector"]
 # Web: mirror the accessibility tree into hidden ARIA DOM nodes after each frame.

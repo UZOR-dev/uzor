@@ -9,31 +9,41 @@
 //! The same [`WireDock`] is the engine's "did the blob go stale" key: the
 //! dock revision bumps exactly when it changes.
 
+#[cfg(feature = "layout-blob")]
 use std::collections::{HashMap, HashSet};
 
+#[cfg(feature = "layout-blob")]
 use serde::{Deserialize, Serialize};
-use uzor::layout::docking::{
-    DockPanel, DockingTree, FloatingWindow, FloatingWindowId, LayoutSnapshot, LeafId,
-    SerializedGrid, SerializedNode, SerializedNodeType,
-};
+use uzor::layout::docking::{DockPanel, LayoutSnapshot, SerializedNode, SerializedNodeType};
+#[cfg(feature = "layout-blob")]
+use uzor::layout::docking::{DockingTree, FloatingWindow, FloatingWindowId, LeafId, SerializedGrid};
 
+#[cfg(feature = "layout-blob")]
 use crate::types::layout_blob::{LayoutBlob, LayoutCodecError, WindowGeometrySnapshot};
+#[cfg(feature = "layout-blob")]
 use crate::types::spec::PanelHome;
 
-use super::{dock, Ctx, DockState, PanelDecoder, WindowLayout};
+use super::DockState;
+#[cfg(feature = "layout-blob")]
+use super::{dock, Ctx, PanelDecoder, WindowLayout};
 
 /// Envelope version this build writes and reads.
+#[cfg(feature = "layout-blob")]
 pub const BLOB_VERSION: u16 = 1;
 
+#[cfg(feature = "layout-blob")]
 /// Largest node count a blob may hold.
 const MAX_NODES: usize = 4096;
+#[cfg(feature = "layout-blob")]
 /// Deepest branch nesting a blob may hold.
 const MAX_DEPTH: usize = 64;
+#[cfg(feature = "layout-blob")]
 /// Most floating windows a blob may hold.
 const MAX_FLOATING: usize = 256;
 
 /// The blob-relevant state of one dock.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "layout-blob", derive(Serialize, Deserialize))]
 pub(super) struct WireDock {
     root_id: u64,
     active_leaf: Option<u64>,
@@ -41,13 +51,15 @@ pub(super) struct WireDock {
     floating: Vec<WireFloating>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "layout-blob", derive(Serialize, Deserialize))]
 struct WireNode {
     id: u64,
     kind: WireKind,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "layout-blob", derive(Serialize, Deserialize))]
 enum WireKind {
     Leaf {
         panel_type_ids: Vec<String>,
@@ -65,7 +77,8 @@ enum WireKind {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "layout-blob", derive(Serialize, Deserialize))]
 struct WireGrid {
     rows: u64,
     cols: u64,
@@ -73,7 +86,8 @@ struct WireGrid {
     col_ratios: Vec<f64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "layout-blob", derive(Serialize, Deserialize))]
 struct WireFloating {
     id: u64,
     panel_type_ids: Vec<String>,
@@ -82,6 +96,7 @@ struct WireFloating {
 }
 
 /// Everything after the version prefix.
+#[cfg(feature = "layout-blob")]
 #[derive(Serialize, Deserialize)]
 struct Envelope {
     dock: WireDock,
@@ -123,6 +138,7 @@ impl WireDock {
         out
     }
 
+    #[cfg(feature = "layout-blob")]
     fn to_snapshot(&self) -> LayoutSnapshot {
         LayoutSnapshot {
             version: "1.0".to_string(),
@@ -173,6 +189,7 @@ impl From<SerializedNode> for WireNode {
     }
 }
 
+#[cfg(feature = "layout-blob")]
 impl From<&WireNode> for SerializedNode {
     fn from(n: &WireNode) -> Self {
         let node_type = match &n.kind {
@@ -215,14 +232,17 @@ impl From<&WireNode> for SerializedNode {
     }
 }
 
+#[cfg(feature = "layout-blob")]
 fn to_usize(v: u64) -> usize {
     usize::try_from(v).unwrap_or(usize::MAX)
 }
 
+#[cfg(feature = "layout-blob")]
 fn malformed(why: impl Into<String>) -> LayoutCodecError {
     LayoutCodecError::Malformed(why.into())
 }
 
+#[cfg(feature = "layout-blob")]
 /// Encode one dock (and optional window geometry) into a blob.
 pub(super) fn encode(
     dock: &WireDock,
@@ -237,6 +257,7 @@ pub(super) fn encode(
         .map_err(|e| LayoutCodecError::Encode(e.to_string()))
 }
 
+#[cfg(feature = "layout-blob")]
 /// Decode a blob's envelope: version first, then the body; trailing bytes
 /// are malformed.
 fn decode(blob: &LayoutBlob) -> Result<Envelope, LayoutCodecError> {
@@ -256,6 +277,7 @@ fn decode(blob: &LayoutBlob) -> Result<Envelope, LayoutCodecError> {
     Ok(env)
 }
 
+#[cfg(feature = "layout-blob")]
 /// The structure must be a tree the library can rebuild without
 /// recursing forever: unique ids, a branch root, every child present and
 /// referenced once, bounded size and depth.
@@ -317,6 +339,7 @@ fn validate(w: &WireDock) -> Result<(), LayoutCodecError> {
     Ok(())
 }
 
+#[cfg(feature = "layout-blob")]
 /// Rebuild a dock from the wire form; every panel through `decode`.
 fn rebuild<P: DockPanel>(
     w: &WireDock,
@@ -369,6 +392,7 @@ fn rebuild<P: DockPanel>(
     Ok(dock)
 }
 
+#[cfg(feature = "layout-blob")]
 /// `LayoutCmd::Restore` for one window: decode, rebuild, and swap the dock
 /// in only when everything succeeded (any error leaves the window as it
 /// was). The live pointer session is dropped with the old dock. Returns the
