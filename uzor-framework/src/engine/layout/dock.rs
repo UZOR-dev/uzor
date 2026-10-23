@@ -3,7 +3,6 @@
 //! mechanics themselves (tree surgery, drop targeting, pins, floating
 //! windows) are the library's; this file only drives them.
 
-use std::collections::BTreeSet;
 
 use uzor::layout::docking::{
     BranchId, DockPanel, DragPayload, DropZone, FloatingWindow, FloatingWindowId, LeafId,
@@ -823,7 +822,8 @@ fn finish_drag<P: DockPanel>(
             return;
         }
     }
-    let before: BTreeSet<u64> = w.dock.tree().leaves().iter().map(|l| l.id.0).collect();
+    // A plain Vec: a handful of leaves, and no BTreeSet<u64> code in the binary for one lookup.
+    let before: Vec<u64> = w.dock.tree().leaves().iter().map(|l| l.id.0).collect();
     let wire_before = blob::WireDock::capture(&w.dock);
     let area = w.dock.layout_area();
     let floated = w.dock.end_panel_drag(area.width, area.height);

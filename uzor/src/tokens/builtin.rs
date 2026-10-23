@@ -33,15 +33,6 @@ impl BuiltinSet {
     /// Every variant, for exhaustive iteration in tests and golden grids.
     pub const ALL: &'static [BuiltinSet] =
         &[BuiltinSet::Dark, BuiltinSet::Light, BuiltinSet::HighContrast, BuiltinSet::HighContrastMono];
-
-    fn json(self) -> &'static str {
-        match self {
-            BuiltinSet::Dark => DARK_JSON,
-            BuiltinSet::Light => LIGHT_JSON,
-            BuiltinSet::HighContrast => HIGH_CONTRAST_JSON,
-            BuiltinSet::HighContrastMono => HIGH_CONTRAST_MONO_JSON,
-        }
-    }
 }
 
 static DARK: OnceLock<Arc<Tokens>> = OnceLock::new();
@@ -58,21 +49,28 @@ impl Tokens {
     /// of the 4 must load cleanly, proven exhaustively by this module's own
     /// `all_four_builtin_sets_load_and_resolve` test, so the `panic!` below
     /// can never fire outside a broken build of uzor itself.
+    ///
+    /// Inlined so a call with a constant set links only that set's JSON (a
+    /// binary that only ever asks for `Dark` does not carry the other three).
+    #[inline(always)]
     pub fn builtin(set: BuiltinSet) -> Arc<Tokens> {
-        let cell = match set {
-            BuiltinSet::Dark => &DARK,
-            BuiltinSet::Light => &LIGHT,
-            BuiltinSet::HighContrast => &HIGH_CONTRAST,
-            BuiltinSet::HighContrastMono => &HIGH_CONTRAST_MONO,
-        };
-        Arc::clone(cell.get_or_init(|| Arc::new(load_builtin(set))))
+        match set {
+            BuiltinSet::Dark => cached(&DARK, DARK_JSON),
+            BuiltinSet::Light => cached(&LIGHT, LIGHT_JSON),
+            BuiltinSet::HighContrast => cached(&HIGH_CONTRAST, HIGH_CONTRAST_JSON),
+            BuiltinSet::HighContrastMono => cached(&HIGH_CONTRAST_MONO, HIGH_CONTRAST_MONO_JSON),
+        }
     }
 }
 
-fn load_builtin(set: BuiltinSet) -> Tokens {
-    let token_set = load_token_set(set.json())
-        .unwrap_or_else(|e| panic!("built-in token set {set:?} failed to parse: {e}"));
-    token_set.resolve().unwrap_or_else(|e| panic!("built-in token set {set:?} failed to resolve: {e}"))
+#[inline(never)]
+fn cached(cell: &'static OnceLock<Arc<Tokens>>, json: &'static str) -> Arc<Tokens> {
+    Arc::clone(cell.get_or_init(|| Arc::new(load_builtin(json))))
+}
+
+fn load_builtin(json: &str) -> Tokens {
+    let token_set = load_token_set(json).unwrap_or_else(|e| panic!("built-in token set failed to parse: {e}"));
+    token_set.resolve().unwrap_or_else(|e| panic!("built-in token set failed to resolve: {e}"))
 }
 
 #[cfg(test)]
