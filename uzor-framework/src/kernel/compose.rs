@@ -270,7 +270,7 @@ impl<S: Spec> Kernel<S> {
                     .coordinator(win)
                     // Text fields show focus with their caret / border; no ring.
                     .filter(|c| c.text_fields().field_state(id).is_none())
-                    .and_then(|c| c.widget_rect(id))
+                    .and_then(|c| c.widget_rect(id).map(|r| (r, c.focus_radius(id))))
             });
             super::furniture::paint_focus_ring(render, &tokens, ring);
         }
@@ -280,10 +280,17 @@ impl<S: Spec> Kernel<S> {
 
         // `EndFrame`: this frame's registrations evaluate (hover, clicks).
         let hover_before = self.input.view().window(win).and_then(|v| v.hovered);
+        let focus_before = self.input.view().window(win).map(|v| (v.focused.clone(), v.focus_visible));
         let fx = self.input.apply(InputOp::EndFrame { win, now });
         self.conduct_input(now, fx);
         // Hover evaluated here is painted by the NEXT compose (like clicks below);
         // without a follow-up frame the hover state shows one input late.
+        // Same for focus: a Tab resolved here moves the ring on the next compose,
+        // which must not wait for another input event.
+        if self.input.view().window(win).map(|v| (v.focused.clone(), v.focus_visible)) != focus_before {
+            self.invalidate(win, None, InvalidateBits::ALL);
+            out.wants_frame = true;
+        }
         if self.input.view().window(win).and_then(|v| v.hovered) != hover_before {
             self.invalidate(win, None, InvalidateBits::ALL);
             out.wants_frame = true;

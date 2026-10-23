@@ -576,6 +576,43 @@ fn tab_order_trap_and_focus_events() {
     assert!(h.runtime().app().seen_focus.iter().any(|e| e.0 == Focus && e.1 == "a"));
 }
 
+/// A Tab that moves focus paints the next frame itself (ring and active
+/// descendant), with no other input to wake the window.
+#[test]
+fn tab_focus_move_requests_a_frame() {
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    let f = Sense::CLICK.union(Sense::FOCUSABLE);
+    {
+        let app = h.runtime_mut().app_mut();
+        app.panel_widgets.push((wid("a"), Rect::new(10.0, 100.0, 60.0, 24.0), f));
+        app.panel_widgets.push((wid("b"), Rect::new(80.0, 100.0, 60.0, 24.0), f));
+    }
+    handle
+        .dispatch(AppCommand::Cadence(CadenceCmd::SetTickRate { win, rate: TickRate::Dirty }))
+        .expect("dispatch");
+    handle
+        .dispatch(AppCommand::Cadence(CadenceCmd::Invalidate { win, region: None, bits: InvalidateBits::ALL }))
+        .expect("dispatch");
+    h.advance(0.0);
+    let down = |h: &mut Host<TS, TestApp>, state| {
+        h.input(
+            win,
+            InputEvent::Key(KeyInput { code: KeyCode::Tab, text: None, state, mods: ModifierKeys::default() }),
+        );
+    };
+    for want in ["a", "b", "a"] {
+        for _ in 0..3 {
+            h.advance(0.05);
+        }
+        assert!(!h.advance(0.05).frames.iter().any(|fr| fr.window == win), "settled before Tab");
+        down(&mut h, crate::types::bus::KeyState::Down);
+        assert!(h.advance(0.0).frames.iter().any(|fr| fr.window == win), "Tab to {want} must paint");
+        assert_eq!(focused(&h, win), Some(wid(want)));
+        down(&mut h, crate::types::bus::KeyState::Up);
+    }
+}
+
 // -- §9.2: keymap ------------------------------------------------------------
 
 /// Precedence: focused widget > top overlay > global, and a modal shields

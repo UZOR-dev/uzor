@@ -184,6 +184,8 @@ pub struct InputCoordinator {
     /// Accessible names and checked states declared this frame
     /// ([`Self::set_a11y`]); read by [`Self::a11y_tree`].
     a11y: Vec<(WidgetId, String, Option<bool>)>,
+    /// Per-frame corner radius of a widget's focus ring ([`Self::set_focus_radius`]).
+    focus_radius: Vec<(WidgetId, f64)>,
     /// This frame's focus trap root (`set_focus_trap`): Tab / Shift+Tab
     /// stay inside its subtree, like focus in a modal `<dialog>`.
     focus_trap: Option<WidgetId>,
@@ -212,6 +214,7 @@ impl InputCoordinator {
             cook_drag_release: None,
             tab_indices: Vec::new(),
             a11y: Vec::new(),
+            focus_radius: Vec::new(),
             focus_trap: None,
         }
     }
@@ -244,6 +247,7 @@ impl InputCoordinator {
 
         self.widgets.clear();
         self.a11y.clear();
+        self.focus_radius.clear();
         self.layers.clear();
         self.default_layer = None;
         self.layers.push(Layer {
@@ -857,6 +861,18 @@ impl InputCoordinator {
         self.a11y.push((id.clone(), name.into(), checked));
     }
 
+    /// Declare the corner radius of `id`'s focus ring, like CSS `border-radius`
+    /// shaping `outline`: a round button passes half its size. Per frame, like
+    /// registration; widgets that declare nothing get a square ring.
+    pub fn set_focus_radius(&mut self, id: &WidgetId, radius: f64) {
+        self.focus_radius.push((id.clone(), radius));
+    }
+
+    /// The focus-ring corner radius declared for `id` this frame (0 = square).
+    pub fn focus_radius(&self, id: &WidgetId) -> f64 {
+        self.focus_radius.iter().rev().find(|f| &f.0 == id).map_or(0.0, |f| f.1)
+    }
+
     /// This frame's accessibility tree: one node per registered widget whose
     /// kind has a role (text fields are text inputs), in registration order,
     /// with the declared name, checked state, focus and parent links.
@@ -1212,6 +1228,7 @@ impl crate::input::driver::CoordinatorDriver for InputCoordinator {
 
         self.widgets.clear();
         self.a11y.clear();
+        self.focus_radius.clear();
         self.layers.clear();
         self.default_layer = None;
         self.layers.push(Layer {

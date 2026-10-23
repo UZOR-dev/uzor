@@ -383,11 +383,17 @@ impl<S: Spec> Kernel<S> {
         }
         // Step 1: the focused text field's editing chords and text, and
         // Tab / Shift+Tab focus cycling.
+        let focus_before = self.input.view().window(win).map(|v| (v.focused.clone(), v.focus_visible));
         let fx = self.input.apply(InputOp::Key {
             win,
             now,
             input: input.clone(),
         });
+        // A Tab that moved focus repaints now (focus ring, active descendant),
+        // not on the next unrelated input.
+        if self.input.view().window(win).map(|v| (v.focused.clone(), v.focus_visible)) != focus_before {
+            self.invalidate(win, None, InvalidateBits::ALL);
+        }
         let passed = fx.iter().find_map(|e| match e {
             InputEffect::KeyPassed { key, .. } => Some(key.clone()),
             _ => None,

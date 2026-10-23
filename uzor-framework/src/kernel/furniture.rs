@@ -168,17 +168,28 @@ pub(super) fn paint_dock<P: DockPanel>(
     }
 }
 
-/// A 2 px ring in `focus_ring` around the focused widget.
-pub(super) fn paint_focus_ring(render: &mut dyn RenderContext, tokens: &Tokens, rect: Option<Rect>) {
-    let Some(rect) = rect else {
+/// A 2 px ring in `focus_ring` around the focused widget, following its
+/// declared corner radius (`InputCoordinator::set_focus_radius`), like a CSS
+/// `outline` following `border-radius`.
+pub(super) fn paint_focus_ring(render: &mut dyn RenderContext, tokens: &Tokens, ring: Option<(Rect, f64)>) {
+    let Some((rect, radius)) = ring else {
         return;
     };
     if rect.width <= 0.0 || rect.height <= 0.0 {
         return;
     }
     let color = tokens.semantic.focus_ring.to_css();
-    render.set_fill_color(&color);
     let t = 2.0;
+    if radius > 0.0 {
+        // Stroke centred 1 px outside the edge: the same 2 px band as the square ring.
+        render.set_stroke_color(&color);
+        render.set_stroke_width(t);
+        render.set_line_dash(&[]);
+        let h = t * 0.5;
+        render.stroke_rounded_rect(rect.x - h, rect.y - h, rect.width + t, rect.height + t, radius + h);
+        return;
+    }
+    render.set_fill_color(&color);
     render.fill_rect(rect.x - t, rect.y - t, rect.width + t * 2.0, t);
     render.fill_rect(rect.x - t, rect.y + rect.height, rect.width + t * 2.0, t);
     render.fill_rect(rect.x - t, rect.y, t, rect.height);
