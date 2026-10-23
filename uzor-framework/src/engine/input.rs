@@ -1441,6 +1441,9 @@ fn editing_chord(input: &KeyInput) -> Option<Edit> {
     let cmd = m.ctrl || m.meta;
     let edit = match input.code {
         KeyCode::A if cmd => Edit::Key(KeyPress::SelectAll),
+        KeyCode::Z if cmd && m.shift => Edit::Key(KeyPress::Redo),
+        KeyCode::Z if cmd => Edit::Key(KeyPress::Undo),
+        KeyCode::Y if m.ctrl && !m.alt => Edit::Key(KeyPress::Redo),
         KeyCode::C if cmd => Edit::Copy,
         KeyCode::X if cmd => Edit::Cut,
         KeyCode::V if cmd => Edit::Paste,

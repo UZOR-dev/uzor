@@ -191,7 +191,17 @@ pub struct TextFieldState {
     pub preedit_cursor: usize,
     /// Field configuration (immutable after registration).
     pub config: TextFieldConfig,
+    /// Undo history: `(text, cursor)` before each edit step, oldest first.
+    pub undo: Vec<(String, usize)>,
+    /// Redo history, filled by undo and cleared by a new edit.
+    pub redo: Vec<(String, usize)>,
+    /// The last edit was a typed (non-space) char: the next one joins its
+    /// undo step, the way a browser undoes typing a word at a time.
+    typing: bool,
 }
+
+/// Undo steps kept per field.
+const UNDO_DEPTH: usize = 100;
 
 impl TextFieldState {
     /// Create a new state for the given config.
@@ -208,7 +218,52 @@ impl TextFieldState {
             preedit: String::new(),
             preedit_cursor: 0,
             config,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            typing: false,
         }
+    }
+
+    /// Record an edit that turned `before` into the current text. `typed`
+    /// marks a single typed char, which joins the previous typed char's step.
+    /// No-op when the text did not change (a caret move ends the typing run).
+    pub fn note_edit(&mut self, before: (String, usize), typed: bool) {
+        if self.text == before.0 {
+            self.typing = false;
+            return;
+        }
+        if !(typed && self.typing) {
+            if self.undo.len() == UNDO_DEPTH {
+                self.undo.remove(0);
+            }
+            self.undo.push(before);
+        }
+        self.redo.clear();
+        self.typing = typed;
+    }
+
+    /// Step back one edit. `false` when there is nothing to undo.
+    pub fn undo(&mut self) -> bool {
+        let Some((text, cursor)) = self.undo.pop() else { return false };
+        let now = (std::mem::replace(&mut self.text, text), self.cursor);
+        self.redo.push(now);
+        self.restore_caret(cursor);
+        true
+    }
+
+    /// Re-apply the last undone edit. `false` when there is nothing to redo.
+    pub fn redo(&mut self) -> bool {
+        let Some((text, cursor)) = self.redo.pop() else { return false };
+        let now = (std::mem::replace(&mut self.text, text), self.cursor);
+        self.undo.push(now);
+        self.restore_caret(cursor);
+        true
+    }
+
+    fn restore_caret(&mut self, cursor: usize) {
+        self.cursor = cursor.min(self.char_count());
+        self.selection_start = None;
+        self.typing = false;
     }
 
     /// What a painter shows: the text with any IME preedit spliced in at the
@@ -535,6 +590,12 @@ impl TextFieldStore {
     /// Set text programmatically. Positions cursor at end. Does not require focus.
     pub fn set_text(&mut self, id: &WidgetId, text: &str) {
         if let Some(state) = self.fields.get_mut(id) {
+            if state.text != text {
+                // A programmatic value drops the undo history, as `input.value = ..` does.
+                state.undo.clear();
+                state.redo.clear();
+                state.typing = false;
+            }
             state.text = text.to_string();
             state.cursor = state.char_count();
             state.selection_start = None;
@@ -545,6 +606,9 @@ impl TextFieldStore {
     pub fn clear(&mut self, id: &WidgetId) {
         if let Some(state) = self.fields.get_mut(id) {
             state.text.clear();
+            state.undo.clear();
+            state.redo.clear();
+            state.typing = false;
             state.cursor = 0;
             state.selection_start = None;
         }
@@ -568,6 +632,56 @@ impl TextFieldStore {
 
     /// Handle a printable character.
     pub fn on_char(&mut self, ch: char) -> TextAction {
+        let before = self.snapshot();
+        let action = self.on_char_inner(ch);
+        let typed = !ch.is_control() && !ch.is_whitespace();
+        self.note(before, typed);
+        action
+    }
+
+    /// Handle a named key press.
+    pub fn on_key(&mut self, key: KeyPress) -> TextAction {
+        if matches!(key, KeyPress::Undo | KeyPress::Redo) {
+            return self.undo_redo(matches!(key, KeyPress::Redo));
+        }
+        let before = self.snapshot();
+        let action = self.on_key_inner(key);
+        self.note(before, false);
+        action
+    }
+
+    /// The focused field's text and caret, before an edit.
+    fn snapshot(&self) -> Option<(WidgetId, (String, usize))> {
+        let id = self.focused.clone()?;
+        let s = self.fields.get(&id)?;
+        Some((id, (s.text.clone(), s.cursor)))
+    }
+
+    fn note(&mut self, before: Option<(WidgetId, (String, usize))>, typed: bool) {
+        if let Some((id, before)) = before {
+            if let Some(s) = self.fields.get_mut(&id) {
+                s.note_edit(before, typed);
+            }
+        }
+    }
+
+    fn undo_redo(&mut self, redo: bool) -> TextAction {
+        let Some(id) = self.focused.clone() else { return TextAction::None };
+        let Some(s) = self.fields.get_mut(&id) else { return TextAction::None };
+        if s.config.read_only || matches!(s.config.capability, InputCapability::Mouse | InputCapability::Raw) {
+            return TextAction::None;
+        }
+        let done = if redo { s.redo() } else { s.undo() };
+        if !done {
+            return TextAction::None;
+        }
+        s.engaged = true;
+        let text = s.text.clone();
+        self.reset_blink();
+        TextAction::TextChanged(text)
+    }
+
+    fn on_char_inner(&mut self, ch: char) -> TextAction {
         let id = match self.focused.clone() {
             Some(id) => id,
             None => return TextAction::None,
@@ -654,8 +768,7 @@ impl TextFieldStore {
         }
     }
 
-    /// Handle a named key press.
-    pub fn on_key(&mut self, key: KeyPress) -> TextAction {
+    fn on_key_inner(&mut self, key: KeyPress) -> TextAction {
         let id = match self.focused.clone() {
             Some(id) => id,
             None => return TextAction::None,
@@ -900,7 +1013,9 @@ impl TextFieldStore {
         let byte_hi = state.char_to_byte(hi);
         let selected = state.text[byte_lo..byte_hi].to_string();
         if !state.config.read_only && state.config.capability != InputCapability::Mouse {
+            let before = (state.text.clone(), state.cursor);
             state.delete_selection();
+            state.note_edit(before, false);
             self.reset_blink();
         }
         Some(selected)
@@ -931,7 +1046,9 @@ impl TextFieldStore {
         }
         state.engaged = true;
         let before = state.text.clone();
+        let caret = state.cursor;
         apply_key(state, KeyPress::Paste(committed));
+        state.note_edit((before.clone(), caret), false);
         self.reset_blink();
         let after = &self.fields[id].text;
         if after != &before {
@@ -1378,6 +1495,53 @@ mod tests {
         let _ = s.on_char('5');
         let _ = s.on_char('Z'); // rejected
         assert_eq!(s.text(&id("f")), "5");
+    }
+
+    #[test]
+    fn undo_groups_typed_words_and_redo_replays() {
+        let mut s = store();
+        s.register("f", TextFieldConfig::text());
+        s.focus("f");
+        for c in "hi yo".chars() {
+            s.on_char(c);
+        }
+        s.on_char('\x08');
+        assert_eq!(s.text(&id("f")), "hi y");
+        assert_eq!(s.on_key(KeyPress::Undo), TextAction::TextChanged("hi yo".into()));
+        s.on_key(KeyPress::Undo);
+        assert_eq!(s.text(&id("f")), "hi ");
+        s.on_key(KeyPress::Undo);
+        assert_eq!(s.text(&id("f")), "hi");
+        s.on_key(KeyPress::Undo);
+        assert_eq!(s.text(&id("f")), "");
+        assert_eq!(s.on_key(KeyPress::Undo), TextAction::None);
+        s.on_key(KeyPress::Redo);
+        assert_eq!(s.text(&id("f")), "hi");
+        assert_eq!(s.cursor(&id("f")), 2);
+        s.on_char('!');
+        assert_eq!(s.on_key(KeyPress::Redo), TextAction::None, "a new edit drops the redo branch");
+    }
+
+    #[test]
+    fn caret_moves_split_undo_steps_and_set_text_drops_history() {
+        let mut s = store();
+        s.register("f", TextFieldConfig::text());
+        s.focus("f");
+        s.on_char('a');
+        s.on_key(KeyPress::ArrowLeft);
+        s.on_char('b');
+        assert_eq!(s.text(&id("f")), "ba");
+        s.on_key(KeyPress::Undo);
+        assert_eq!(s.text(&id("f")), "a");
+        s.set_text(&id("f"), "new");
+        assert_eq!(s.on_key(KeyPress::Undo), TextAction::None);
+        s.on_key(KeyPress::SelectAll);
+        s.cut_selection(&id("f"));
+        s.ime_commit(&id("f"), "日本".into());
+        s.on_key(KeyPress::Undo);
+        assert_eq!(s.text(&id("f")), "");
+        s.on_key(KeyPress::Undo);
+        assert_eq!(s.text(&id("f")), "new");
     }
 
     #[test]
