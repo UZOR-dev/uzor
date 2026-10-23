@@ -229,9 +229,16 @@ pub fn draw_text_button(ctx: &mut dyn RenderContext, r: Rect, label: &str, s: &T
 /// vertically centred in `r`. Returns per-char x positions for the text store.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_field_text(ctx: &mut dyn RenderContext, r: Rect, text: &str, placeholder: &str, caret: Option<usize>, px: f64, color: &str, ph_color: &str) -> Vec<f64> {
+    draw_field_text_in(ctx, r, text, placeholder, caret, px, color, ph_color, "Inter, sans-serif")
+}
+
+/// [`draw_field_text`] in the CSS font-family list `family` (a page whose inputs keep the
+/// browser's control font).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_field_text_in(ctx: &mut dyn RenderContext, r: Rect, text: &str, placeholder: &str, caret: Option<usize>, px: f64, color: &str, ph_color: &str, family: &str) -> Vec<f64> {
     let lh = (px * 1.5).round();
     let top = r.y + (r.height - lh) / 2.0;
-    ctx.set_font(&format!("400 {px}px Inter, sans-serif"));
+    ctx.set_font(&format!("400 {px}px {family}"));
     if text.is_empty() {
         ctx.set_fill_color(ph_color);
         fill_text_css(ctx, placeholder, r.x, top, px, lh, INTER, TextAlign::Left);
