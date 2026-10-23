@@ -28,3 +28,5 @@ pub const RX_WHO_FG: &str = "#d6d6d6";
 pub const RGBA: &str = "rgba(0,0,0,0.4)";
 #[allow(dead_code)]
 pub const C_58A6FF: &str = "#58a6ff";
+/// `.msg code` chip background (`#0006`).
+pub const CODE_BG: &str = "rgba(0,0,0,0.4)";

@@ -21,13 +21,61 @@ pub struct Span {
     pub color: Option<String>,
     /// CSS weight.
     pub weight: u32,
+    /// Inline code (`.msg code`): monospace on a dark chip, 6px side padding.
+    pub code: bool,
 }
 
 impl Span {
     /// Plain run.
     pub fn plain(t: impl Into<String>) -> Self {
-        Self { text: t.into(), color: None, weight: 400 }
+        Self { text: t.into(), color: None, weight: 400, code: false }
     }
+}
+
+/// Inline code font family (the UA `code` style).
+const MONO: &str = "ui-monospace, Menlo, monospace";
+/// `.msg code` horizontal padding.
+const CODE_PAD: f64 = 6.0;
+
+/// Mixed inline runs from light markup in one paragraph: `**bold**` (700),
+/// `` `code` `` (verbatim, no links inside) and, everywhere else,
+/// [`linkify`]'s links and mentions in `color` / `weight`. Unclosed markers
+/// stay literal text.
+pub fn inline_spans(text: &str, color: &str, weight: u32) -> Vec<Span> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    let mut bold = false;
+    let push_text = |out: &mut Vec<Span>, t: &str, bold: bool| {
+        for mut sp in linkify(t, color, weight) {
+            if bold {
+                sp.weight = sp.weight.max(700);
+            }
+            out.push(sp);
+        }
+    };
+    loop {
+        let tick = rest.find('`').filter(|&i| rest[i + 1..].contains('`'));
+        let star = rest.find("**").filter(|&i| bold || rest[i + 2..].contains("**"));
+        match (tick, star) {
+            (Some(i), s) if s.is_none_or(|s| i < s) => {
+                push_text(&mut out, &rest[..i], bold);
+                let end = i + 1 + rest[i + 1..].find('`').unwrap_or(0);
+                if end > i + 1 {
+                    out.push(Span { code: true, ..Span::plain(&rest[i + 1..end]) });
+                }
+                rest = &rest[end + 1..];
+            }
+            (_, Some(i)) => {
+                push_text(&mut out, &rest[..i], bold);
+                bold = !bold;
+                rest = &rest[i + 2..];
+            }
+            _ => break,
+        }
+    }
+    push_text(&mut out, rest, bold);
+    out.retain(|s| !s.text.is_empty());
+    out
 }
 
 /// Split `text` into plain runs and `@nick` runs (nick: `[A-Za-z0-9][A-Za-z0-9._-]{1,63}`,
@@ -49,7 +97,7 @@ pub fn mention_spans(text: &str, color: &str, weight: u32) -> Vec<Span> {
                 if !cur.is_empty() {
                     out.push(Span::plain(std::mem::take(&mut cur)));
                 }
-                out.push(Span { text: cs[i..j].iter().collect(), color: Some(color.to_string()), weight });
+                out.push(Span { text: cs[i..j].iter().collect(), color: Some(color.to_string()), weight, code: false });
                 i = j;
                 continue;
             }
@@ -90,7 +138,7 @@ pub fn linkify(text: &str, color: &str, weight: u32) -> Vec<Span> {
             if i > 0 {
                 out.push(Span::plain(&rest[..i]));
             }
-            out.push(Span { text: url.to_string(), color: Some(color.to_string()), weight });
+            out.push(Span { text: url.to_string(), color: Some(color.to_string()), weight, code: false });
             rest = &rest[i + url.len()..];
         }
         if !rest.is_empty() {
@@ -284,12 +332,25 @@ fn font(st: &ThreadStyle, w: u32, px: f64) -> String {
     format!("{w} {px}px {}", st.family)
 }
 
+fn span_font(st: &ThreadStyle, s: &Span) -> String {
+    if s.code {
+        format!("{} {}px {MONO}", s.weight, st.px)
+    } else {
+        font(st, s.weight, st.px)
+    }
+}
+
 /// One placed piece of a wrapped line.
 #[derive(Clone, Debug)]
 pub struct Piece {
+    /// Box start (the code chip's left edge).
     pub x: f64,
     pub text: String,
     pub span: usize,
+    /// Text offset inside the box (a code chip's left padding).
+    pub pad: f64,
+    /// Box width (text plus code padding).
+    pub w: f64,
 }
 
 /// Measured message.
@@ -303,30 +364,36 @@ pub struct MessageLayout {
 }
 
 /// Greedy wrap of styled runs into `max_w` (spaces kept at line ends are dropped,
-/// words longer than a line break anywhere).
+/// words longer than a line break anywhere). Runs of different fonts share
+/// lines; a code run's chip padding counts at its first and last piece.
 pub fn wrap_spans(ctx: &mut dyn RenderContext, spans: &[Span], max_w: f64, st: &ThreadStyle) -> Vec<Vec<Piece>> {
-    // tokens: (span, text, is_space, is_newline)
-    let mut toks: Vec<(usize, String, bool, bool)> = Vec::new();
+    // tokens: (span, text, is_space, is_newline, left pad, right pad)
+    let mut toks: Vec<(usize, String, bool, bool, f64, f64)> = Vec::new();
     for (si, s) in spans.iter().enumerate() {
+        let first = toks.len();
         let mut cur = String::new();
         let mut cur_sp = false;
         for ch in s.text.chars() {
             if ch == '\n' {
                 if !cur.is_empty() {
-                    toks.push((si, std::mem::take(&mut cur), cur_sp, false));
+                    toks.push((si, std::mem::take(&mut cur), cur_sp, false, 0.0, 0.0));
                 }
-                toks.push((si, String::new(), false, true));
+                toks.push((si, String::new(), false, true, 0.0, 0.0));
                 continue;
             }
             let sp = ch == ' ';
             if !cur.is_empty() && sp != cur_sp {
-                toks.push((si, std::mem::take(&mut cur), cur_sp, false));
+                toks.push((si, std::mem::take(&mut cur), cur_sp, false, 0.0, 0.0));
             }
             cur_sp = sp;
             cur.push(ch);
         }
         if !cur.is_empty() {
-            toks.push((si, cur, cur_sp, false));
+            toks.push((si, cur, cur_sp, false, 0.0, 0.0));
+        }
+        if s.code && toks.len() > first {
+            toks[first].4 = CODE_PAD;
+            toks.last_mut().unwrap().5 = CODE_PAD;
         }
     }
     let mut lines: Vec<Vec<Piece>> = vec![Vec::new()];
@@ -334,23 +401,24 @@ pub fn wrap_spans(ctx: &mut dyn RenderContext, spans: &[Span], max_w: f64, st: &
     // Some backends trim spaces when measuring: measure runs with spaces between two
     // fixed glyphs so their advance is counted.
     let measure = |ctx: &mut dyn RenderContext, si: usize, t: &str| {
-        ctx.set_font(&font(st, spans[si].weight, st.px));
+        ctx.set_font(&span_font(st, &spans[si]));
         if t.starts_with(' ') || t.ends_with(' ') {
             ctx.measure_text(&format!("x{t}x")) - ctx.measure_text("xx")
         } else {
             ctx.measure_text(t)
         }
     };
-    for (si, t, sp, nl) in toks {
+    let piece = |x: f64, text: String, span: usize, pad: f64, w: f64| Piece { x, text, span, pad, w };
+    for (si, t, sp, nl, lp, rp) in toks {
         if nl {
             lines.push(Vec::new());
             x = 0.0;
             continue;
         }
-        let w = measure(ctx, si, &t);
+        let w = measure(ctx, si, &t) + lp + rp;
         if sp {
             if x > 0.0 && x + w <= max_w {
-                lines.last_mut().unwrap().push(Piece { x, text: t, span: si });
+                lines.last_mut().unwrap().push(piece(x, t, si, lp, w));
                 x += w;
             } else if x > 0.0 {
                 lines.push(Vec::new());
@@ -359,7 +427,7 @@ pub fn wrap_spans(ctx: &mut dyn RenderContext, spans: &[Span], max_w: f64, st: &
             continue;
         }
         if x + w <= max_w {
-            lines.last_mut().unwrap().push(Piece { x, text: t, span: si });
+            lines.last_mut().unwrap().push(piece(x, t, si, lp, w));
             x += w;
             continue;
         }
@@ -370,19 +438,20 @@ pub fn wrap_spans(ctx: &mut dyn RenderContext, spans: &[Span], max_w: f64, st: &
                     l.pop();
                 }
             }
-            lines.push(vec![Piece { x: 0.0, text: t, span: si }]);
+            lines.push(vec![piece(0.0, t, si, lp, w)]);
             x = w;
             continue;
         }
         // break anywhere
         let mut part = String::new();
+        let mut pad = lp;
         for ch in t.chars() {
             let cand = format!("{part}{ch}");
-            if x + measure(ctx, si, &cand) > max_w && !(part.is_empty() && x == 0.0) {
+            if x + pad + measure(ctx, si, &cand) > max_w && !(part.is_empty() && x == 0.0) {
                 if !part.is_empty() {
-                    let pw = measure(ctx, si, &part);
-                    lines.last_mut().unwrap().push(Piece { x, text: std::mem::take(&mut part), span: si });
-                    let _ = pw;
+                    let pw = measure(ctx, si, &part) + pad;
+                    lines.last_mut().unwrap().push(piece(x, std::mem::take(&mut part), si, pad, pw));
+                    pad = 0.0;
                 }
                 lines.push(Vec::new());
                 x = 0.0;
@@ -392,22 +461,19 @@ pub fn wrap_spans(ctx: &mut dyn RenderContext, spans: &[Span], max_w: f64, st: &
             }
         }
         if !part.is_empty() {
-            let pw = measure(ctx, si, &part);
-            lines.last_mut().unwrap().push(Piece { x, text: part, span: si });
+            let pw = measure(ctx, si, &part) + pad + rp;
+            lines.last_mut().unwrap().push(piece(x, part, si, pad, pw));
             x += pw;
         }
     }
     lines
 }
 
-fn line_w(ctx: &mut dyn RenderContext, l: &[Piece], spans: &[Span], st: &ThreadStyle) -> f64 {
+fn line_w(l: &[Piece]) -> f64 {
     l.iter()
         .rev()
         .find(|p| !p.text.trim().is_empty())
-        .map(|p| {
-            ctx.set_font(&font(st, spans[p.span].weight, st.px));
-            p.x + ctx.measure_text(&p.text)
-        })
+        .map(|p| p.x + p.w)
         .unwrap_or(0.0)
 }
 
@@ -416,7 +482,7 @@ pub fn layout_message(ctx: &mut dyn RenderContext, v: &MessageView<'_>, col_w: f
     let maxw = st.max_w.min(col_w * st.max_share);
     let inner = maxw - 2.0 * st.pad_x;
     let lines = wrap_spans(ctx, v.body, inner, st);
-    let mut cw = lines.iter().map(|l| line_w(ctx, l, v.body, st)).fold(0.0, f64::max);
+    let mut cw = lines.iter().map(|l| line_w(l)).fold(0.0, f64::max);
     let mut h = 2.0 * st.pad_y + lines.len() as f64 * st.lh;
     if let Some((name, _)) = v.header {
         ctx.set_font(&font(st, st.hdr_weight, st.hdr_px));
@@ -490,9 +556,16 @@ pub fn draw_message(ctx: &mut dyn RenderContext, x: f64, y: f64, v: &MessageView
     for line in &l.lines {
         for p in line {
             let s = &v.body[p.span];
-            ctx.set_font(&font(st, s.weight, st.px));
+            if s.code {
+                // `.msg code`: content box (1.2em) plus 1px vertical padding.
+                let h = (st.px * 1.2 + 2.0).round();
+                path_round_rect(ctx, Rect::new(cx + p.x, yy + ((st.lh - h) / 2.0).round(), p.w, h), 6.0);
+                ctx.set_fill_color(tokens::CODE_BG);
+                ctx.fill();
+            }
+            ctx.set_font(&span_font(st, s));
             ctx.set_fill_color(s.color.as_deref().unwrap_or(fg));
-            fill_text_css(ctx, &p.text, cx + p.x, yy, st.px, st.lh, st.metrics, TextAlign::Left);
+            fill_text_css(ctx, &p.text, cx + p.x + p.pad, yy, st.px, st.lh, st.metrics, TextAlign::Left);
         }
         yy += st.lh;
     }
@@ -523,7 +596,7 @@ pub fn link_hits(ctx: &mut dyn RenderContext, x: f64, y: f64, v: &MessageView<'_
             let s = &v.body[p.span];
             if span_link(s).is_some() {
                 ctx.set_font(&font(st, s.weight, st.px));
-                out.push((p.span, Rect::new(x + st.pad_x + p.x, yy, ctx.measure_text(&p.text), st.lh)));
+                out.push((p.span, Rect::new(x + st.pad_x + p.x, yy, p.w, st.lh)));
             }
         }
         yy += st.lh;
@@ -675,6 +748,42 @@ mod tests {
         assert_eq!((r.x, r.width), (10.0 + st.pad_x + 3.0 * 8.0, 4.0 * 8.0));
         assert_eq!((r.y, r.height), (body_top(20.0, &v, &st), st.lh));
         assert_eq!(r.y, 20.0 + st.pad_y + st.hdr_lh + st.hdr_gap);
+    }
+
+    #[test]
+    fn inline_spans_mix_bold_code_links_and_mentions() {
+        let url = ["https", "://", "x.test"].concat();
+        let sp = inline_spans(&format!("**hi @bob** run `cargo **x**` at {url} `open"), tokens::C_58A6FF, 500);
+        let v: Vec<(&str, u32, bool, bool)> = sp.iter().map(|s| (s.text.as_str(), s.weight, s.code, s.color.is_some())).collect();
+        assert_eq!(
+            v,
+            [
+                ("hi ", 700, false, false),
+                ("@bob", 700, false, true),
+                (" run ", 400, false, false),
+                ("cargo **x**", 400, true, false),
+                (" at ", 400, false, false),
+                (url.as_str(), 500, false, true),
+                (" `open", 400, false, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn mixed_runs_wrap_as_one_paragraph_with_code_padding() {
+        let mut ctx = crate::testing::RecordingRenderContext::with_char_width(8.0);
+        let st = ThreadStyle::default();
+        let sp = inline_spans("ab `cd ef` gh", tokens::C_58A6FF, 500);
+        // One line: "ab " 24, chip 6 + "cd ef" 40 + 6, " gh" 24.
+        let one = wrap_spans(&mut ctx, &sp, 200.0, &st);
+        assert_eq!(one.len(), 1);
+        let xs: Vec<(f64, f64, f64)> = one[0].iter().map(|p| (p.x, p.pad, p.w)).collect();
+        assert_eq!(xs, [(0.0, 0.0, 16.0), (16.0, 0.0, 8.0), (24.0, 6.0, 22.0), (46.0, 0.0, 8.0), (54.0, 0.0, 22.0), (76.0, 0.0, 8.0), (84.0, 0.0, 16.0)]);
+        // Narrow: breaks between words inside the code run; padding only at its ends.
+        let two = wrap_spans(&mut ctx, &sp, 60.0, &st);
+        let t: Vec<Vec<&str>> = two.iter().map(|l| l.iter().map(|p| p.text.as_str()).collect()).collect();
+        assert_eq!(t, [vec!["ab", " ", "cd"], vec!["ef", " ", "gh"]]);
+        assert_eq!((two[1][0].pad, two[1][0].w), (0.0, 22.0));
     }
 
     #[test]
