@@ -107,6 +107,10 @@ pub struct ComposerStyle {
     pub voice_when_empty: bool,
     /// The mic is unavailable (no dictation backend): drawn dimmed, no hover.
     pub mic_off: bool,
+    /// The voice-chat button ([`Self::voice_when_empty`]) is unavailable (no voice
+    /// server): a neutral disc with dimmed bars, no hover. The host still gets the click
+    /// (to say why).
+    pub voice_off: bool,
 }
 
 crate::styled!(ComposerStyle {
@@ -141,6 +145,7 @@ impl Default for ComposerStyle {
             send_hover: tokens::SEND_HOVER,
             voice_when_empty: false,
             mic_off: false,
+            voice_off: false,
         }
     }
 }
@@ -292,7 +297,14 @@ fn draw_buttons(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &Compose
     let hov = |p| view.hovered == Some(p);
     round_btn(ctx, hits.attach, if hov(ComposerPart::Attach) { st.btn_hover } else { st.btn_bg });
     round_btn(ctx, hits.mic, if hov(ComposerPart::Mic) && !st.mic_off { st.btn_hover } else { st.btn_bg });
-    round_btn(ctx, hits.send, if hov(ComposerPart::Send) { st.send_hover } else { st.send_bg });
+    let send = if voice && st.voice_off {
+        st.btn_bg
+    } else if hov(ComposerPart::Send) {
+        st.send_hover
+    } else {
+        st.send_bg
+    };
+    round_btn(ctx, hits.send, send);
     ctx.set_line_cap("round");
     ctx.set_line_join("round");
     // + : <path d="M12 5v14M5 12h14"/> 18px, stroke 2
@@ -320,7 +332,7 @@ fn draw_buttons(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &Compose
     if voice {
         // Voice chat (empty composer): the send disc (accent) with waveform bars.
         let g = Svg::new(hits.send, 17.0);
-        ctx.set_stroke_color(tokens::WHITE);
+        ctx.set_stroke_color(if st.voice_off { tokens::MIC_OFF } else { tokens::WHITE });
         ctx.set_stroke_width(2.2 * g.k);
         ctx.begin_path();
         for (x, h) in [(5.0, 4.0), (9.0, 10.0), (12.0, 14.0), (15.0, 8.0), (19.0, 4.0)] {
@@ -366,6 +378,27 @@ mod tests {
         assert_eq!(h.mic.x, 997.5);
         assert_eq!(h.send.x, 1033.5);
         assert_eq!(h.text.x, 333.5);
+    }
+
+    #[test]
+    fn voice_off_dims_the_voice_button() {
+        use crate::testing::{DrawOp, RecordingRenderContext};
+        let h = composer_layout(Rect::new(0.0, 0.0, 800.0, 600.0));
+        let view = ComposerView { text: "", placeholder: "", hovered: Some(ComposerPart::Send), cursor: None, preedit: None };
+        let fills = |st: &ComposerStyle| {
+            let mut ctx = RecordingRenderContext::new();
+            draw_buttons(&mut ctx, &h, &view, true, st);
+            ctx.ops.iter().filter_map(|o| match o {
+                DrawOp::FillColor(c) | DrawOp::StrokeColor(c) => Some(c.clone()),
+                _ => None,
+            }).collect::<Vec<_>>()
+        };
+        let on = ComposerStyle { voice_when_empty: true, ..Default::default() };
+        let off = ComposerStyle { voice_off: true, ..on.clone() };
+        assert!(fills(&on).iter().any(|c| c == on.send_hover));
+        let f = fills(&off);
+        assert!(!f.iter().any(|c| c == off.send_hover || c == off.send_bg), "{f:?}");
+        assert!(f.iter().any(|c| c == tokens::MIC_OFF));
     }
 }
 
