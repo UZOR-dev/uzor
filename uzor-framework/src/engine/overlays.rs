@@ -1242,7 +1242,7 @@ impl<'a, O: Copy + Eq> OverlayEngineView<'a, O> {
             .filter(|e| !e.transparent())
             .map(|e| (e.key.seq, e.slot))
             .collect();
-        scoped.sort_unstable();
+        uzor::sort::sort(&mut scoped);
         s.entries
             .iter()
             .map(|e| OverlayView {

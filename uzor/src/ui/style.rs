@@ -478,7 +478,10 @@ impl Sheet {
             }
         }
         let local = std::mem::take(&mut s.custom);
-        s.custom = local.iter().map(|(k, v)| (k.clone(), self.subst_in(v, 0, Some(&local)))).collect();
+        // Inserts, not `collect`: a bulk-built map pulls in a whole stable sort of `(String, String)`.
+        for (k, v) in &local {
+            s.custom.insert(k.clone(), self.subst_in(v, 0, Some(&local)));
+        }
         let mut lh_raw: Option<String> = None;
         for r in hits {
             for (k, v) in &r.decls {
