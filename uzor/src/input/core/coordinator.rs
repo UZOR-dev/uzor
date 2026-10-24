@@ -94,6 +94,20 @@ struct Layer {
     /// that must keep responding while a dropdown/popup/modal is open
     /// elsewhere on screen. Defaults to `false` everywhere else.
     chrome: bool,
+    /// If `true`, every widget registered on this layer occludes all lower
+    /// layers inside its rect, whatever its `Sense` (an opaque drawer,
+    /// sheet or popup card: what is painted under it is not reachable).
+    opaque: bool,
+}
+
+/// An explicit occluder: inside `rect`, widgets of `layer` registered
+/// before it (`below` = the widget count at the time) and every lower
+/// layer are unreachable.
+#[derive(Clone, Debug)]
+struct Occluder {
+    layer: LayerId,
+    rect: Rect,
+    below: usize,
 }
 
 /// A scoped input region that manages widgets within a bounded screen area.
@@ -189,6 +203,8 @@ pub struct InputCoordinator {
     /// This frame's focus trap root (`set_focus_trap`): Tab / Shift+Tab
     /// stay inside its subtree, like focus in a modal `<dialog>`.
     focus_trap: Option<WidgetId>,
+    /// This frame's explicit occluders ([`Self::occlude`]).
+    occluders: Vec<Occluder>,
 }
 
 impl InputCoordinator {
@@ -201,6 +217,7 @@ impl InputCoordinator {
                 z_order: 0,
                 modal: false,
                 chrome: false,
+                opaque: false,
             }],
             widget_state: WidgetInputState::new(),
             input: InputState::new(),
@@ -216,6 +233,7 @@ impl InputCoordinator {
             a11y: Vec::new(),
             focus_radius: Vec::new(),
             focus_trap: None,
+            occluders: Vec::new(),
         }
     }
 
@@ -255,7 +273,9 @@ impl InputCoordinator {
             z_order: 0,
             modal: false,
             chrome: false,
+            opaque: false,
         });
+        self.occluders.clear();
         self.frame += 1;
         self.text_fields.begin_frame();
         self.tab_indices.clear();
@@ -536,7 +556,56 @@ impl InputCoordinator {
     /// modal is open elsewhere on screen. Non-chrome layers underneath an
     /// active modal stay blocked exactly as [`Self::push_layer`] today.
     pub fn push_layer_ex(&mut self, id: LayerId, z_order: u32, modal: bool, chrome: bool) {
-        self.layers.push(Layer { id, z_order, modal, chrome });
+        self.layers.push(Layer { id, z_order, modal, chrome, opaque: false });
+    }
+
+    /// Push an opaque layer: each widget registered on it occludes every
+    /// lower layer inside its rect, whatever its `Sense` (drawers, sheets,
+    /// popup cards painted over other content). Hover on what it covers
+    /// clears with the next bake.
+    pub fn push_layer_opaque(&mut self, id: LayerId, z_order: u32) {
+        self.layers.push(Layer { id, z_order, modal: false, chrome: false, opaque: true });
+    }
+
+    /// Mark an already pushed layer opaque (or not); see [`Self::push_layer_opaque`].
+    pub fn set_layer_opaque(&mut self, id: &LayerId, opaque: bool) {
+        for l in self.layers.iter_mut().filter(|l| &l.id == id) {
+            l.opaque = opaque;
+        }
+    }
+
+    /// Block input under `rect`: widgets of `layer` registered BEFORE this
+    /// call and every lower layer stop being hit there (hover, press, wheel,
+    /// cursor). Use it for a surface painted over earlier content on the
+    /// same layer (a drawer over the base view); widgets registered after
+    /// it, on top, stay reachable.
+    pub fn occlude(&mut self, rect: Rect, layer: &LayerId) {
+        self.occluders.push(Occluder { layer: layer.clone(), rect, below: self.widgets.len() });
+    }
+
+    /// [`Self::occlude`] on the default layer.
+    pub fn occlude_default(&mut self, rect: Rect) {
+        let layer = self.default_layer.clone().unwrap_or_else(LayerId::main);
+        self.occlude(rect, &layer);
+    }
+
+    /// `id` is the one topmost hit target at `(x, y)` (z-order, modal,
+    /// opaque layers and occluders applied; sense-agnostic). The question a
+    /// custom-drawn area asks before it shows hover at a raw position.
+    pub fn is_topmost_at(&self, id: &WidgetId, x: f64, y: f64) -> bool {
+        self.hit_test_now(x, y).as_ref() == Some(id)
+    }
+
+    /// The pointer position when `id` owns it: `id` is the topmost hit
+    /// under the pointer, or holds the pointer grab of a drag (capture).
+    /// `None` when something else covers `id` there.
+    pub fn pointer_over(&self, id: &WidgetId) -> Option<(f64, f64)> {
+        let p = self.input.pointer.pos?;
+        if self.cook.grabbed.as_ref() == Some(id) || self.is_topmost_at(id, p.0, p.1) {
+            Some(p)
+        } else {
+            None
+        }
     }
 
 
@@ -672,13 +741,26 @@ impl InputCoordinator {
                 continue;
             }
 
+            // Occluders of this layer at the point: widgets registered
+            // before the highest one are covered, and so is every lower
+            // layer.
+            let floor = self
+                .occluders
+                .iter()
+                .filter(|o| o.layer == layer.id && o.rect.contains(x, y))
+                .map(|o| o.below)
+                .max();
+
             // Walk widgets in this layer in REVERSE registration order
             // (last-registered = on top) and return the first one that
             // contains the point AND satisfies the sense filter.
             let matched = self
                 .widgets
                 .iter()
+                .enumerate()
                 .rev()
+                .take_while(|(i, _)| floor.map_or(true, |f| *i >= f))
+                .map(|(_, w)| w)
                 .find(|w| {
                     w.layer == layer.id
                         && w.rect.contains(x, y)
@@ -696,6 +778,15 @@ impl InputCoordinator {
             // underneath any modal.
             if layer.modal {
                 behind_modal = true;
+                continue;
+            }
+            // An occluder or an opaque layer's widget at the point ends the
+            // scan: nothing below is reachable here.
+            if floor.is_some()
+                || (layer.opaque
+                    && self.widgets.iter().any(|w| w.layer == layer.id && w.rect.contains(x, y)))
+            {
+                return None;
             }
         }
         None
@@ -1236,7 +1327,9 @@ impl crate::input::driver::CoordinatorDriver for InputCoordinator {
             z_order: 0,
             modal: false,
             chrome: false,
+            opaque: false,
         });
+        self.occluders.clear();
         self.input = input.clone();
         self.frame += 1;
         self.text_fields.begin_frame();
@@ -1754,6 +1847,121 @@ mod tests {
 
         assert_eq!(responses2.len(), 1);
         assert!(responses2[0].1.hover_ended);
+    }
+
+    // ---- one topmost target: layers, occluders, modals, capture ----------
+
+    fn frame_at(coord: &mut InputCoordinator, x: f64, y: f64, f: &dyn Fn(&mut InputCoordinator)) {
+        coord.begin_frame(make_input_at(x, y));
+        f(coord);
+        let _ = coord.end_frame();
+    }
+
+    #[test]
+    fn overlapping_layers_one_topmost_target() {
+        let mut c = make_coordinator();
+        let reg = |c: &mut InputCoordinator| {
+            c.register("base", Rect::new(0.0, 0.0, 200.0, 200.0), Sense::CLICK);
+            c.push_layer(LayerId::new("over"), 10, false);
+            c.register_on_layer("over-btn", Rect::new(50.0, 50.0, 20.0, 20.0), Sense::CLICK, &LayerId::new("over"));
+        };
+        frame_at(&mut c, 60.0, 60.0, &reg);
+        assert_eq!(c.hit_test_now(60.0, 60.0), Some(WidgetId::new("over-btn")));
+        // A transparent (non-opaque) layer lets the base through beside its widgets.
+        assert_eq!(c.hit_test_now(100.0, 100.0), Some(WidgetId::new("base")));
+        assert!(c.is_topmost_at(&WidgetId::new("over-btn"), 60.0, 60.0));
+        assert!(!c.is_topmost_at(&WidgetId::new("base"), 60.0, 60.0));
+    }
+
+    #[test]
+    fn drawer_occludes_hover_sensitive_base_widget() {
+        let mut c = make_coordinator();
+        let term = WidgetId::new("term");
+        let reg = |c: &mut InputCoordinator| {
+            c.register("term", Rect::new(0.0, 0.0, 400.0, 300.0), Sense::HOVER);
+            // A drawer painted over the terminal on the same layer; its card
+            // takes no input itself, yet must cover what is under it.
+            c.occlude_default(Rect::new(200.0, 0.0, 200.0, 300.0));
+            c.register("drawer-btn", Rect::new(210.0, 10.0, 20.0, 20.0), Sense::CLICK);
+        };
+        // Hovered over the terminal first, then the pointer moves onto the drawer.
+        frame_at(&mut c, 50.0, 50.0, &reg);
+        frame_at(&mut c, 50.0, 50.0, &reg);
+        assert!(c.is_hovered(&term));
+        assert_eq!(c.pointer_over(&term), Some((50.0, 50.0)));
+        frame_at(&mut c, 300.0, 100.0, &reg);
+        frame_at(&mut c, 300.0, 100.0, &reg);
+        assert!(!c.is_hovered(&term), "hover on the occluded base clears");
+        assert_eq!(c.pointer_over(&term), None);
+        assert_eq!(c.hit_test_now(300.0, 100.0), None, "the drawer's empty card is not a hole");
+        assert_eq!(c.hit_test_now(215.0, 15.0), Some(WidgetId::new("drawer-btn")));
+        // Clicks too: the filtered (click) hit cannot dig under the drawer.
+        assert_eq!(c.hit_test_with_sense(300.0, 100.0, &|s: &Sense| s.click), None);
+    }
+
+    #[test]
+    fn opaque_layer_blocks_lower_layers_whatever_the_sense() {
+        let mut c = make_coordinator();
+        frame_at(&mut c, 20.0, 20.0, &|c| {
+            c.register("base-btn", Rect::new(0.0, 0.0, 100.0, 100.0), Sense::CLICK);
+            c.push_layer_opaque(LayerId::new("sheet"), 5);
+            c.register_on_layer("sheet-card", Rect::new(0.0, 0.0, 50.0, 50.0), Sense::NONE, &LayerId::new("sheet"));
+        });
+        assert_eq!(c.hit_test_with_sense(20.0, 20.0, &|s: &Sense| s.click), None);
+        assert_eq!(c.hit_test_with_sense(80.0, 80.0, &|s: &Sense| s.click), Some(WidgetId::new("base-btn")));
+    }
+
+    #[test]
+    fn modal_blocks_everything_below() {
+        let mut c = make_coordinator();
+        frame_at(&mut c, 10.0, 10.0, &|c| {
+            c.register("base-btn", Rect::new(0.0, 0.0, 100.0, 100.0), Sense::CLICK);
+            c.push_layer(LayerId::modal(), 100, true);
+            c.register_on_layer("dlg-ok", Rect::new(40.0, 40.0, 20.0, 20.0), Sense::CLICK, &LayerId::modal());
+        });
+        assert_eq!(c.hit_test_now(10.0, 10.0), None, "outside the dialog, still blocked");
+        assert_eq!(c.hit_test_now(45.0, 45.0), Some(WidgetId::new("dlg-ok")));
+        assert_eq!(c.pointer_over(&WidgetId::new("base-btn")), None);
+    }
+
+    #[test]
+    fn popup_over_drawer_over_base() {
+        let mut c = make_coordinator();
+        let reg = |c: &mut InputCoordinator| {
+            c.register("base", Rect::new(0.0, 0.0, 400.0, 400.0), Sense::CLICK);
+            c.push_layer_opaque(LayerId::new("drawer"), 10);
+            c.register_on_layer("drawer", Rect::new(200.0, 0.0, 200.0, 400.0), Sense::HOVER, &LayerId::new("drawer"));
+            c.register_on_layer("drawer-row", Rect::new(200.0, 100.0, 200.0, 20.0), Sense::CLICK, &LayerId::new("drawer"));
+            c.push_layer(LayerId::popup(), 20, false);
+            c.register_on_layer("menu", Rect::new(250.0, 90.0, 80.0, 60.0), Sense::CLICK, &LayerId::popup());
+        };
+        frame_at(&mut c, 260.0, 105.0, &reg);
+        frame_at(&mut c, 260.0, 105.0, &reg);
+        assert_eq!(c.hit_test_now(260.0, 105.0), Some(WidgetId::new("menu")));
+        assert!(c.is_hovered(&WidgetId::new("menu")));
+        assert!(!c.is_hovered(&WidgetId::new("drawer-row")));
+        assert_eq!(c.hit_test_now(380.0, 105.0), Some(WidgetId::new("drawer-row")));
+        assert_eq!(c.hit_test_now(380.0, 300.0), Some(WidgetId::new("drawer")));
+        assert_eq!(c.hit_test_now(100.0, 300.0), Some(WidgetId::new("base")));
+    }
+
+    #[test]
+    fn drag_capture_keeps_the_pointer_under_a_cover() {
+        let mut c = make_coordinator();
+        let term = WidgetId::new("term");
+        let reg = |c: &mut InputCoordinator| {
+            c.register("term", Rect::new(0.0, 0.0, 400.0, 300.0), Sense::DRAG);
+            c.occlude_default(Rect::new(200.0, 0.0, 200.0, 300.0));
+        };
+        frame_at(&mut c, 50.0, 50.0, &reg);
+        c.grab_pointer(term.clone());
+        // Dragging a selection out over the drawer: the press keeps the pointer.
+        frame_at(&mut c, 300.0, 100.0, &reg);
+        assert_eq!(c.pointer_over(&term), Some((300.0, 100.0)));
+        assert!(c.is_hovered(&term), "the grab wins the hover bake");
+        c.release_pointer();
+        frame_at(&mut c, 300.0, 100.0, &reg);
+        assert_eq!(c.pointer_over(&term), None);
     }
 
     #[test]

@@ -329,8 +329,44 @@ impl<S: Spec> VisualView<S> {
     }
 
     /// Last pointer position in window coordinates, if known.
+    ///
+    /// Raw position: it ignores z-order, so hover drawn from it shows
+    /// through drawers, popups and modals painted on top. Prefer
+    /// [`Self::pointer_over`]; opt in with [`Self::raw_pointer`].
+    #[deprecated(note = "ignores z-order; use pointer_over(id), or raw_pointer() when the raw position is really meant")]
     pub fn pointer(&self) -> Option<(f64, f64)> {
         self.pointer
+    }
+
+    /// The raw pointer position, whatever lies on top of it (opt-in, not
+    /// z-order safe: never draw hover from it; ask [`Self::pointer_over`]).
+    pub fn raw_pointer(&self) -> Option<(f64, f64)> {
+        self.pointer
+    }
+
+    /// The pointer position when `id` is the one topmost hit target under
+    /// it (or one of its `register_child` ancestors), or holds the press of
+    /// a drag (pointer capture). `None` when anything — a drawer, popup or
+    /// modal on a higher layer, an occluder — covers `id` there. Custom-drawn
+    /// areas (terminals, canvases) register one widget and ask this before
+    /// showing hover, hit-testing their content or taking a press.
+    pub fn pointer_over(&self, id: &WidgetId) -> Option<(f64, f64)> {
+        let owns = self.pressed.as_ref() == Some(id) || self.hovered.as_ref() == Some(id) || self.hover_path.contains(id);
+        if owns {
+            self.pointer
+        } else {
+            None
+        }
+    }
+
+    /// This frame's wheel delta (lines) when `id` is the topmost target
+    /// under the pointer, else zero. See [`Self::pointer_over`].
+    pub fn scroll_over(&self, id: &WidgetId) -> (f64, f64) {
+        if self.pointer_over(id).is_some() {
+            self.scroll
+        } else {
+            (0.0, 0.0)
+        }
     }
 
     /// Secondary-button (context menu) release in this frame, window coords.

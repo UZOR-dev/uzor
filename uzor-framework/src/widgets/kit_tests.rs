@@ -357,3 +357,26 @@ fn select_keyboard_search_escape_and_stays_inside_its_container() {
     frame(&mut h, &idle(), none, &mut choice);
     assert!(h.coord.widget_rect(&WidgetId::from("tz:list")).is_none());
 }
+
+#[test]
+fn pointer_over_answers_only_for_the_topmost_target() {
+    let term = WidgetId::from("term");
+    let mut v = VisualView::<K>::default();
+    v.pointer = Some((300.0, 100.0));
+    v.scroll = (0.0, -2.0);
+    // A drawer covers the terminal: its card is the hover target.
+    v.hovered = Some(WidgetId::from("bd-card"));
+    v.hover_path = vec![WidgetId::from("bd-card")];
+    assert_eq!(v.pointer_over(&term), None);
+    assert_eq!(v.scroll_over(&term), (0.0, 0.0));
+    assert_eq!(v.raw_pointer(), Some((300.0, 100.0)), "the raw position stays available, opt-in");
+    v.hovered = Some(term.clone());
+    v.hover_path = vec![term.clone()];
+    assert_eq!(v.pointer_over(&term), Some((300.0, 100.0)));
+    assert_eq!(v.scroll_over(&term), (0.0, -2.0));
+    // Capture: the pressed widget keeps the pointer while a drag crosses a cover.
+    v.hovered = Some(WidgetId::from("bd-card"));
+    v.hover_path = vec![WidgetId::from("bd-card")];
+    v.pressed = Some(term.clone());
+    assert_eq!(v.pointer_over(&term), Some((300.0, 100.0)));
+}

@@ -50,7 +50,7 @@ impl Splitter {
             self.dragging = false;
             return SplitterEvent::Released;
         }
-        match (view.pointer(), axis) {
+        match (view.raw_pointer(), axis) {
             (Some((x, _)), Axis::X) => SplitterEvent::Drag(x),
             (Some((_, y)), Axis::Y) => SplitterEvent::Drag(y),
             (None, _) => SplitterEvent::Idle,

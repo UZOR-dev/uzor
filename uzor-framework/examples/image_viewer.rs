@@ -117,7 +117,7 @@ impl App for Demo {
         };
         let views: Vec<ViewerImage<'_>> = self.imgs.iter().map(|m| ViewerImage { rgba: &m.rgba, w: m.w, h: m.h, alt: &m.name }).collect();
         let l = iv::layout(r, (self.imgs[sel].w, self.imgs[sel].h), n, reserve, top, &st);
-        let hov = cx.view.pointer().map(|p| iv::hit(&l, (p.0, p.1)));
+        let hov = cx.view.raw_pointer().map(|p| iv::hit(&l, (p.0, p.1)));
         iv::draw(cx.render, r, &l, &views, sel, hov, "400 13px Inter", &st);
         // Backdrop first so the parts registered after it win.
         hit(cx, "iv:backdrop".into(), r);

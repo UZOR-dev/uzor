@@ -124,7 +124,7 @@ pub fn $begin<S: Spec>(cx: &mut $cx<'_, S>, id: &str, viewport: Rect, sv: &mut S
     sv.set_extent(content_h, viewport.height);
     let (thumb_id, track_id) = ids(id);
     let track = sv.track(viewport, st);
-    let p = cx.view.pointer();
+    let p = cx.view.raw_pointer();
     if wheel && p.is_some_and(|p| inside(viewport, p)) {
         let (_, dy) = cx.view.scroll();
         let owner = dy == 0.0 || wheel_owner(chain(cx.widgets.states, now), id, p.unwrap_or_default(), dy);
@@ -186,7 +186,7 @@ pub fn $end<S: Spec>(cx: &mut $cx<'_, S>, id: &str, viewport: Rect, sv: &ScrollV
     // Scrollbars keep the arrow (as the browser's); the thumb captures the pointer on drag.
     cx.widgets.coord.register_atomic(track_id, WidgetKind::ScrollbarTrack, grow(track), Sense::CLICK, &layer);
     cx.widgets.coord.register_atomic(thumb_id.clone(), WidgetKind::ScrollbarHandle, grow(th), Sense::CLICK_AND_DRAG, &layer);
-    let hot = sv.dragging() || cx.view.is_hovered(&thumb_id) || cx.view.pointer().is_some_and(|p| inside(grow(track), p));
+    let hot = sv.dragging() || cx.view.is_hovered(&thumb_id) || cx.view.raw_pointer().is_some_and(|p| inside(grow(track), p));
     let ctx = &mut *cx.render;
     ctx.set_fill_color(if hot { st.thumb_hot } else { st.thumb });
     ctx.begin_path();
