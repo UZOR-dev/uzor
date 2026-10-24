@@ -7,6 +7,8 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "L4 dashboard on uzor-framework (brief E1)."
+# Demos only: never on crates.io.
+publish = false
 
 [lib]
 path = "src/lib.rs"
