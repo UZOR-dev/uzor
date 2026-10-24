@@ -4,13 +4,16 @@
 //! [`ChromeModel`], so the zones match what the composite draws.
 
 use uzor::layout::docking::DockPanel;
+#[cfg(feature = "chrome")]
 use uzor::widgets::composite::chrome::{
-    chrome_hit_test, handle_chrome_action, ChromeAction, ChromeHit, ChromeRenderKind,
-    ChromeSettings, ChromeTabConfig, ChromeView,
+    chrome_hit_test, ChromeRenderKind, ChromeSettings, ChromeTabConfig, ChromeView,
 };
+use uzor::widgets::composite::chrome::{handle_chrome_action, ChromeAction, ChromeHit};
 use uzor::{Rect, ResizeDirection};
 
-use crate::types::command::{ChromeKind, ChromeModel, LayoutHit};
+#[cfg(feature = "chrome")]
+use crate::types::command::ChromeKind;
+use crate::types::command::{ChromeModel, LayoutHit};
 use crate::types::ids::WindowId;
 use crate::types::ops::LayoutEffect;
 use crate::types::window::{Point, WindowCommand};
@@ -71,7 +74,15 @@ pub(super) fn bezel(vp: Rect, px: f64, p: Point) -> Option<ResizeDirection> {
 
 /// The chrome part under `p`, or `None` when `p` is not in the chrome
 /// strip. Points in the composite's border zone are classified as the part
-/// just inside it (the bezel owns window resize).
+/// just inside it (the bezel owns window resize). Without the `chrome`
+/// feature nothing paints the strip, so all of it is a drag band.
+#[cfg(not(feature = "chrome"))]
+pub(super) fn hit<P: DockPanel>(w: &WindowLayout<P>, p: Point) -> Option<LayoutHit> {
+    let rect = w.solved.chrome?;
+    rects::contains(rect, p).then_some(LayoutHit::Chrome(ChromeHit::Drag))
+}
+
+#[cfg(feature = "chrome")]
 pub(super) fn hit<P: DockPanel>(w: &WindowLayout<P>, p: Point) -> Option<LayoutHit> {
     let rect = w.solved.chrome?;
     if !rects::contains(rect, p) {
@@ -132,6 +143,7 @@ pub(super) fn hit<P: DockPanel>(w: &WindowLayout<P>, p: Point) -> Option<LayoutH
     Some(LayoutHit::Chrome(part))
 }
 
+#[cfg(feature = "chrome")]
 fn render_kind(kind: ChromeKind) -> ChromeRenderKind {
     match kind {
         ChromeKind::Default => ChromeRenderKind::Default,
@@ -140,6 +152,7 @@ fn render_kind(kind: ChromeKind) -> ChromeRenderKind {
     }
 }
 
+#[cfg(feature = "chrome")]
 fn is_resize(h: ChromeHit) -> bool {
     matches!(
         h,

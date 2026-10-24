@@ -88,7 +88,12 @@ uzor-window-web = { workspace = true, optional = true }
 x11-dl = { version = "2.21", optional = true }
 
 [features]
-default = ["layout-blob"]
+default = ["layout-blob", "chrome"]
+# Paint the window chrome strip (title, tabs, window buttons) with uzor's chrome composite.
+# Apps that hide the strip (`LayoutCmd::SetChrome { visible: false, .. }`) or draw their own
+# controls can drop it, and the chrome composite with its token theme leave the binary; a
+# shown strip is then one drag band.
+chrome = []
 # Dock layout save/restore (`LayoutCmd::RequestBlob` / `Restore`, postcard codec). Without it
 # both commands answer with their failure intent; apps that never persist a layout can drop it.
 layout-blob = ["dep:postcard"]
@@ -125,6 +130,11 @@ web = [
 # renders under tests/goldens/demo (not photographs).
 uzor-render-tiny-skia = { workspace = true }
 tiny-skia = "0.11"
+
+# Pixel goldens of the demo window, chrome strip included.
+[[test]]
+name = "f11_demo"
+required-features = ["chrome"]
 
 [[example]]
 name = "native_two_windows"

@@ -11,7 +11,9 @@ use uzor::layout::docking::{
     BranchId, DropZone, Pin, SeparatorOrientation, WindowLayout as Preset,
 };
 use uzor::layout::{EdgePlacement, EdgeSlot};
-use uzor::widgets::composite::chrome::{ChromeAction, ChromeHit, ChromeLayoutConfig};
+#[cfg(feature = "chrome")]
+use uzor::widgets::composite::chrome::ChromeAction;
+use uzor::widgets::composite::chrome::{ChromeHit, ChromeLayoutConfig};
 
 const W: WindowId = WindowId(1);
 const W2: WindowId = WindowId(2);
@@ -1233,6 +1235,7 @@ fn furnished() -> (E, LeafId, LeafId) {
 }
 
 #[test]
+#[cfg(feature = "chrome")] // chrome parts come from the composite's hit-test
 fn hit_test_names_each_part_of_a_solved_window() {
     let (e, a, b) = furnished();
     let h = |x: f64, y: f64| e.hit(W, Point::new(x, y));
@@ -1374,6 +1377,7 @@ fn hit_test_gives_exactly_one_consistent_hit_per_point() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[cfg(feature = "chrome")] // chrome parts come from the composite's hit-test
 fn chrome_and_bezel_presses_become_window_commands_and_actions() {
     let (mut e, _, _) = furnished();
     // Drag zone: the OS takes the gesture once the pointer travels, no capture.

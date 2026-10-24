@@ -8,18 +8,27 @@
 
 use uzor::layout::docking::{DockPanel, DropZone, PanelRect, SeparatorState};
 use uzor::render::RenderContext;
+#[cfg(feature = "chrome")]
 use uzor::tokens::TokenTheme;
 use uzor::tokens::Tokens;
+#[cfg(feature = "chrome")]
 use uzor::widgets::composite::chrome::{
     draw_chrome, ChromeRenderKind, ChromeSettings, ChromeTabConfig, ChromeView, DefaultChromeStyle,
 };
 use uzor::Rect;
 
 use crate::engine::layout::{SessionKind, WindowLayoutView};
+#[cfg(feature = "chrome")]
 use crate::types::command::ChromeKind;
+
+/// Without the `chrome` feature the strip is not painted (apps that keep it hidden, or
+/// draw their own, drop the chrome composite and its theme from the binary).
+#[cfg(not(feature = "chrome"))]
+pub(super) fn paint_chrome<P: DockPanel>(_: &mut dyn RenderContext, _: WindowLayoutView<'_, P>, _: &Tokens) {}
 
 /// Paint the window chrome strip with the library chrome composite, so the
 /// pixels match the hit zones in `engine/layout/chrome.rs`.
+#[cfg(feature = "chrome")]
 pub(super) fn paint_chrome<P: DockPanel>(
     render: &mut dyn RenderContext,
     wv: WindowLayoutView<'_, P>,
