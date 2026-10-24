@@ -99,6 +99,50 @@ impl Timing {
     }
 }
 
+/// Code-driven `@keyframes` on one number, for motion painted by code rather than
+/// styled boxes (avatars, shimmer): `stops` are (offset 0..=1, value) sorted by
+/// offset, looped every `period` seconds with `timing` inside each interval.
+///
+/// ```
+/// use uzor::ui::motion::{Loop, Timing};
+/// let bob = Loop { stops: &[(0.0, 0.0), (0.5, -3.0), (1.0, 0.0)], period: 2.0, timing: Timing::Linear };
+/// assert_eq!(bob.at(0.5, false), -1.5);
+/// assert_eq!(bob.at(0.5, true), 0.0); // reduced motion holds the first stop
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Loop {
+    /// Stops: (offset, value).
+    pub stops: &'static [(f64, f64)],
+    /// Seconds per iteration.
+    pub period: f64,
+    /// Easing between stops.
+    pub timing: Timing,
+}
+
+impl Loop {
+    /// Value at `t` seconds; `reduced` (`prefers-reduced-motion`) holds the first stop.
+    pub fn at(&self, t: f64, reduced: bool) -> f64 {
+        let s = self.stops;
+        let Some(first) = s.first() else { return 0.0 };
+        if reduced || self.period <= 0.0 {
+            return first.1;
+        }
+        let f = (t / self.period).rem_euclid(1.0);
+        let i = s.iter().rposition(|k| k.0 <= f).unwrap_or(0);
+        let a = s[i];
+        match s.get(i + 1) {
+            Some(b) => a.1 + (b.1 - a.1) * self.timing.at((f - a.0) / (b.0 - a.0).max(1e-9)),
+            None => a.1,
+        }
+    }
+}
+
+/// Shimmer sweep across a text run: the highlight centre as a fraction of the run's
+/// width, from a quarter before it to a quarter past it (the `background-position`
+/// keyframes of a text-clipped gradient). Paint with
+/// [`draw_shimmer_text`](crate::ui::widgets::atomic::shimmer_text::draw_shimmer_text).
+pub const SHIMMER: Loop = Loop { stops: &[(0.0, -0.25), (1.0, 1.25)], period: 2.2, timing: Timing::Linear };
+
 /// Seconds from a CSS time (`150ms`, `.2s`).
 fn secs(v: &str) -> Option<f64> {
     let v = v.trim();
