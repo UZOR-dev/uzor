@@ -614,7 +614,7 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         "cursor" => s.cursor = Some(v.into()),
         "text-align" => s.text_align = Some(v.into()),
         "white-space" => s.white_space = Some(v.into()),
-        "line-clamp" | "-webkit-line-clamp" => s.line_clamp = v.parse().ok().filter(|n| *n > 0),
+        "line-clamp" | "-webkit-line-clamp" => s.line_clamp = v.parse::<f64>().ok().filter(|n| *n >= 1.0).map(|n| n.min(999.0) as u16),
         "transition" => s.transitions = super::motion::parse_transitions(v),
         "animation" => s.animations = super::motion::parse_animations(v),
         _ => {}
