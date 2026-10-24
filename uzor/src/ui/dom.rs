@@ -184,6 +184,11 @@ fn resolve(ctx: &mut dyn RenderContext, sheet: &Sheet, el: &El, parent: Option<&
     Some(Resolved { kind, id: el.id.clone(), style: s, text: el.text.clone(), tab: el.tab, name: el.name.clone(), svg: el.svg.clone(), measured, space, children })
 }
 
+/// The most lines wrapping text may take (`line-clamp`).
+fn clamp_of(s: &Style) -> usize {
+    s.line_clamp.map_or(usize::MAX, usize::from)
+}
+
 fn wraps(s: &Style) -> bool {
     matches!(s.white_space.as_deref(), Some("normal") | Some("pre-wrap"))
 }
@@ -255,9 +260,10 @@ fn collect_measures(r: &Resolved, out: &mut Vec<Box<dyn Fn(Option<f64>) -> (f64,
     if let Some((u, lh)) = &r.measured {
         if wraps(&r.style) {
             // Wrapping: min-content is the widest unit, else the lines at the limit.
-            let (u, lh, space) = (u.clone(), *lh, r.space);
+            let (u, lh, space, clamp) = (u.clone(), *lh, r.space, clamp_of(&r.style));
             out.push(Box::new(move |lim: Option<f64>| {
-                let ls = break_lines(&u, space, lim);
+                let mut ls = break_lines(&u, space, lim);
+                ls.truncate(clamp);
                 (ls.iter().map(|l| l.2).fold(0.0, f64::max).ceil(), lh * ls.len().max(1) as f64)
             }));
         } else {
@@ -335,7 +341,17 @@ pub fn paint_box(ctx: &mut dyn RenderContext, b: &Placed) {
         let lines: Vec<String> = if wraps(s) {
             let u = units(ctx, t, true);
             let space = ctx.measure_text(" ");
-            break_lines(&u, space, Some(content.width)).into_iter().map(|(a, z, _)| line_text(&u, a, z)).collect()
+            let ls = break_lines(&u, space, Some(content.width));
+            let clamp = clamp_of(s);
+            let mut v: Vec<String> = ls.iter().take(clamp).map(|&(a, z, _)| line_text(&u, a, z)).collect();
+            if ls.len() > clamp {
+                // The clamp cuts after the last kept line and puts the ellipsis at its end.
+                if let Some(l) = v.last_mut() {
+                    let e = ellipsize(ctx, &format!("{}…", l.trim_end()), content.width + 0.5);
+                    *l = if e.ends_with('…') { e } else { format!("{e}…") };
+                }
+            }
+            v
         } else {
             vec![ellipsize(ctx, t, content.width + 0.5)]
         };
@@ -472,5 +488,10 @@ mod tests {
         assert_eq!(one.rect("t").unwrap().height, 15.0);
         let h = many.rect("t").unwrap().height;
         assert!(h > 15.0 && (h / 15.0).fract() == 0.0, "{h}");
+        // line-clamp: at most two lines, the last ending in an ellipsis.
+        let sh2 = Sheet::parse("div.p { width: 60px; font-size: 10px; line-height: 15px; white-space: normal } div.c { -webkit-line-clamp: 2 }").unwrap();
+        let clamped = render(&mut ctx, &sh2, &El::new("div.p").child(El::new("div.c").id("t").text(text)), 0.0, 0.0, 500.0, &|_| State::NONE);
+        assert_eq!(clamped.rect("t").unwrap().height, 30.0);
+        assert_eq!(clamped.boxes.last().unwrap().style.line_clamp, Some(2));
     }
 }

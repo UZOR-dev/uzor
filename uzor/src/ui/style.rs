@@ -140,6 +140,9 @@ pub struct Style {
     /// `white-space` (inherited): `normal` lets [`crate::ui::dom`] text wrap; unset or
     /// `nowrap` keeps one line (ellipsized when it does not fit).
     pub white_space: Option<String>,
+    /// `line-clamp` / `-webkit-line-clamp`: wrapping text keeps at most this many lines,
+    /// the last one ends in an ellipsis.
+    pub line_clamp: Option<u16>,
     /// Custom properties (`--name: value`) set on the element or inherited, as in CSS.
     pub custom: std::collections::BTreeMap<String, String>,
     /// `transition` entries (see [`crate::ui::motion`]).
@@ -611,6 +614,7 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         "cursor" => s.cursor = Some(v.into()),
         "text-align" => s.text_align = Some(v.into()),
         "white-space" => s.white_space = Some(v.into()),
+        "line-clamp" | "-webkit-line-clamp" => s.line_clamp = v.parse().ok().filter(|n| *n > 0),
         "transition" => s.transitions = super::motion::parse_transitions(v),
         "animation" => s.animations = super::motion::parse_animations(v),
         _ => {}
