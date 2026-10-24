@@ -10,6 +10,7 @@ pub mod chevron;
 pub mod clock;
 pub mod bubble;
 pub mod critter;
+pub mod ring_mark;
 pub mod session_pill;
 pub mod shimmer_text;
 pub mod close_button;
