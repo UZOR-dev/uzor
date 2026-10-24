@@ -66,6 +66,16 @@ mod tests {
     static HELLO_ROW: [&str; 2] = ["Hello", "Привет"];
     static BYE_ROW: [&str; 2] = ["Bye", ""];  // empty cell — must fall back to [0]
 
+    /// The language index is process-global and tests run in parallel: each test that
+    /// sets it holds this lock and puts index 0 back before releasing it.
+    static LANG: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_lang(f: impl FnOnce()) {
+        let _g = LANG.lock().unwrap_or_else(|e| e.into_inner());
+        f();
+        set_lang_index(0);
+    }
+
     impl Translate for TestKey {
         fn translate(self, lang_index: usize) -> &'static str {
             let row: &[&str] = match self {
@@ -79,30 +89,35 @@ mod tests {
 
     #[test]
     fn test_translate_index_0() {
-        set_lang_index(0);
-        assert_eq!(t(TestKey::Hello), "Hello");
-        assert_eq!(t(TestKey::Bye), "Bye");
+        with_lang(|| {
+            set_lang_index(0);
+            assert_eq!(t(TestKey::Hello), "Hello");
+            assert_eq!(t(TestKey::Bye), "Bye");
+        });
     }
 
     #[test]
     fn test_translate_index_1() {
-        set_lang_index(1);
-        assert_eq!(t(TestKey::Hello), "Привет");
+        with_lang(|| {
+            set_lang_index(1);
+            assert_eq!(t(TestKey::Hello), "Привет");
+        });
     }
 
     #[test]
     fn test_fallback_empty_cell() {
-        // BYE_ROW[1] is empty — must fall back to BYE_ROW[0]
-        set_lang_index(1);
-        assert_eq!(t(TestKey::Bye), "Bye");
-        // Reset
-        set_lang_index(0);
+        with_lang(|| {
+            // BYE_ROW[1] is empty — must fall back to BYE_ROW[0]
+            set_lang_index(1);
+            assert_eq!(t(TestKey::Bye), "Bye");
+        });
     }
 
     #[test]
     fn test_set_and_get_index() {
-        set_lang_index(3);
-        assert_eq!(current_lang_index(), 3);
-        set_lang_index(0);
+        with_lang(|| {
+            set_lang_index(3);
+            assert_eq!(current_lang_index(), 3);
+        });
     }
 }
