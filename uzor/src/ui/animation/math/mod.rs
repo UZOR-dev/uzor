@@ -3,12 +3,14 @@
 
 pub mod blend;
 pub mod color;
+pub mod cycle;
 pub mod decay;
 pub mod easing;
 pub mod envelope;
 pub mod layers;
 pub mod path;
 pub mod scroll;
+pub mod spatial;
 pub mod spring;
 pub mod stagger;
 pub mod stroke;
@@ -25,6 +27,7 @@ pub use envelope::{arc, back_out, bell, ellipse_lift, hold, pivot_shift, ring, s
 pub use layers::{LayerStack, ManagedLayer};
 pub use path::{MotionPath, PathSample, PathSegment, Point};
 pub use scroll::{ParallaxLayer, ScrollTimeline, ScrollTween, ViewTimeline};
+pub use spatial::Rot3;
 pub use spring::Spring;
 pub use stagger::{
     DistanceMetric, GridOrigin, GridStagger, LinearStagger, StaggerOrigin,
