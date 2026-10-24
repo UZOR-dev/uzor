@@ -175,6 +175,7 @@ pub struct VisualView<S: Spec> {
     pub(crate) scroll_precise: bool,
     pub(crate) pointer: Option<(f64, f64)>,
     pub(crate) button_down: bool,
+    pub(crate) press_origin: Option<(f64, f64)>,
     pub(crate) context: Option<(f64, f64)>,
     pub(crate) captured: bool,
     pub(crate) open_overlays: Vec<S::Overlay>,
@@ -199,6 +200,7 @@ impl<S: Spec> Default for VisualView<S> {
             scroll_precise: false,
             pointer: None,
             button_down: false,
+            press_origin: None,
             context: None,
             captured: false,
             open_overlays: Vec::new(),
@@ -377,6 +379,37 @@ impl<S: Spec> VisualView<S> {
     /// A pointer button is held.
     pub fn button_down(&self) -> bool {
         self.button_down
+    }
+
+    /// Where the held press went down (window coords), while a button is held on a
+    /// widget. Drags anchor here so the grabbed point stays under the pointer: the first
+    /// frame that sees the press may already see the pointer a few pixels further.
+    ///
+    /// ```
+    /// # use uzor_framework::{Spec, VisualView};
+    /// # fn drag<S: Spec>(view: &VisualView<S>, id: &uzor::WidgetId, card: (f64, f64)) -> Option<(f64, f64)> {
+    /// // Grab offset inside the card, fixed for the whole drag.
+    /// let (px, py) = view.pressed_at(id)?;
+    /// let grab = (px - card.0, py - card.1);
+    /// let (x, y) = view.raw_pointer()?;
+    /// Some((x - grab.0, y - grab.1)) // the card's new origin
+    /// # }
+    /// ```
+    pub fn press_origin(&self) -> Option<(f64, f64)> {
+        if self.button_down && self.pressed.is_some() {
+            self.press_origin
+        } else {
+            None
+        }
+    }
+
+    /// [`Self::press_origin`] when `id` holds the press.
+    pub fn pressed_at(&self, id: &WidgetId) -> Option<(f64, f64)> {
+        if self.is_pressed(id) {
+            self.press_origin()
+        } else {
+            None
+        }
     }
 
     /// The pointer is captured by a widget or an engine.

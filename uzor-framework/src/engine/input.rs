@@ -1901,6 +1901,15 @@ impl<'a> InputEngineView<'a> {
     pub fn pointer(&self, win: WindowId) -> (Option<(f64, f64)>, bool) {
         self.w(win).map_or((None, false), |w| (w.pointer.pos, w.pointer.button_down.is_some()))
     }
+
+    /// Where the held press went down (window coords), while a button is held. A drag
+    /// measures from here, not from the first pointer position a frame saw: the pointer
+    /// may have moved several pixels between the press and that frame.
+    pub fn press_origin(&self, win: WindowId) -> Option<(f64, f64)> {
+        let w = self.w(win)?;
+        w.pointer.button_down?;
+        w.cook.press_origin.map(|o| (o.x, o.y))
+    }
 }
 
 #[cfg(test)]

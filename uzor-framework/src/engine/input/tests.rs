@@ -384,6 +384,26 @@ fn press_and_hover_per_window() {
     );
 }
 
+#[test]
+fn press_origin_stays_where_the_press_went_down() {
+    let mut e = engine();
+    let bar = |c: &mut InputCoordinator| c.register("bar", Rect::new(0.0, 0.0, 200.0, 30.0), Sense::CLICK_AND_DRAG);
+    frame(&mut e, 0.5, bar);
+    assert_eq!(e.view().press_origin(W), None);
+    to_content(&mut e, 1.0, down(20.0, 10.0));
+    // The pointer runs ahead of the first frame that sees the press.
+    to_content(&mut e, 1.01, moved(34.0, 12.0));
+    to_content(&mut e, 1.02, moved(60.0, 15.0));
+    frame(&mut e, 1.02, bar);
+    assert_eq!(e.view().pointer(W), (Some((60.0, 15.0)), true));
+    assert_eq!(e.view().press_origin(W), Some((20.0, 10.0)));
+    to_content(&mut e, 1.1, up(60.0, 15.0));
+    assert_eq!(e.view().press_origin(W), None);
+    // A new press has its own origin.
+    to_content(&mut e, 1.2, down(5.0, 6.0));
+    assert_eq!(e.view().press_origin(W), Some((5.0, 6.0)));
+}
+
 // ---------------------------------------------------------------------------
 // Capture
 // ---------------------------------------------------------------------------

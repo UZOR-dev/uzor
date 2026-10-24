@@ -380,3 +380,17 @@ fn pointer_over_answers_only_for_the_topmost_target() {
     v.pressed = Some(term.clone());
     assert_eq!(v.pointer_over(&term), Some((300.0, 100.0)));
 }
+
+#[test]
+fn press_origin_is_reported_only_for_a_held_press() {
+    let mut v = VisualView::<K>::default();
+    v.press_origin = Some((12.0, 3.0));
+    assert_eq!(v.press_origin(), None, "no button held");
+    v.button_down = true;
+    assert_eq!(v.press_origin(), None, "held over nothing pressable");
+    v.pressed = Some(WidgetId::from("bar"));
+    v.pointer = Some((40.0, 9.0));
+    assert_eq!(v.press_origin(), Some((12.0, 3.0)));
+    assert_eq!(v.pressed_at(&WidgetId::from("bar")), Some((12.0, 3.0)));
+    assert_eq!(v.pressed_at(&WidgetId::from("other")), None);
+}
