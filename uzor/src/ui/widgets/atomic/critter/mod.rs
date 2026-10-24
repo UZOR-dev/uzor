@@ -3,12 +3,18 @@
 //! - [`CritterFamily`] picks the shape set; chat kinds differ by shape, not by label.
 //! - [`critter_view`] derives shape, colour, eye height and blink phase from a stable name.
 //! - [`draw_critter`] paints into any [`RenderContext`]; [`register_critter`] declares the hit rect.
-//! - [`draw_critter_motion`] paints one animation frame of a [`CritterState`] at a time `t`
-//!   (the HQ style.css `.av.st-*` keyframes); [`critter_next_frame`] says when the next frame
-//!   is due, so an idle screen repaints only for blinks; [`critter_look`] is the eye offset
-//!   toward the pointer.
+//! - [`CritterPose`] is one frame (rotation, squash/stretch, body morph, 3/4 turn, eye
+//!   size/shape/offset, lids); [`critter_pose`] animates a [`CritterState`] with tricks
+//!   picked per critter; [`draw_critter_pose`] paints a pose and [`draw_critter_motion`]
+//!   paints a state at a time `t`. [`critter_next_frame`] says when the next frame is due
+//!   (idle and off are still); [`critter_look`] is the eye offset toward the pointer.
 
+mod motion;
 mod tokens;
+
+pub use motion::{
+    critter_pose, trick_for, trick_pose, CritterPose, CritterTrick, ATTENTION_TRICKS, TRICK_SLOT, WORKING_TRICKS,
+};
 
 use crate::input::core::coordinator::LayerId;
 use crate::input::{InputCoordinator, Sense, WidgetKind};
@@ -112,17 +118,18 @@ pub fn draw_critter(ctx: &mut dyn RenderContext, rect: Rect, view: &CritterView)
     draw_critter_motion(ctx, rect, view, &CritterMotion { reduced: true, ..Default::default() });
 }
 
-/// Animation state (HQ `avatarState`: idle / working / thinking / attention / off).
+/// Animation state (HQ `avatarState`). State shows only by motion, never by rings,
+/// glows or pulses ([`critter_pose`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CritterState {
-    /// Blinks and breathes.
+    /// Still.
     #[default]
     Idle,
-    /// Pulses and wobbles, eyes roll.
+    /// Plays tricks without a pause (tilts, turns, spins, somersaults, hops).
     Working,
-    /// Bobs, eyes roll, two thought dots fade.
+    /// The working tricks, slower, eyes raised.
     Thinking,
-    /// Bounces inside an expanding ring.
+    /// A calmer set: looks at the viewer, small hops.
     Attention,
     /// Eyes almost shut, faded; no motion.
     Off,
@@ -133,49 +140,16 @@ pub enum CritterState {
 pub struct CritterMotion {
     /// State to animate.
     pub state: CritterState,
-    /// Seconds on any monotonic clock (all critters share the phase).
+    /// Seconds on any monotonic clock (each critter keeps its own phase via its seed).
     pub t: f64,
     /// Pointer in the same space as the paint rect: the eyes look at it ([`critter_look`]).
     pub look_at: Option<(f64, f64)>,
-    /// `prefers-reduced-motion`: the state's pose at rest, no keyframes.
+    /// `prefers-reduced-motion`: a gentle tilt only.
     pub reduced: bool,
 }
 
-/// CSS `ease-in-out` between keyframes, close enough at avatar size.
-fn ease(x: f64) -> f64 {
-    let x = x.clamp(0.0, 1.0);
-    x * x * (3.0 - 2.0 * x)
-}
-
-/// 0 → 1 → 0 over `period` (the `0%,100% {a} 50% {b}` keyframes).
-fn swing(t: f64, period: f64) -> f64 {
-    let f = (t / period).rem_euclid(1.0);
-    if f < 0.5 { ease(f * 2.0) } else { ease((1.0 - f) * 2.0) }
-}
-
-/// Blink period, seconds: a rare blink (HQ CSS had 5.5 s, in step for every avatar).
+/// Span of [`CritterView::phase`], seconds.
 pub const BLINK: f64 = 7.5;
-
-/// `blink`: scaleY 1 until 92%, 0.1 at 95%, 1 at 100% of [`BLINK`].
-fn blink(t: f64) -> f64 {
-    let f = (t / BLINK).rem_euclid(1.0);
-    if f < 0.92 {
-        1.0
-    } else if f < 0.95 {
-        1.0 - 0.9 * ease((f - 0.92) / 0.03)
-    } else {
-        0.1 + 0.9 * ease((f - 0.95) / 0.05)
-    }
-}
-
-/// `roll`: (0,0) (3,-2) (0,-3) (-3,-1) (0,0) at 0/25/50/75/100%.
-fn roll(t: f64, period: f64) -> (f64, f64) {
-    const K: [(f64, f64); 5] = [(0.0, 0.0), (3.0, -2.0), (0.0, -3.0), (-3.0, -1.0), (0.0, 0.0)];
-    let f = (t / period).rem_euclid(1.0) * 4.0;
-    let i = (f as usize).min(3);
-    let k = ease(f - i as f64);
-    (K[i].0 + (K[i + 1].0 - K[i].0) * k, K[i].1 + (K[i + 1].1 - K[i].1) * k)
-}
 
 /// Eye offset toward `pointer` from the critter centre (HQ: up to 4 units, full at 300px).
 pub fn critter_look(center: (f64, f64), pointer: (f64, f64)) -> (f64, f64) {
@@ -185,129 +159,88 @@ pub fn critter_look(center: (f64, f64), pointer: (f64, f64)) -> (f64, f64) {
     (dx / d * k, dy / d * k)
 }
 
-/// Seconds until the next frame of `state` at `t` changes visibly; `None` for a still pose.
-/// Idle wakes only for the blink (30 fps inside it); the breath is under a pixel at avatar
-/// size, so it rides along on frames painted for other reasons instead of costing its own.
-pub fn critter_next_frame(state: CritterState, t: f64, reduced: bool) -> Option<f64> {
-    const FAST: f64 = 1.0 / 30.0;
-    if reduced {
-        return None;
-    }
+/// Seconds until the next frame of `state` changes visibly; `None` for a still pose
+/// (idle, off, and reduced-motion idle). Moving states animate at 30 fps.
+pub fn critter_next_frame(state: CritterState, _t: f64, _reduced: bool) -> Option<f64> {
     match state {
-        CritterState::Off => None,
-        CritterState::Idle => {
-            let f = (t / BLINK).rem_euclid(1.0) * BLINK;
-            let start = 0.92 * BLINK;
-            if f >= start { Some(FAST) } else { Some((start - f).max(FAST)) }
-        }
-        _ => Some(FAST),
+        CritterState::Idle | CritterState::Off => None,
+        _ => Some(1.0 / 30.0),
     }
 }
 
-/// Paint one animation frame of a critter (HQ style.css `.av.st-*` keyframes).
+/// The per-critter seed of [`critter_pose`] for a view (keeps a list out of step).
+pub fn critter_seed(view: &CritterView) -> u32 {
+    (view.phase * 8191.0) as u32 ^ (view.shape as u32).wrapping_mul(0x9E37_79B9)
+}
+
+/// Paint one animation frame of a critter: [`critter_pose`] for its state, plus the
+/// pointer look.
 pub fn draw_critter_motion(ctx: &mut dyn RenderContext, rect: Rect, view: &CritterView, m: &CritterMotion) {
-    use CritterState::*;
-    let st = if view.off { Off } else { m.state };
-    let t = if m.reduced { 0.0 } else { m.t + view.phase };
+    let st = if view.off { CritterState::Off } else { m.state };
+    let mut pose = critter_pose(st, m.t, critter_seed(view), m.reduced);
+    if let (Some(p), false) = (m.look_at, st == CritterState::Off || m.reduced) {
+        let (lx, ly) = critter_look((rect.x + rect.width / 2.0, rect.y + rect.height / 2.0), p);
+        pose.eye_dx += lx;
+        pose.eye_dy += ly;
+    }
+    draw_critter_pose(ctx, rect, view, &pose);
+}
+
+/// Round teardrop the body morphs toward (64-box).
+const BLOB: &str = "M32 6C40 14 58 24 58 39C58 52 46 60 32 60S6 52 6 39C6 24 24 14 32 6z";
+
+/// Paint a critter in `pose`, scaled into `rect` (square fit, centred).
+pub fn draw_critter_pose(ctx: &mut dyn RenderContext, rect: Rect, view: &CritterView, pose: &CritterPose) {
     let s = rect.width.min(rect.height) / 64.0;
-    let ox = rect.x + (rect.width - 64.0 * s) / 2.0;
-    let oy = rect.y + (rect.height - 64.0 * s) / 2.0;
-    let about = |ctx: &mut dyn RenderContext, cx: f64, cy: f64, f: &dyn Fn(&mut dyn RenderContext)| {
-        ctx.translate(cx, cy);
-        f(ctx);
-        ctx.translate(-cx, -cy);
+    let off = view.off;
+    let yaw = pose.yaw.clamp(-1.0, 1.0);
+    let m = pose.morph.clamp(0.0, 1.0);
+    let about = |ctx: &mut dyn RenderContext, k: f64, cy: f64, d: &str| {
+        ctx.save();
+        ctx.translate(32.0, cy);
+        ctx.scale(k, k);
+        ctx.translate(-32.0, -cy);
+        emit_svg_path(ctx, d);
+        ctx.fill();
+        ctx.restore();
     };
     ctx.save();
-    ctx.translate(ox, oy);
+    ctx.translate(rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
     ctx.scale(s, s);
-    if st == Off {
+    if off {
         ctx.set_global_alpha(0.5);
     }
-    // svg-level motion: pulse (working), bounce (attention)
-    if !m.reduced {
-        match st {
-            Working => {
-                let k = 1.0 + 0.05 * swing(t, 1.3);
-                about(ctx, 32.0, 32.0, &|c| c.scale(k, k));
-            }
-            Attention => ctx.translate(0.0, -3.0 * swing(t, 0.9)),
-            _ => {}
-        }
-    }
-    // .bodyg: breathe (idle), wobble (working), bob (thinking)
-    ctx.save();
-    if !m.reduced {
-        match st {
-            Idle => {
-                let p = swing(t, 5.0);
-                about(ctx, 32.0, 32.0, &|c| c.scale(1.0 + 0.03 * p, 1.0 - 0.02 * p));
-            }
-            Working => {
-                let p = swing(t, 1.4);
-                ctx.translate(0.0, -2.0 * p);
-                about(ctx, 32.0, 32.0, &|c| c.rotate((-4.0 + 8.0 * p).to_radians()));
-            }
-            Thinking => ctx.translate(0.0, -3.0 * swing(t, 2.4)),
-            _ => {}
-        }
-    }
-    emit_svg_path(ctx, CRITTER_SHAPES[view.shape % CRITTER_SHAPES.len()]);
+    ctx.translate(pose.dx, pose.dy);
+    ctx.rotate(pose.rot);
+    ctx.scale(pose.sx * (1.0 - 0.14 * yaw.abs()), pose.sy);
+    ctx.translate(-32.0, -32.0);
+    // Body: the shape shrinks into a growing blob of the same colour (their union reads
+    // as one morphing body).
     ctx.set_fill_color(view.color);
-    ctx.fill();
-    // .look (pointer) then .eyes (roll) then each .eye
-    let look = m.look_at.map(|p| critter_look((rect.x + rect.width / 2.0, rect.y + rect.height / 2.0), p));
-    let (mut ex, mut ey) = if st == Off || m.reduced { (0.0, 0.0) } else { look.unwrap_or((0.0, 0.0)) };
-    if !m.reduced {
-        match st {
-            Working => {
-                let r = roll(t, 2.2);
-                ex += r.0;
-                ey += r.1;
-            }
-            Thinking => {
-                let r = roll(t, 3.0);
-                ex += r.0;
-                ey += r.1;
-            }
-            _ => {}
-        }
+    about(ctx, 1.0 - 0.3 * m, 32.0, CRITTER_SHAPES[view.shape % CRITTER_SHAPES.len()]);
+    if m > 0.0 {
+        about(ctx, m.powf(0.7), 36.0, BLOB);
     }
-    // An animated `.eye` transform (blink, off) replaces the SVG rotate(-12); otherwise it tilts.
-    let (sy, tilt) = match st {
-        Idle => (if m.reduced { 1.0 } else { blink(t) }, 0.0),
-        Off => (0.12, 0.0),
-        _ => (1.0, (-12.0f64).to_radians()),
-    };
+    // Eyes: tilted ovals at rest, upright pills in a turn; the far eye narrows.
+    let half = 9.0 * (1.0 - 0.35 * yaw.abs());
+    let lid = if off { 0.12 } else { (1.0 - 0.9 * pose.blink.clamp(0.0, 1.0)).max(0.08) };
+    let pill = pose.pill.clamp(0.0, 1.0);
     ctx.set_fill_color(tokens::EYE);
-    for cx in [23.0, 41.0] {
+    for side in [-1.0, 1.0] {
+        let far = if side * yaw < 0.0 { 1.0 - 0.2 * yaw.abs() } else { 1.0 };
+        let rx = 4.0 * pose.eye_w * (1.0 - 0.22 * pill) * far;
+        let ry = 6.0 * pose.eye_h * (1.0 + 0.15 * pill) * lid;
         ctx.begin_path();
-        ctx.ellipse(cx + ex, view.eye_y + ey, 4.0, 6.0 * sy, tilt, 0.0, std::f64::consts::TAU);
+        ctx.ellipse(
+            32.0 + side * half + pose.eye_dx,
+            view.eye_y + pose.eye_dy,
+            rx.max(0.5),
+            ry.max(0.4),
+            (-12.0f64).to_radians() * (1.0 - pill),
+            0.0,
+            std::f64::consts::TAU,
+        );
         ctx.fill();
-    }
-    ctx.restore();
-    // extras: thought dots, attention ring
-    match st {
-        Thinking => {
-            ctx.set_fill_color(tokens::THOUGHT);
-            for (i, (cx, cy, r)) in [(50.0, 8.0, 2.4), (56.0, 3.0, 1.8)].into_iter().enumerate() {
-                let a = if m.reduced { 1.0 } else { 0.2 + 0.8 * swing(t - 0.5 * i as f64, 1.6) };
-                ctx.set_global_alpha(a);
-                ctx.begin_path();
-                ctx.arc(cx, cy, r, 0.0, std::f64::consts::TAU);
-                ctx.fill();
-            }
-        }
-        Attention => {
-            let f = if m.reduced { 0.0 } else { (t / 1.4).rem_euclid(1.0) };
-            let e = 1.0 - (1.0 - f).powi(3); // ease-out
-            ctx.set_global_alpha(0.9 * (1.0 - e));
-            ctx.set_stroke_color(tokens::ATTENTION);
-            ctx.set_stroke_width(2.5);
-            ctx.begin_path();
-            ctx.arc(32.0, 32.0, 30.0 * (1.0 + 0.25 * e), 0.0, std::f64::consts::TAU);
-            ctx.stroke();
-        }
-        _ => {}
     }
     ctx.restore();
 }
@@ -330,18 +263,10 @@ mod tests {
     }
 
     #[test]
-    fn motion_keyframes_and_cadence() {
-        // blink closes at 95% of 5.5 s, open otherwise
-        assert_eq!(blink(1.0), 1.0);
-        assert!((blink(0.95 * BLINK) - 0.1).abs() < 1e-9);
-        // idle: slow steps outside the blink, fast inside, nothing when off / reduced
-        assert!((critter_next_frame(CritterState::Idle, 1.0, false).unwrap() - (0.92 * BLINK - 1.0)).abs() < 1e-9);
-        assert_eq!(critter_next_frame(CritterState::Idle, 0.93 * BLINK, false), Some(1.0 / 30.0));
+    fn cadence_and_look() {
+        assert_eq!(critter_next_frame(CritterState::Idle, 1.0, false), None);
         assert_eq!(critter_next_frame(CritterState::Off, 1.0, false), None);
-        assert_eq!(critter_next_frame(CritterState::Working, 1.0, true), None);
-        // roll passes its keyframes; look caps at 4 units
-        assert_eq!(roll(0.0, 2.0), (0.0, 0.0));
-        assert_eq!(roll(1.0, 2.0), (0.0, -3.0));
+        assert_eq!(critter_next_frame(CritterState::Working, 1.0, false), Some(1.0 / 30.0));
         let l = critter_look((0.0, 0.0), (900.0, 0.0));
         assert!((l.0 - 4.0).abs() < 1e-9 && l.1.abs() < 1e-9);
     }

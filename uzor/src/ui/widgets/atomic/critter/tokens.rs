@@ -7,10 +7,6 @@ pub const PALETTE: [&str; 10] = [
 ];
 /// Eye fill.
 pub const EYE: &str = "#0b0b0d";
-/// Thinking dots.
-pub const THOUGHT: &str = "#9ec5ff";
-/// Attention ring.
-pub const ATTENTION: &str = "#e0a63a";
 
 /// Shape indices of direct-message critters (kept here: a four-number table reads
 /// like an RGBA literal to the colour lint).
