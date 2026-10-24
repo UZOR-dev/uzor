@@ -3,6 +3,21 @@
 //! All fonts are embedded as `&[u8]` constants so they are available at
 //! compile time without any file-system access at runtime.
 //!
+//! The crate is light by default. Its two heavy fonts are opt-in features, fetched at build time
+//! (pinned by SHA-256) from <https://github.com/UZOR-dev/uzor-fonts>, or copied from
+//! `$UZOR_FONTS_DIR` for offline builds:
+//!
+//! - `color-emoji`: Noto Color Emoji (10.7 MB);
+//! - `cjk`: Noto Sans CJK SC (16.4 MB);
+//! - `heavy`: both.
+//!
+//! Without a feature (and on docs.rs) its static is a light stand-in that every fallback chain
+//! in uzor already has right behind it, so rendering just falls through to the next font, and
+//! nothing panics on missing bytes: [`NOTO_COLOR_EMOJI`] is the monochrome [`NOTO_EMOJI`] and
+//! [`NOTO_SANS_CJK_SC`] is [`NOTO_SANS_ARABIC`] (no CJK glyphs, so CJK shows as missing
+//! glyphs). Code that wants to know uses [`HAS_COLOR_EMOJI`] / [`HAS_CJK_SC`] or
+//! [`color_emoji`] / [`cjk_sc`].
+//!
 //! # Families
 //!
 //! - **Roboto** — default UI sans-serif (regular, bold, italic, bold-italic)
@@ -10,9 +25,9 @@
 //! - **JetBrains Mono** — monospace with full Unicode box-drawing coverage
 //! - **Symbols Nerd Font Mono** — Powerline / Nerd Font PUA / dev icons
 //! - **Noto Sans Symbols 2** — wide symbol / mathematical coverage
-//! - **Noto Color Emoji** — color emoji (COLRv1/v0 + CBDT bitmaps; via the uzor-fonts-emoji crate)
+//! - **Noto Color Emoji** — color emoji (COLRv1/v0 + CBDT bitmaps; feature `color-emoji`)
 //! - **Noto Emoji** — color-neutral emoji fallback (legacy, all backends)
-//! - **Noto Sans CJK SC** — CJK Simplified Chinese + kana + Hangul (via the uzor-fonts-cjk-a/-b crates)
+//! - **Noto Sans CJK SC** — CJK Simplified Chinese + kana + Hangul (feature `cjk`)
 //! - **Noto Sans Arabic** — Arabic script
 //! - **Noto Sans Devanagari** — Devanagari / Hindi script
 
@@ -109,23 +124,49 @@ pub static NOTO_SANS_SYMBOLS2: &[u8] =
 
 /// Noto Color Emoji — color emoji font containing both COLRv1/v0 vectors and CBDT bitmaps.
 /// Supported natively by vello-gpu (skrifa 0.40+); other backends fall through
-/// to the monochrome outline or skip to the next fallback. Comes from the
-/// `uzor-fonts-emoji` crate via build.rs (too big for this crate's upload).
-pub static NOTO_COLOR_EMOJI: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/NotoColorEmoji.ttf"));
+/// to the monochrome outline or skip to the next fallback. Feature `color-emoji`; without it
+/// this is the monochrome [`NOTO_EMOJI`] (see the crate docs).
+pub static NOTO_COLOR_EMOJI: &[u8] = COLOR_EMOJI_BYTES;
+
+#[cfg(uzor_fonts_color_emoji)]
+const COLOR_EMOJI_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/NotoColorEmoji.ttf"));
+#[cfg(not(uzor_fonts_color_emoji))]
+const COLOR_EMOJI_BYTES: &[u8] = NOTO_EMOJI_BYTES;
+
+/// Whether [`NOTO_COLOR_EMOJI`] is the real Noto Color Emoji (feature `color-emoji`).
+pub const HAS_COLOR_EMOJI: bool = cfg!(uzor_fonts_color_emoji);
+
+/// Noto Color Emoji when built with feature `color-emoji`, else `None`.
+pub fn color_emoji() -> Option<&'static [u8]> {
+    HAS_COLOR_EMOJI.then_some(NOTO_COLOR_EMOJI)
+}
 
 // ── i18n script fonts ─────────────────────────────────────────────────────────
 //
-// Arabic and Devanagari are bundled. CJK SC (like Noto Color Emoji above) is too big for
-// this crate's crates.io upload: build.rs copies it into OUT_DIR from the `uzor-fonts-cjk-a`
-// and `-b` build-dependency crates (two halves), and it is included from there.
+// Arabic and Devanagari are bundled. CJK SC is opt-in (feature `cjk`): build.rs fetches it
+// into OUT_DIR and it is included from there.
 
 /// Noto Sans CJK SC Regular — covers Simplified Chinese (zh), Japanese kana
-/// (ja), and Korean Hangul (ko). ~16 MB; from the uzor-fonts-cjk-a/-b crates via build.rs.
-pub static NOTO_SANS_CJK_SC: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/NotoSansCJKsc-Regular.otf"));
+/// (ja), and Korean Hangul (ko). ~16 MB, feature `cjk`; without it this is
+/// [`NOTO_SANS_ARABIC`], the next font in every fallback chain (see the crate docs).
+pub static NOTO_SANS_CJK_SC: &[u8] = CJK_SC_BYTES;
+
+#[cfg(uzor_fonts_cjk)]
+const CJK_SC_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/NotoSansCJKsc-Regular.otf"));
+#[cfg(not(uzor_fonts_cjk))]
+const CJK_SC_BYTES: &[u8] = ARABIC_BYTES;
+
+/// Whether [`NOTO_SANS_CJK_SC`] is the real Noto Sans CJK SC (feature `cjk`).
+pub const HAS_CJK_SC: bool = cfg!(uzor_fonts_cjk);
+
+/// Noto Sans CJK SC when built with feature `cjk`, else `None`.
+pub fn cjk_sc() -> Option<&'static [u8]> {
+    HAS_CJK_SC.then_some(NOTO_SANS_CJK_SC)
+}
 
 /// Noto Sans Arabic Regular — covers Arabic script (ar). ~170 KB; bundled.
-pub static NOTO_SANS_ARABIC: &[u8] = include_bytes!("../fonts/NotoSansArabic-Regular.ttf");
+pub static NOTO_SANS_ARABIC: &[u8] = ARABIC_BYTES;
+const ARABIC_BYTES: &[u8] = include_bytes!("../fonts/NotoSansArabic-Regular.ttf");
 
 /// Noto Sans Devanagari Regular — covers Devanagari script (hi). ~157 KB; bundled.
 pub static NOTO_SANS_DEVANAGARI: &[u8] = include_bytes!("../fonts/NotoSansDevanagari-Regular.ttf");
@@ -141,23 +182,44 @@ pub static NOTO_SANS_DEVANAGARI: &[u8] = include_bytes!("../fonts/NotoSansDevana
 pub static DEJAVU_SANS: &[u8] = include_bytes!("../fonts/DejaVuSans.ttf");
 
 /// Noto Emoji — color-neutral emoji coverage (legacy, works on all backends).
-pub static NOTO_EMOJI: &[u8] = include_bytes!("../fonts/NotoEmoji-Regular.ttf");
+pub static NOTO_EMOJI: &[u8] = NOTO_EMOJI_BYTES;
+const NOTO_EMOJI_BYTES: &[u8] = include_bytes!("../fonts/NotoEmoji-Regular.ttf");
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The fonts that used to be downloaded arrive whole (sfnt magic + exact size).
+    fn sfnt(bytes: &[u8]) -> bool {
+        bytes.len() > 1024 && (bytes[..4] == [0, 1, 0, 0] || &bytes[..4] == b"OTTO")
+    }
+
+    /// Bundled script fonts arrive whole.
     #[test]
-    fn big_and_i18n_fonts_are_complete() {
-        for (name, bytes, len, magic) in [
-            ("emoji", NOTO_COLOR_EMOJI, 10_673_480, &[0u8, 1, 0, 0][..]),
-            ("cjk", NOTO_SANS_CJK_SC, 16_437_364, b"OTTO"),
-            ("arabic", NOTO_SANS_ARABIC, 170_196, &[0, 1, 0, 0]),
-            ("devanagari", NOTO_SANS_DEVANAGARI, 157_068, &[0, 1, 0, 0]),
-        ] {
-            assert_eq!(bytes.len(), len, "{name}");
-            assert_eq!(&bytes[..4], magic, "{name}");
+    fn i18n_fonts_are_complete() {
+        assert_eq!(NOTO_SANS_ARABIC.len(), 170_196);
+        assert_eq!(NOTO_SANS_DEVANAGARI.len(), 157_068);
+        assert!(sfnt(NOTO_SANS_ARABIC) && sfnt(NOTO_SANS_DEVANAGARI));
+    }
+
+    /// The heavy fonts are the real thing with their feature, a valid light stand-in without
+    /// it: never empty, so no renderer's font loader can panic on them.
+    #[test]
+    fn heavy_fonts_or_stand_ins() {
+        assert!(sfnt(NOTO_COLOR_EMOJI) && sfnt(NOTO_SANS_CJK_SC));
+        if HAS_COLOR_EMOJI {
+            assert_eq!(NOTO_COLOR_EMOJI.len(), 10_673_480);
+            assert_eq!(color_emoji().map(<[u8]>::len), Some(10_673_480));
+        } else {
+            assert_eq!(NOTO_COLOR_EMOJI, NOTO_EMOJI);
+            assert!(color_emoji().is_none());
+        }
+        if HAS_CJK_SC {
+            assert_eq!(NOTO_SANS_CJK_SC.len(), 16_437_364);
+            assert_eq!(&NOTO_SANS_CJK_SC[..4], b"OTTO");
+            assert!(cjk_sc().is_some());
+        } else {
+            assert_eq!(NOTO_SANS_CJK_SC, NOTO_SANS_ARABIC);
+            assert!(cjk_sc().is_none());
         }
     }
 }

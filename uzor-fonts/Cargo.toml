@@ -4,14 +4,22 @@ authors.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Bundled font assets for uzor (Roboto, JetBrainsMono, NotoEmoji, NotoColorEmoji, etc.)"
+description = "Bundled font assets for uzor (Roboto, Inter, JetBrains Mono, Noto Emoji, …); Noto Color Emoji and Noto Sans CJK SC opt-in"
 repository.workspace = true
 homepage.workspace = true
 keywords = ["fonts", "ui", "rendering", "embedded", "assets"]
 categories = ["embedded", "rendering"]
 links = "uzor_fonts_assets"
 
-[build-dependencies]
-uzor-fonts-emoji.workspace = true
-uzor-fonts-cjk-a.workspace = true
-uzor-fonts-cjk-b.workspace = true
+[features]
+# Light by default: every bundled font is in the crate itself (~6 MB .crate). The two heavy
+# fonts are opt-in and fetched at build time from https://github.com/UZOR-dev/uzor-fonts
+# (pinned commit + SHA-256), or copied from $UZOR_FONTS_DIR when that is set (offline builds).
+# Without them NOTO_COLOR_EMOJI / NOTO_SANS_CJK_SC are light stand-ins (see lib.rs).
+default = []
+# Noto Color Emoji (10.7 MB): colour emoji in vello-gpu, outlines elsewhere.
+color-emoji = []
+# Noto Sans CJK SC (16.4 MB): Chinese, Japanese kana, Korean Hangul.
+cjk = []
+# Both.
+heavy = ["color-emoji", "cjk"]

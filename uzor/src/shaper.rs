@@ -60,10 +60,14 @@ fn font_system() -> &'static Mutex<FontSystem> {
             f::SOURCE_SERIF_4_BOLD_ITALIC,
             f::SYMBOLS_NERD_FONT_MONO,
             f::NOTO_SANS_SYMBOLS2,
-            f::NOTO_COLOR_EMOJI,
             f::NOTO_EMOJI,
             f::DEJAVU_SANS,
         ] {
+            db.load_font_data(bytes.to_vec());
+        }
+        // Opt-in (uzor-fonts feature `color-emoji`); without it NOTO_COLOR_EMOJI is the
+        // NOTO_EMOJI stand-in, already loaded above.
+        if let Some(bytes) = uzor_fonts::color_emoji() {
             db.load_font_data(bytes.to_vec());
         }
 

@@ -2,10 +2,6 @@
 members = [
     # Font assets (published separately — large binary, rarely changes)
     "uzor-fonts",
-    # The fonts too big for uzor-fonts' own upload; its build script copies them in
-    "uzor-fonts-emoji",
-    "uzor-fonts-cjk-a",
-    "uzor-fonts-cjk-b",
     # Core library (contains render, animation, panels, panel_api, macos, layout, interactive, text_fx, cursor, numbers, scroll_fx)
     "uzor",
     # Platform
@@ -105,9 +101,6 @@ categories = ["gui", "rendering", "graphics"]
 # builds `image` just because it sits in this workspace.
 uzor = { version = "1.5.7", path = "./uzor", default-features = false }
 uzor-fonts = { version = "1.5.7", path = "./uzor-fonts" }
-uzor-fonts-emoji = { version = "1.5.7", path = "./uzor-fonts-emoji" }
-uzor-fonts-cjk-a = { version = "1.5.7", path = "./uzor-fonts-cjk-a" }
-uzor-fonts-cjk-b = { version = "1.5.7", path = "./uzor-fonts-cjk-b" }
 uzor-render-hub = { version = "1.5.7", path = "./uzor-render-hub" }
 uzor-render-vello-gpu = { version = "1.5.7", path = "./uzor-render-vello-gpu" }
 uzor-render-vello-hybrid = { version = "1.5.7", path = "./uzor-render-vello-hybrid" }

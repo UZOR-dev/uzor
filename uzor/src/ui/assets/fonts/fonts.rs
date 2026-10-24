@@ -14,15 +14,19 @@
 //!   (U+2500–U+259F). Used for terminal output, code blocks, etc.
 //! - **Symbols Nerd Font Mono** — Powerline (U+E0B0–U+E0B3), Nerd Font PUA, dev icons
 //! - **Noto Sans Symbols2** — wide symbol / mathematical coverage
-//! - **Noto Color Emoji** — color emoji (COLRv1/v0 + CBDT bitmaps) for vello-gpu
+//! - **Noto Color Emoji** — color emoji (COLRv1/v0 + CBDT bitmaps) for vello-gpu (opt-in: uzor-fonts feature `color-emoji`)
 //! - **Noto Emoji** — color-neutral emoji fallback (legacy bitmap-compatible)
-//! - **Noto Sans CJK SC** — Simplified Chinese, Japanese kana, Korean Hangul (via the uzor-fonts-cjk-a/-b crates)
+//! - **Noto Sans CJK SC** — Simplified Chinese, Japanese kana, Korean Hangul (opt-in: uzor-fonts feature `cjk`)
 //! - **Noto Sans Arabic** — Arabic script
 //! - **Noto Sans Devanagari** — Devanagari / Hindi script
 
 // Re-export all font byte constants from the dedicated assets crate.
 pub use uzor_fonts::{
+    cjk_sc,
+    color_emoji,
     inter_for_weight,
+    HAS_CJK_SC,
+    HAS_COLOR_EMOJI,
     DEJAVU_SANS,
     INTER_400,
     INTER_500,
