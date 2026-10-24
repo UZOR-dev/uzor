@@ -674,6 +674,21 @@ pub trait Styled {
 }
 
 /// Field conversion used by [`styled!`].
+/// One [`styled!`] field: standard properties `aliases` in order, then the
+/// field's own `--custom` property; the last one present and parsable wins.
+#[doc(hidden)]
+#[inline(never)]
+pub fn set_field<T: StyleField>(dst: &mut T, s: &Style, aliases: &[&str], field: &str) {
+    for a in aliases {
+        if let Some(v) = standard(s, a).and_then(|v| T::from_css(&v)) {
+            *dst = v;
+        }
+    }
+    if let Some(v) = s.field_css(field).and_then(T::from_css) {
+        *dst = v;
+    }
+}
+
 pub trait StyleField: Sized {
     fn from_css(v: &str) -> Option<Self>;
 }
@@ -748,16 +763,8 @@ macro_rules! styled {
     ($t:ty { $($f:ident $(= $($alias:literal),+)?),* $(,)? }) => {
         impl $crate::ui::style::Styled for $t {
             fn apply_style(&mut self, s: &$crate::ui::style::Style) {
-                use $crate::ui::style::StyleField;
                 $(
-                    $($(
-                        if let Some(v) = $crate::ui::style::standard(s, $alias).and_then(|v| StyleField::from_css(&v)) {
-                            self.$f = v;
-                        }
-                    )+)?
-                    if let Some(v) = s.field_css(stringify!($f)).and_then(StyleField::from_css) {
-                        self.$f = v;
-                    }
+                    $crate::ui::style::set_field(&mut self.$f, s, &[$($($alias),+)?], stringify!($f));
                 )*
             }
         }
