@@ -10,6 +10,7 @@
 //! - **DecryptedText**: Scramble/reveal effect with sequential or random modes
 //! - **GradientText**: Animated multi-color gradient sweep
 //! - **FuzzyText**: Scanline-style horizontal/vertical displacement
+//! - **MatrixText**: stateless decode, idle flicker and pointer scramble of a line
 //!
 //! The ASCII cell-shader engine (`AsciiGrid`/`CellShader`/`GlitchLetter`,
 //! formerly `cell_shader` here) moved to `uzor-text::ascii` in Arc 2 Phase 4
@@ -20,8 +21,10 @@ pub mod shiny;
 pub mod decrypt;
 pub mod gradient;
 pub mod fuzzy;
+pub mod matrix;
 
 pub use shiny::{ShinyTextConfig, ShinyTextState};
 pub use decrypt::{DecryptedTextConfig, DecryptedTextState, RevealDirection};
 pub use gradient::{GradientTextConfig, GradientTextState, GradientDirection};
 pub use fuzzy::{FuzzyTextConfig, FuzzyTextState, FuzzyDirection};
+pub use matrix::MatrixText;
