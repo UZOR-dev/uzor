@@ -1,11 +1,13 @@
 //! A small DOM: a tree of elements styled by a [`Sheet`](crate::ui::style::Sheet), laid out
 //! with [`flow`](crate::ui::flow) (`display:flex` needs the `flow-flex` feature, on by default)
 //! and painted as CSS boxes (background, border, radius,
-//! `box-shadow`, one line of text with `text-overflow:ellipsis`). Screens describe *what*
+//! `box-shadow`, text). Text keeps one line, ellipsized when it does not fit, unless
+//! `white-space: normal` lets it wrap at spaces and after inner hyphens (as browsers break). Screens describe *what*
 //! is on them (`El::new("div.card").child(...)`) and the stylesheet decides *how it looks
 //! and where it goes*: no per-screen pixel math. [`render`] returns every element's border
 //! box by `id`, so the app hit-tests, registers and focuses by id as in a browser.
 //!
+//! `opacity` dims an element with its subtree; [`El::svg`] puts an inline icon in an element.
 //! Element kinds with built-in content: `select` draws its chevron in the right padding
 //! (`--chevron` colour, default the text colour). Everything else is a plain box.
 //! `display:none` removes an element; `:hover` / `:focus-visible` / `:disabled` /
@@ -32,6 +34,8 @@ pub struct El {
     pub tab: bool,
     /// Accessible name; defaults to the text.
     pub name: Option<String>,
+    /// Inline `<svg>` markup drawn into the content box (stroke = the text colour).
+    pub svg: Option<String>,
     pub children: Vec<El>,
 }
 
@@ -58,6 +62,11 @@ impl El {
     }
     pub fn name(mut self, n: impl Into<String>) -> Self {
         self.name = Some(n.into());
+        self
+    }
+    /// Inline `<svg>` content (an icon), drawn in the content box in `color`.
+    pub fn svg(mut self, markup: impl Into<String>) -> Self {
+        self.svg = Some(markup.into());
         self
     }
     pub fn child(mut self, c: El) -> Self {
@@ -88,6 +97,7 @@ pub struct Placed {
     pub text: Option<String>,
     pub tab: bool,
     pub name: Option<String>,
+    pub svg: Option<String>,
 }
 
 /// A rendered tree, in paint (document) order.
@@ -111,6 +121,14 @@ impl Dom {
     pub fn tabbable(&self) -> impl Iterator<Item = &str> {
         self.boxes.iter().filter(|b| b.tab).filter_map(|b| b.id.as_deref())
     }
+    /// The tree shifted by `(dx, dy)`: lay out once to learn a size, then place it.
+    pub fn moved(mut self, dx: f64, dy: f64) -> Self {
+        for b in &mut self.boxes {
+            b.rect = Rect::new(b.rect.x + dx, b.rect.y + dy, b.rect.width, b.rect.height);
+        }
+        self.root = Rect::new(self.root.x + dx, self.root.y + dy, self.root.width, self.root.height);
+        self
+    }
     /// `(id, accessible name)` for elements with an id and a name or text.
     pub fn names(&self) -> impl Iterator<Item = (&str, &str)> {
         self.boxes.iter().filter_map(|b| Some((b.id.as_deref()?, b.name.as_deref().or(b.text.as_deref())?)))
@@ -124,8 +142,11 @@ struct Resolved {
     text: Option<String>,
     tab: bool,
     name: Option<String>,
-    /// Single-line text width / line height.
-    measured: Option<(f64, f64)>,
+    svg: Option<String>,
+    /// Measured text: break units and line height.
+    measured: Option<(Units, f64)>,
+    /// Width of a space in the element's font (wrapping text).
+    space: f64,
     children: Vec<Resolved>,
 }
 
@@ -155,11 +176,67 @@ fn resolve(ctx: &mut dyn RenderContext, sheet: &Sheet, el: &El, parent: Option<&
     }
     let measured = el.text.as_ref().map(|t| {
         ctx.set_font(&font_str(&s));
-        (ctx.measure_text(t).ceil(), font_of(&s).2)
+        (units(ctx, t, wraps(&s)), font_of(&s).2)
     });
+    let space = if el.text.is_some() && wraps(&s) { ctx.measure_text(" ") } else { 0.0 };
     let children = el.children.iter().filter_map(|c| resolve(ctx, sheet, c, Some(&s), state)).collect();
     let kind = el.spec.split(['.', '#', ':']).next().unwrap_or("div").to_string();
-    Some(Resolved { kind, id: el.id.clone(), style: s, text: el.text.clone(), tab: el.tab, name: el.name.clone(), measured, children })
+    Some(Resolved { kind, id: el.id.clone(), style: s, text: el.text.clone(), tab: el.tab, name: el.name.clone(), svg: el.svg.clone(), measured, space, children })
+}
+
+fn wraps(s: &Style) -> bool {
+    matches!(s.white_space.as_deref(), Some("normal") | Some("pre-wrap"))
+}
+
+/// Text cut at its break opportunities: `(segment, its width, a space before it, it starts a
+/// new line)` per unit; unwrapped text is one unit.
+type Units = Vec<(String, f64, bool, bool)>;
+
+fn units(ctx: &mut dyn RenderContext, t: &str, wrap: bool) -> Units {
+    if !wrap {
+        return vec![(t.to_string(), ctx.measure_text(t).ceil(), false, false)];
+    }
+    let mut out = Vec::new();
+    for (pi, para) in t.split('\n').enumerate() {
+        for (wi, word) in para.split(' ').enumerate() {
+            for (si, seg) in crate::ui::widgets::atomic::bubble::hyphen_segments(word).into_iter().enumerate() {
+                out.push((seg.to_string(), ctx.measure_text(seg), si == 0 && wi > 0, si == 0 && wi == 0 && pi > 0));
+            }
+        }
+    }
+    out
+}
+
+/// Greedy line breaking of `u` at `limit` (`None` = no limit): the lines' unit ranges and
+/// widths. `space` is the width of one space.
+fn break_lines(u: &Units, space: f64, limit: Option<f64>) -> Vec<(usize, usize, f64)> {
+    let mut lines = Vec::new();
+    let (mut start, mut w) = (0, 0.0);
+    for (i, (_, sw, sp, newline)) in u.iter().enumerate() {
+        let add = if i == start { *sw } else { w + if *sp { space } else { 0.0 } + sw };
+        if i > start && (*newline || limit.is_some_and(|l| add > l + 0.5)) {
+            lines.push((start, i, w));
+            start = i;
+            w = *sw;
+        } else {
+            w = add;
+        }
+    }
+    if start < u.len() {
+        lines.push((start, u.len(), w));
+    }
+    lines
+}
+
+fn line_text(u: &Units, a: usize, b: usize) -> String {
+    let mut s = String::new();
+    for (i, (seg, _, sp, _)) in u[a..b].iter().enumerate() {
+        if i > 0 && *sp {
+            s.push(' ');
+        }
+        s.push_str(seg);
+    }
+    s
 }
 
 fn lbox<'a>(r: &Resolved, measures: &'a [Box<dyn Fn(Option<f64>) -> (f64, f64)>], next: &mut usize) -> LBox<'a> {
@@ -175,19 +252,34 @@ fn lbox<'a>(r: &Resolved, measures: &'a [Box<dyn Fn(Option<f64>) -> (f64, f64)>]
 }
 
 fn collect_measures(r: &Resolved, out: &mut Vec<Box<dyn Fn(Option<f64>) -> (f64, f64)>>) {
-    if let Some((w, lh)) = r.measured {
-        // One line: min-content is the whole line (nowrap); a narrower box ellipsizes.
-        out.push(Box::new(move |lim: Option<f64>| (lim.filter(|l| *l > 0.0).map_or(w, |l| w.min(l)), lh)));
+    if let Some((u, lh)) = &r.measured {
+        if wraps(&r.style) {
+            // Wrapping: min-content is the widest unit, else the lines at the limit.
+            let (u, lh, space) = (u.clone(), *lh, r.space);
+            out.push(Box::new(move |lim: Option<f64>| {
+                let ls = break_lines(&u, space, lim);
+                (ls.iter().map(|l| l.2).fold(0.0, f64::max).ceil(), lh * ls.len().max(1) as f64)
+            }));
+        } else {
+            // One line: min-content is the whole line (nowrap); a narrower box ellipsizes.
+            let (w, lh) = (u[0].1, *lh);
+            out.push(Box::new(move |lim: Option<f64>| (lim.filter(|l| *l > 0.0).map_or(w, |l| w.min(l)), lh)));
+        }
     }
     for c in &r.children {
         collect_measures(c, out);
     }
 }
 
-fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>) {
-    out.push(Placed { id: r.id, kind: r.kind, rect: l.rect, style: r.style, text: r.text, tab: r.tab, name: r.name });
+/// `alpha`: the ancestors' opacity; a placed box carries its effective opacity (CSS
+/// `opacity` applies to the whole subtree).
+fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, alpha: f64) {
+    let mut style = r.style;
+    let a = alpha * style.opacity.unwrap_or(1.0);
+    style.opacity = (a < 1.0).then_some(a);
+    out.push(Placed { id: r.id, kind: r.kind, rect: l.rect, style, text: r.text, tab: r.tab, name: r.name, svg: r.svg });
     for (c, cl) in r.children.into_iter().zip(&l.children) {
-        place(c, cl, out);
+        place(c, cl, out, a);
     }
 }
 
@@ -203,13 +295,16 @@ pub fn lay_out(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64, y:
         layout(&b, x, y, w)
     };
     let mut boxes = Vec::new();
-    place(r, &laid, &mut boxes);
+    place(r, &laid, &mut boxes, 1.0);
     Dom { boxes, root: laid.rect }
 }
 
 /// Paint one placed box: shadow, background, border, text, kind content.
 pub fn paint_box(ctx: &mut dyn RenderContext, b: &Placed) {
     let s = &b.style;
+    if let Some(a) = s.opacity {
+        ctx.set_global_alpha(a);
+    }
     let r = b.rect;
     let rad = s.border_radius.unwrap_or(0.0);
     let shadow: Option<Shadow> = s.box_shadow.as_deref().and_then(<Option<Shadow>>::from_css).flatten();
@@ -237,21 +332,35 @@ pub fn paint_box(ctx: &mut dyn RenderContext, b: &Placed) {
     if let Some(t) = &b.text {
         let (_, px, lh, _) = font_of(s);
         ctx.set_font(&font_str(s));
-        let shown = ellipsize(ctx, t, content.width + 0.5);
+        let lines: Vec<String> = if wraps(s) {
+            let u = units(ctx, t, true);
+            let space = ctx.measure_text(" ");
+            break_lines(&u, space, Some(content.width)).into_iter().map(|(a, z, _)| line_text(&u, a, z)).collect()
+        } else {
+            vec![ellipsize(ctx, t, content.width + 0.5)]
+        };
         let (align, x) = match s.text_align.as_deref() {
             Some("center") => (TextAlign::Center, content.x + content.width / 2.0),
             Some("right") | Some("end") => (TextAlign::Right, content.x + content.width),
             _ => (TextAlign::Left, content.x),
         };
-        // A box taller than its line centres it (flex `align-items:center`, the usual control).
-        let top = content.y + ((content.height - lh) / 2.0).max(0.0);
+        // A box taller than its text centres it (flex `align-items:center`, the usual control).
+        let top = content.y + ((content.height - lh * lines.len() as f64) / 2.0).max(0.0);
         ctx.set_fill_color(color);
-        fill_text_css(ctx, &shown, x, top, px, lh, INTER, align);
+        for (i, l) in lines.iter().enumerate() {
+            fill_text_css(ctx, l, x, top + lh * i as f64, px, lh, INTER, align);
+        }
+    }
+    if let Some(svg) = &b.svg {
+        crate::render::draw_svg_icon(ctx, svg, content.x, content.y, content.width, content.height, color);
     }
     if b.kind == "select" {
         let c = s.custom("--chevron").unwrap_or(color);
         let (ax, ay) = (r.x + r.width - bw - p[1].min(20.0).max(12.0) / 2.0 - 8.0, r.y + r.height / 2.0 - 2.0);
         chevron(ctx, ax.max(content.x + content.width + 2.0), ay, c);
+    }
+    if s.opacity.is_some() {
+        ctx.set_global_alpha(1.0);
     }
 }
 
@@ -268,12 +377,17 @@ pub fn chevron(ctx: &mut dyn RenderContext, x: f64, y: f64, color: &str) {
     ctx.set_line_cap("butt");
 }
 
-/// Lay out and paint `root` (document order: parents under children).
-pub fn render(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64, y: f64, w: f64, state: &dyn Fn(&str) -> State) -> Dom {
-    let dom = lay_out(ctx, sheet, root, x, y, w, state);
+/// Paint a laid-out tree (document order: parents under children).
+pub fn paint(ctx: &mut dyn RenderContext, dom: &Dom) {
     for b in &dom.boxes {
         paint_box(ctx, b);
     }
+}
+
+/// Lay out and paint `root`.
+pub fn render(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64, y: f64, w: f64, state: &dyn Fn(&str) -> State) -> Dom {
+    let dom = lay_out(ctx, sheet, root, x, y, w, state);
+    paint(ctx, &dom);
     dom
 }
 
@@ -334,5 +448,29 @@ mod tests {
         let b = d.boxes.iter().find(|b| b.id.as_deref() == Some("sel:tz")).unwrap();
         assert_eq!(b.style.background.as_deref(), Some("#333"));
         assert_eq!(b.kind, "select");
+    }
+
+    #[test]
+    fn white_space_normal_wraps_at_spaces_and_hyphens() {
+        let u: Units = [("one", 30.0, false, false), ("two-", 40.0, true, false), ("three", 50.0, false, false), ("four", 40.0, true, false)]
+            .iter()
+            .map(|(t, w, sp, nl)| (t.to_string(), *w, *sp, *nl))
+            .collect();
+        // Unlimited: one line, spaces counted, no space at the hyphen break.
+        assert_eq!(break_lines(&u, 5.0, None), vec![(0, 4, 30.0 + 5.0 + 40.0 + 50.0 + 5.0 + 40.0)]);
+        // 100 px: "one two-" | "three four"; 80 px: "four" goes to a third line.
+        assert_eq!(break_lines(&u, 5.0, Some(100.0)), vec![(0, 2, 75.0), (2, 4, 95.0)]);
+        assert_eq!(break_lines(&u, 5.0, Some(80.0)).len(), 3);
+        assert_eq!(line_text(&u, 0, 2), "one two-");
+        assert_eq!(line_text(&u, 2, 4), "three four");
+        // Laid out in a narrow box the text grows by whole lines; nowrap stays one line.
+        let mut ctx = crate::testing::RecordingRenderContext::with_char_width(7.0);
+        let sh = Sheet::parse("div.p { width: 60px; font-size: 10px; line-height: 15px } div.w { white-space: normal }").unwrap();
+        let text = "aaaa bbbb cccc dddd eeee";
+        let one = lay_out(&mut ctx, &sh, &El::new("div.p").child(El::new("div").id("t").text(text)), 0.0, 0.0, 500.0, &|_| State::NONE);
+        let many = lay_out(&mut ctx, &sh, &El::new("div.p.w").child(El::new("div").id("t").text(text)), 0.0, 0.0, 500.0, &|_| State::NONE);
+        assert_eq!(one.rect("t").unwrap().height, 15.0);
+        let h = many.rect("t").unwrap().height;
+        assert!(h > 15.0 && (h / 15.0).fract() == 0.0, "{h}");
     }
 }

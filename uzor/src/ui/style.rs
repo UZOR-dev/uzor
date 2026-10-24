@@ -137,6 +137,9 @@ pub struct Style {
     pub box_shadow: Option<String>,
     pub cursor: Option<String>,
     pub text_align: Option<String>,
+    /// `white-space` (inherited): `normal` lets [`crate::ui::dom`] text wrap; unset or
+    /// `nowrap` keeps one line (ellipsized when it does not fit).
+    pub white_space: Option<String>,
     /// Custom properties (`--name: value`) set on the element or inherited, as in CSS.
     pub custom: std::collections::BTreeMap<String, String>,
     /// `transition` entries (see [`crate::ui::motion`]).
@@ -451,6 +454,7 @@ impl Sheet {
             s.font_family = p.font_family.clone();
             s.line_height = p.line_height;
             s.text_align = p.text_align.clone();
+            s.white_space = p.white_space.clone();
             s.custom = p.custom.clone();
         }
         let mut hits: Vec<&Rule> = self.rules.iter().filter(|r| r.sel.matches(n)).collect();
@@ -591,6 +595,7 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         "box-shadow" => s.box_shadow = Some(v.into()),
         "cursor" => s.cursor = Some(v.into()),
         "text-align" => s.text_align = Some(v.into()),
+        "white-space" => s.white_space = Some(v.into()),
         "transition" => s.transitions = super::motion::parse_transitions(v),
         "animation" => s.animations = super::motion::parse_animations(v),
         _ => {}

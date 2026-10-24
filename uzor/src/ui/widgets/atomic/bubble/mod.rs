@@ -79,7 +79,7 @@ pub fn wrap_lines(ctx: &mut dyn RenderContext, text: &str, max_w: f64) -> Vec<St
 }
 
 /// `word` split after each hyphen that sits between two alphanumerics.
-fn hyphen_segments(word: &str) -> Vec<&str> {
+pub(crate) fn hyphen_segments(word: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0;
     let cs: Vec<(usize, char)> = word.char_indices().collect();
