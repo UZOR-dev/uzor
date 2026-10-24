@@ -12,8 +12,16 @@
 //! (`--chevron` colour, default the text colour). Everything else is a plain box.
 //! `display:none` removes an element; `:hover` / `:focus-visible` / `:disabled` /
 //! `:active` rules apply through the state callback given to [`render`].
+//!
+//! Animation nodes ([`El::anim`]) are boxes like any other (flex sizes them, an `id` makes
+//! them hits, document order is their z-order) whose content is painted every frame by a
+//! named [`AnimScript`](crate::render::AnimScript) from an
+//! [`AnimRegistry`](crate::render::AnimRegistry): typically a canvas-style JS function
+//! (`uzor-anim-js`: the page's engine on web, QuickJS on native) with a Rust or baked
+//! fallback. [`paint_with`] / [`paint_anim`] paint them; an animation outside the visible
+//! rect, fully transparent, or in a paused frame does not run.
 
-use crate::render::{RenderContext, TextAlign};
+use crate::render::{AnimParams, AnimRegistry, RenderContext, TextAlign};
 use crate::types::Rect;
 use crate::ui::css_box::ellipsize;
 use crate::ui::css_text::{fill_text_css, INTER};
@@ -36,7 +44,56 @@ pub struct El {
     pub name: Option<String>,
     /// Inline `<svg>` markup drawn into the content box (stroke = the text colour).
     pub svg: Option<String>,
+    /// Animated content ([`El::anim`]).
+    pub anim: Option<AnimNode>,
     pub children: Vec<El>,
+}
+
+/// What an animation node paints: the script `name` in an [`AnimRegistry`] and its
+/// per-instance params (the [`AnimParams`] besides the size and the pointer).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnimNode {
+    pub name: String,
+    pub seed: u32,
+    pub args: [f64; crate::render::anim_script::ANIM_ARGS],
+    /// Frames per second while it moves; `None`: a still frame (painted, no next frame asked).
+    pub fps: Option<f64>,
+    /// The script gets the window pointer wherever it is (eyes that follow it), not only
+    /// while this node is the topmost thing under it.
+    pub track_pointer: bool,
+    /// Paint outside the content box (CSS `overflow: visible`); by default the frame is
+    /// clipped to the content box, like a `<canvas>`.
+    pub overflow: bool,
+}
+
+impl AnimNode {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into(), seed: 0, args: [0.0; crate::render::anim_script::ANIM_ARGS], fps: Some(30.0), track_pointer: false, overflow: false }
+    }
+    pub fn seed(mut self, seed: u32) -> Self {
+        self.seed = seed;
+        self
+    }
+    /// The first `args` (up to [`ANIM_ARGS`](crate::render::anim_script::ANIM_ARGS); the rest 0).
+    pub fn args<const N: usize>(mut self, args: [f64; N]) -> Self {
+        let n = N.min(self.args.len());
+        self.args = Default::default();
+        self.args[..n].copy_from_slice(&args[..n]);
+        self
+    }
+    /// `None`: still.
+    pub fn fps(mut self, fps: Option<f64>) -> Self {
+        self.fps = fps;
+        self
+    }
+    pub fn track_pointer(mut self, on: bool) -> Self {
+        self.track_pointer = on;
+        self
+    }
+    pub fn overflow_visible(mut self, on: bool) -> Self {
+        self.overflow = on;
+        self
+    }
 }
 
 impl El {
@@ -69,6 +126,12 @@ impl El {
         self.svg = Some(markup.into());
         self
     }
+    /// Animated content: `node`'s script paints the content box every frame
+    /// (see [`paint_with`]).
+    pub fn anim(mut self, node: AnimNode) -> Self {
+        self.anim = Some(node);
+        self
+    }
     pub fn child(mut self, c: El) -> Self {
         self.children.push(c);
         self
@@ -98,6 +161,7 @@ pub struct Placed {
     pub tab: bool,
     pub name: Option<String>,
     pub svg: Option<String>,
+    pub anim: Option<AnimNode>,
 }
 
 /// A rendered tree, in paint (document) order.
@@ -143,6 +207,7 @@ struct Resolved {
     tab: bool,
     name: Option<String>,
     svg: Option<String>,
+    anim: Option<AnimNode>,
     /// Measured text: break units and line height.
     measured: Option<(Units, f64)>,
     /// Width of a space in the element's font (wrapping text).
@@ -181,7 +246,7 @@ fn resolve(ctx: &mut dyn RenderContext, sheet: &Sheet, el: &El, parent: Option<&
     let space = if el.text.is_some() && wraps(&s) { ctx.measure_text(" ") } else { 0.0 };
     let children = el.children.iter().filter_map(|c| resolve(ctx, sheet, c, Some(&s), state)).collect();
     let kind = el.spec.split(['.', '#', ':']).next().unwrap_or("div").to_string();
-    Some(Resolved { kind, id: el.id.clone(), style: s, text: el.text.clone(), tab: el.tab, name: el.name.clone(), svg: el.svg.clone(), measured, space, children })
+    Some(Resolved { kind, id: el.id.clone(), style: s, text: el.text.clone(), tab: el.tab, name: el.name.clone(), svg: el.svg.clone(), anim: el.anim.clone(), measured, space, children })
 }
 
 /// The most lines wrapping text may take (`line-clamp`).
@@ -283,7 +348,7 @@ fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, alpha: f64) {
     let mut style = r.style;
     let a = alpha * style.opacity.unwrap_or(1.0);
     style.opacity = (a < 1.0).then_some(a);
-    out.push(Placed { id: r.id, kind: r.kind, rect: l.rect, style, text: r.text, tab: r.tab, name: r.name, svg: r.svg });
+    out.push(Placed { id: r.id, kind: r.kind, rect: l.rect, style, text: r.text, tab: r.tab, name: r.name, svg: r.svg, anim: r.anim });
     for (c, cl) in r.children.into_iter().zip(&l.children) {
         place(c, cl, out, a);
     }
@@ -400,6 +465,99 @@ pub fn paint(ctx: &mut dyn RenderContext, dom: &Dom) {
     }
 }
 
+/// One frame of a tree's animation nodes ([`paint_with`], [`paint_anim`]).
+pub struct AnimFrame<'a> {
+    /// Seconds on the host's clock.
+    pub t: f64,
+    /// What can be seen, in the tree's coordinates (a scroll viewport, the window):
+    /// nodes outside it do not run.
+    pub visible: Rect,
+    /// The window pointer, for nodes that track it.
+    pub pointer: Option<(f64, f64)>,
+    /// The pointer if `id` is the topmost hit under it (z-order safe, as the framework's
+    /// `pointer_over`): what other nodes see, so a drawer above one hides the pointer
+    /// from it.
+    pub pointer_over: &'a dyn Fn(&str) -> Option<(f64, f64)>,
+    /// Hidden page or reduced motion: nodes paint frame `t` but ask for no next frame.
+    pub paused: bool,
+}
+
+impl<'a> AnimFrame<'a> {
+    /// A frame at `t` showing `visible`, without a pointer.
+    pub fn new(t: f64, visible: Rect) -> Self {
+        Self { t, visible, pointer: None, pointer_over: &|_| None, paused: false }
+    }
+}
+
+/// What the animation nodes of a frame need next.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AnimReport {
+    /// Nodes that ran.
+    pub painted: usize,
+    /// Seconds until the next frame some running node needs (`None`: all still).
+    pub next: Option<f64>,
+    /// A painted node tracks the pointer: repaint when it moves.
+    pub tracks_pointer: bool,
+}
+
+/// The content box of a placed element.
+pub fn content_box(b: &Placed) -> Rect {
+    let s = &b.style;
+    let (r, bw, p) = (b.rect, s.border_width.unwrap_or(0.0), s.padding.unwrap_or([0.0; 4]));
+    Rect::new(r.x + p[3] + bw, r.y + p[0] + bw, (r.width - p[1] - p[3] - 2.0 * bw).max(0.0), (r.height - p[0] - p[2] - 2.0 * bw).max(0.0))
+}
+
+/// Run `b`'s animation (if it has one) for `frame`: the script paints in content-box
+/// coordinates (origin at its top-left, `p.w` × `p.h`), clipped to it unless
+/// [`AnimNode::overflow`], under the element's opacity; the pointer is given in the same
+/// local coordinates. Skipped when the box is outside `frame.visible` or transparent.
+/// Returns whether it ran; its needs are added to `report`.
+pub fn paint_anim(ctx: &mut dyn RenderContext, b: &Placed, reg: &mut AnimRegistry, frame: &AnimFrame<'_>, report: &mut AnimReport) -> bool {
+    let Some(a) = &b.anim else { return false };
+    let c = content_box(b);
+    let v = frame.visible;
+    let outside = c.x >= v.x + v.width || c.y >= v.y + v.height || c.x + c.width <= v.x || c.y + c.height <= v.y;
+    let alpha = b.style.opacity.unwrap_or(1.0);
+    if outside || c.width <= 0.0 || c.height <= 0.0 || alpha <= 0.0 {
+        return false;
+    }
+    let ptr = if a.track_pointer { frame.pointer } else { b.id.as_deref().and_then(frame.pointer_over) };
+    let params = AnimParams { w: c.width, h: c.height, seed: a.seed, mouse: ptr.map(|(x, y)| (x - c.x, y - c.y)), args: a.args };
+    ctx.save();
+    if !a.overflow {
+        ctx.begin_path();
+        ctx.rect(c.x, c.y, c.width, c.height);
+        ctx.clip();
+    }
+    ctx.translate(c.x, c.y);
+    if alpha < 1.0 {
+        ctx.set_global_alpha(alpha);
+    }
+    let ok = reg.paint(ctx, &a.name, frame.t, &params).is_ok();
+    ctx.restore();
+    if alpha < 1.0 {
+        ctx.set_global_alpha(1.0);
+    }
+    report.painted += 1;
+    report.tracks_pointer |= a.track_pointer && ptr.is_some();
+    if let (Some(fps), false, true) = (a.fps.filter(|f| *f > 0.0), frame.paused, ok) {
+        let d = 1.0 / fps;
+        report.next = Some(report.next.map_or(d, |n: f64| n.min(d)));
+    }
+    true
+}
+
+/// Paint a laid-out tree with its animation nodes (each box, then its animation, in
+/// document order, so later boxes cover earlier animations).
+pub fn paint_with(ctx: &mut dyn RenderContext, dom: &Dom, reg: &mut AnimRegistry, frame: &AnimFrame<'_>) -> AnimReport {
+    let mut report = AnimReport::default();
+    for b in &dom.boxes {
+        paint_box(ctx, b);
+        paint_anim(ctx, b, reg, frame, &mut report);
+    }
+    report
+}
+
 /// Lay out and paint `root`.
 pub fn render(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64, y: f64, w: f64, state: &dyn Fn(&str) -> State) -> Dom {
     let dom = lay_out(ctx, sheet, root, x, y, w, state);
@@ -493,5 +651,65 @@ mod tests {
         let clamped = render(&mut ctx, &sh2, &El::new("div.p").child(El::new("div.c").id("t").text(text)), 0.0, 0.0, 500.0, &|_| State::NONE);
         assert_eq!(clamped.rect("t").unwrap().height, 30.0);
         assert_eq!(clamped.boxes.last().unwrap().style.line_clamp, Some(2));
+    }
+
+    #[test]
+    fn anim_nodes_lay_out_paint_and_pause() {
+        use crate::render::{AnimRegistry, FnAnim};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let mut ctx = NullRenderContext::default();
+        let sh = Sheet::parse("div.row { display: flex; gap: 4px; padding: 2px } div.av { width: 40px; height: 40px; padding: 2px } div.grow { flex-grow: 1 }").unwrap();
+        let root = El::new("div.row")
+            .child(El::new("div.av").id("a").anim(AnimNode::new("spy").seed(7).args([1.0, 2.0, 3.0, 4.0])))
+            .child(El::new("div.grow").id("drawer"))
+            .child(El::new("div.av").id("b").anim(AnimNode::new("spy").fps(None).track_pointer(true)));
+        let d = lay_out(&mut ctx, &sh, &root, 10.0, 20.0, 300.0, &|_| State::NONE);
+        let (a, b) = (d.rect("a").unwrap(), d.rect("b").unwrap());
+        assert_eq!((a.x, a.y, a.width), (12.0, 22.0, 40.0));
+        assert_eq!(b.x + b.width, 10.0 + 300.0 - 2.0, "flex places the anim box like any other");
+        let seen: Rc<RefCell<Vec<AnimParams>>> = Rc::default();
+        let s2 = seen.clone();
+        let mut reg = AnimRegistry::new();
+        reg.fallback("spy", Box::new(FnAnim(move |_: &mut dyn RenderContext, _t: f64, p: &AnimParams| s2.borrow_mut().push(*p))));
+        // The pointer is over `a` (topmost there), 5px into its content box.
+        let over = |id: &str| (id == "a").then_some((a.x + 2.0 + 5.0, a.y + 2.0 + 6.0));
+        let f = AnimFrame { t: 1.0, visible: Rect::new(0.0, 0.0, 1000.0, 1000.0), pointer: Some((0.0, 0.0)), pointer_over: &over, paused: false };
+        let r = paint_with(&mut ctx, &d, &mut reg, &f);
+        assert_eq!(r.painted, 2);
+        assert_eq!(r.next, Some(1.0 / 30.0), "only `a` moves");
+        assert!(r.tracks_pointer);
+        let v = seen.borrow().clone();
+        assert_eq!((v[0].w, v[0].h, v[0].seed, v[0].args), (36.0, 36.0, 7, [1.0, 2.0, 3.0, 4.0, 0.0, 0.0, 0.0, 0.0]));
+        assert_eq!(v[0].mouse, Some((5.0, 6.0)), "local coordinates");
+        assert_eq!(v[1].mouse, Some((-(b.x + 2.0), -(b.y + 2.0))), "a tracking node sees the window pointer anywhere");
+        // Not topmost: no pointer for the hover-only node.
+        seen.borrow_mut().clear();
+        let f2 = AnimFrame { pointer_over: &|_| None, ..AnimFrame::new(2.0, Rect::new(0.0, 0.0, 1000.0, 1000.0)) };
+        paint_with(&mut ctx, &d, &mut reg, &f2);
+        assert_eq!(seen.borrow()[0].mouse, None);
+        // Scrolled out of view: nothing runs, no frame asked; paused: runs, asks nothing.
+        seen.borrow_mut().clear();
+        let r = paint_with(&mut ctx, &d, &mut reg, &AnimFrame::new(3.0, Rect::new(0.0, 100.0, 1000.0, 100.0)));
+        assert_eq!((r.painted, r.next, seen.borrow().len()), (0, None, 0));
+        let r = paint_with(&mut ctx, &d, &mut reg, &AnimFrame { paused: true, ..AnimFrame::new(3.0, Rect::new(0.0, 0.0, 1000.0, 1000.0)) });
+        assert_eq!((r.painted, r.next), (2, None));
+    }
+
+    #[test]
+    fn anim_frame_is_clipped_to_its_content_box() {
+        use crate::render::{AnimRegistry, FnAnim};
+        let mut ctx = crate::testing::RecordingRenderContext::new();
+        let sh = Sheet::parse("div.av { width: 20px; height: 10px }").unwrap();
+        let mut reg = AnimRegistry::new();
+        reg.fallback("dot", Box::new(FnAnim(|c: &mut dyn RenderContext, _t: f64, _p: &AnimParams| c.fill_rect(0.0, 0.0, 1.0, 1.0))));
+        for overflow in [false, true] {
+            let d = lay_out(&mut ctx, &sh, &El::new("div.av").anim(AnimNode::new("dot").overflow_visible(overflow)), 5.0, 6.0, 100.0, &|_| State::NONE);
+            ctx.ops.clear();
+            paint_with(&mut ctx, &d, &mut reg, &AnimFrame::new(0.0, Rect::new(0.0, 0.0, 100.0, 100.0)));
+            let ops = format!("{:?}", ctx.ops);
+            assert_eq!(ops.contains("Clip"), !overflow, "{ops}");
+            assert!(ops.contains("Translate"), "{ops}");
+        }
     }
 }
