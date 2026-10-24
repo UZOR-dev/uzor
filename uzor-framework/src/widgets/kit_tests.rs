@@ -306,3 +306,54 @@ fn field_registers_names_masks_and_feeds_the_store() {
     let r = h.frame(&v, |cx| pw().set(Some("")).build(cx));
     assert_eq!(r.text, "");
 }
+
+fn key(code: uzor::input::keyboard::KeyCode, text: Option<&str>) -> crate::KeyInput {
+    crate::KeyInput { code, text: text.map(str::to_string), state: crate::KeyState::Down, mods: Default::default() }
+}
+
+#[test]
+fn select_keyboard_search_escape_and_stays_inside_its_container() {
+    use uzor::input::keyboard::KeyCode as K;
+    let mut h = Harness::default();
+    let zones: Vec<String> = (0..30).map(|i| format!("Zone/City_{i:02}")).collect();
+    let opts: Vec<&str> = zones.iter().map(String::as_str).collect();
+    let mut choice = 3usize;
+    // The trigger sits near the bottom-right of a 400x300 dialog.
+    let dlg = Rect::new(0.0, 0.0, 400.0, 300.0);
+    let rect = Rect::new(300.0, 240.0, 90.0, 28.0);
+    let none: Option<&crate::KeyInput> = None;
+    let frame = |h: &mut Harness, ev: &_, k: Option<&crate::KeyInput>, c: &mut usize| h.frame(ev, |cx| select("tz", rect, &opts).within(dlg).key(k).bind(c).build(cx));
+    let r = frame(&mut h, &click("tz"), none, &mut choice);
+    assert!(r.checked, "a click opens it");
+    frame(&mut h, &idle(), none, &mut choice);
+    // Searchable (30 > 10 rows): 280 wide, flipped above and shifted left, inside the dialog.
+    let list = h.coord.widget_rect(&WidgetId::from("tz:list")).expect("list registered");
+    assert!(list.x >= 0.0 && list.x + list.width <= 400.0 && list.y >= 0.0 && list.y + list.height <= 300.0, "{list:?}");
+    assert!(list.y + list.height <= 240.0, "opens above the trigger: {list:?}");
+    // The chosen option is highlighted; ArrowDown moves; Enter picks it.
+    let down = key(K::ArrowDown, None);
+    let r = frame(&mut h, &idle(), Some(&down), &mut choice);
+    assert!(r.pressed && r.checked);
+    let enter = key(K::Enter, None);
+    let r = frame(&mut h, &idle(), Some(&enter), &mut choice);
+    assert_eq!((r.index, r.changed, choice, r.checked), (Some(4), true, 4, false));
+    // Enter on the focused trigger is not handled here (not focused in the harness): reopen by click,
+    // type to filter, then Enter picks the first match.
+    frame(&mut h, &click("tz"), none, &mut choice);
+    for t in ["2", "7"] {
+        let k = key(K::Num2, Some(t));
+        frame(&mut h, &idle(), Some(&k), &mut choice);
+    }
+    frame(&mut h, &idle(), none, &mut choice);
+    assert!(h.coord.widget_rect(&WidgetId::from("tz:list:item:27")).is_some());
+    assert!(h.coord.widget_rect(&WidgetId::from("tz:list:item:26")).is_none(), "filtered out");
+    let r = frame(&mut h, &idle(), Some(&enter), &mut choice);
+    assert_eq!((r.index, choice), (Some(27), 27));
+    // Escape closes without picking, and says it used the key.
+    frame(&mut h, &click("tz"), none, &mut choice);
+    let esc = key(K::Escape, None);
+    let r = frame(&mut h, &idle(), Some(&esc), &mut choice);
+    assert!(r.pressed && !r.checked && r.index.is_none());
+    frame(&mut h, &idle(), none, &mut choice);
+    assert!(h.coord.widget_rect(&WidgetId::from("tz:list")).is_none());
+}

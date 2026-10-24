@@ -20,6 +20,7 @@ pub mod context_menu;
 pub mod terminal;
 pub mod dialog;
 pub mod dropdown;
+pub mod select;
 pub mod frame_view;
 pub mod image_viewer;
 pub mod modal;

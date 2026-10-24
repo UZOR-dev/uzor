@@ -20,7 +20,7 @@
 //! |----------|--------------------------------|---------------------------------|
 //! | button   | [`button`]`(id, rect)`         | `.on_click`, `.bind_count`      |
 //! | input    | [`input`]`(id, rect, &mut text)` | `changed`, focused; edits itself |
-//! | select   | [`select`]`(id, rect, options)`| `index` picked, `changed`       |
+//! | select   | [`select`]`(id, rect, options)` + `.key`, `.within` | `index` picked, `changed`, `checked` open |
 //! | menu     | [`menu`]`(id, at, items, open)`| `index` picked                  |
 //! | dialog   | [`dialog`]`(id, rect)`         | `index` footer button, `clicked` close |
 //! | tabs     | [`tabs`]`(id, rect, labels)`   | `index` clicked, `changed`      |
@@ -66,11 +66,9 @@ use uzor::ui::widgets::composite::context_menu::{
     draw_context_menu, register_input_coordinator_context_menu, ContextMenuItem,
     ContextMenuRenderKind, ContextMenuSettings, ContextMenuState, ContextMenuView,
 };
-use uzor::ui::widgets::composite::dropdown::{
-    draw_dropdown, register_input_coordinator_dropdown, DropdownItem, DropdownItemRight,
-    DropdownRenderKind, DropdownSettings, DropdownState, DropdownView, DropdownViewKind,
-};
 use uzor::ui::widgets::composite::modal::render::draw_modal;
+use uzor::ui::widgets::composite::select::{draw_list, filter, place, room, SelectKey, SelectState};
+pub use uzor::ui::widgets::composite::select::SelectStyle;
 use uzor::ui::widgets::composite::modal::{
     register_input_coordinator_modal, BackdropKind, FooterBtn, FooterBtnStyle, ModalRenderKind,
     ModalSettings, ModalState, ModalView,
@@ -80,6 +78,7 @@ use uzor::render::RenderContext;
 use uzor::{Rect, WidgetId, WidgetState};
 
 use crate::handle::VisualView;
+use crate::KeyInput;
 use crate::types::spec::Spec;
 
 use super::button::{button_settings, paint_button};
@@ -897,7 +896,10 @@ impl<'a> DrawerBuilder<'a> {
 // -- select -----------------------------------------------------------------
 
 #[derive(Default)]
-struct SelectOpen(bool);
+struct SelectOpen {
+    open: bool,
+    list: SelectState,
+}
 
 /// A button that opens a list of options. Start with [`select`].
 pub struct SelectBuilder<'a> {
@@ -907,12 +909,30 @@ pub struct SelectBuilder<'a> {
     selected: usize,
     bind: Option<&'a mut usize>,
     disabled: bool,
+    searchable: Option<bool>,
+    within: Option<Rect>,
+    style: Option<SelectStyle>,
+    key: Option<&'a KeyInput>,
 }
 
 /// A select showing `options[selected]`. The trigger is `id`; options are
-/// `"{id}:list:item:{i}"`. The open flag lives in the widget state store.
+/// `"{id}:list:item:{i}"` (`i` = index into `options`). The open state (flag,
+/// highlighted row, search text, scroll) lives in the widget state store.
+///
+/// The open list behaves like a native one ([`SelectState`]): forward this
+/// frame's key with [`.key`](SelectBuilder::key) and arrows / Page / Home /
+/// End move, Enter picks, Escape closes, typing filters a searchable list;
+/// Enter, Space or ArrowDown on the focused trigger opens it. The list opens
+/// under the trigger and stays inside [`.within`](SelectBuilder::within)
+/// (the dialog that hosts it), flipping above or shifting as needed.
 pub fn select<'a>(id: impl Into<WidgetId>, rect: Rect, options: &'a [&'a str]) -> SelectBuilder<'a> {
-    SelectBuilder { id: id.into(), rect, options, selected: 0, bind: None, disabled: false }
+    SelectBuilder { id: id.into(), rect, options, selected: 0, bind: None, disabled: false, searchable: None, within: None, style: None, key: None }
+}
+
+/// Whether the select `id` is open (its list shows). An app that closes its
+/// dialog on Escape asks this first: Escape belongs to the open list.
+pub fn select_is_open<'c, C: ContentCx<'c>>(cx: &mut C, id: &str) -> bool {
+    cx.with_paint(|_, widgets, _, _| widgets.states.get_or_insert_with(WidgetId::from(format!("{id}:open")), SelectOpen::default).open)
 }
 
 impl<'a> SelectBuilder<'a> {
@@ -932,23 +952,84 @@ impl<'a> SelectBuilder<'a> {
         self.disabled = on;
         self
     }
+    /// A search line on top of the list (default: more options than the list shows).
+    pub fn searchable(mut self, on: bool) -> Self {
+        self.searchable = Some(on);
+        self
+    }
+    /// Keep the open list inside `container` (a modal card, a panel).
+    pub fn within(mut self, container: Rect) -> Self {
+        self.within = Some(container);
+        self
+    }
+    /// The list's look (e.g. `SelectStyle::from_sheet(&sheet, "div.select-list")`).
+    pub fn style(mut self, s: SelectStyle) -> Self {
+        self.style = Some(s);
+        self
+    }
+    /// This frame's key press, if any (the app forwards unhandled keys).
+    pub fn key(mut self, k: Option<&'a KeyInput>) -> Self {
+        self.key = k.filter(|k| k.state != crate::KeyState::Up);
+        self
+    }
 
-    /// Register and draw (the open list paints after the trigger).
+    /// Register and draw (the open list paints after the trigger). `Response::checked`
+    /// tells whether the list is open after this frame; `Response::pressed` that the key
+    /// given to [`.key`](Self::key) was used.
     pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> Response {
         let theme = theme_of(cx);
-        let ids: Vec<String> = (0..self.options.len()).map(|i| i.to_string()).collect();
+        let ls = self.style.unwrap_or_default();
+        let searchable = self.searchable.unwrap_or(self.options.len() > ls.window());
+        let ls = match self.within {
+            Some(w) => ls.fit(room(self.rect, w, ls.gap), searchable),
+            None => ls,
+        };
+        let win = ls.window();
+        let labels: Vec<(&str, &str)> = self.options.iter().map(|o| (*o, *o)).collect();
         let mut r = cx.with_paint(|render, widgets, v, tokens| {
             let mut r = Response::of(v, &self.id);
-            r.index = picked(v, &self.id, "list:item");
-            let open = {
-                let st = widgets.states.get_or_insert_with(WidgetId::from(format!("{}:open", self.id.as_str())), SelectOpen::default);
-                if self.disabled || r.index.is_some() || (st.0 && clicked_outside(v, &self.id)) {
-                    st.0 = false;
+            let sid = WidgetId::from(format!("{}:open", self.id.as_str()));
+            let mut key_used = false;
+            let mut close = false;
+            let (open, list) = {
+                let st = widgets.states.get_or_insert_with(sid, SelectOpen::default);
+                r.index = picked(v, &self.id, "list:item");
+                let was = st.open;
+                if self.disabled || r.index.is_some() || (st.open && clicked_outside(v, &self.id)) {
+                    st.open = false;
                 } else if r.clicked {
-                    st.0 = !st.0;
+                    st.open = !st.open;
+                } else if let Some(k) = self.key {
+                    use uzor::input::keyboard::KeyCode as K;
+                    if st.open {
+                        let rows = filter(&labels, &st.list.query);
+                        match st.list.key(k.code, k.text.as_deref(), k.mods.ctrl || k.mods.meta, rows.len(), searchable, win) {
+                            SelectKey::Changed => key_used = true,
+                            SelectKey::Pick(i) => {
+                                r.index = rows.get(i).copied();
+                                st.open = false;
+                                key_used = true;
+                            }
+                            SelectKey::Close => {
+                                close = true;
+                                key_used = true;
+                            }
+                            SelectKey::Ignored => {}
+                        }
+                    } else if r.focused && matches!(k.code, K::Enter | K::Space | K::ArrowDown) {
+                        st.open = true;
+                        key_used = true;
+                    }
                 }
-                st.0
+                if close {
+                    st.open = false;
+                }
+                if st.open && !was {
+                    st.list = SelectState::open_at(Some(self.selected), win);
+                }
+                (st.open, st.list.clone())
             };
+            r.pressed = key_used;
             let label = self.options.get(r.index.unwrap_or(self.selected)).copied().unwrap_or("");
             let view = ButtonView {
                 icon: None,
@@ -963,37 +1044,25 @@ impl<'a> SelectBuilder<'a> {
             paint_button(render, widgets, v, self.id.clone(), self.rect, &view, &bs);
             widgets.coord.set_a11y(&self.id, label, None);
             if open {
-                let items: Vec<DropdownItem<'_>> = self
-                    .options
-                    .iter()
-                    .zip(&ids)
-                    .map(|(l, id)| DropdownItem::Item {
-                        id: id.as_str(),
-                        label: l,
-                        icon: None,
-                        right: DropdownItemRight::None,
-                        disabled: false,
-                        danger: false,
-                        accent_color: None,
-                    })
-                    .collect();
-                let hovered = v.hovered().and_then(|w| w.as_str().strip_prefix(&format!("{}:list:item:", self.id.as_str())).map(str::to_owned));
-                let mut state = DropdownState::default();
-                state.open_below(self.rect, 4.0);
-                let dv = DropdownView {
-                    anchor: Some(self.rect),
-                    position_override: None,
-                    open: true,
-                    kind: DropdownViewKind::Flat { items: &items, hovered_id: hovered.as_deref(), submenu_items: None, submenu_hovered_id: None },
-                    size_mode: Default::default(),
-                    overflow: Default::default(),
-                    submenu_width: Default::default(),
-                };
-                let ds = DropdownSettings { theme: Box::new(theme), ..Default::default() };
+                let rows = filter(&labels, &list.query);
+                let (w, h) = ls.list_size(rows.len(), searchable, self.rect.width);
+                let within = self.within.unwrap_or(Rect::new(-1.0e6, -1.0e6, 2.0e6, 2.0e6));
+                let b = place(self.rect, w, h, within, ls.gap);
+                let shown: Vec<(&str, bool)> = rows.iter().map(|&i| (self.options[i], i == self.selected)).collect();
+                let pre = format!("{}:list:item:", self.id.as_str());
+                let hovered: Option<usize> = v.hovered().and_then(|w| w.as_str().strip_prefix(pre.as_str())?.parse().ok());
+                let hover = |k: usize| hovered.is_some() && rows.get(k).copied() == hovered;
+                let painted = draw_list(render, b, &shown, &list, searchable.then_some(list.query.as_str()), &hover, &ls);
                 let (coord, _, layer) = parts(widgets);
-                register_input_coordinator_dropdown(coord, WidgetId::from(format!("{}:list", self.id.as_str())), self.rect, &state, &dv, &ds, DropdownRenderKind::Flat, layer);
-                draw_dropdown(render, self.rect, &state, &dv, &ds, DropdownRenderKind::Flat);
+                coord.register_atomic(WidgetId::from(format!("{}:list", self.id.as_str())), WidgetKind::Custom, b, Sense::CLICK | Sense::HOVER, layer);
+                for (k, rr) in painted {
+                    let oi = rows[k];
+                    let rid = child(&self.id, "list:item", oi);
+                    coord.register_atomic(rid.clone(), WidgetKind::Item, rr, Sense::CLICK | Sense::HOVER, layer);
+                    coord.set_a11y(&rid, self.options[oi], Some(oi == self.selected));
+                }
             }
+            r.checked = open;
             r
         });
         if let Some(i) = r.index {
