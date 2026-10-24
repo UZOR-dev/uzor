@@ -533,6 +533,14 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         }
         "padding" => s.padding = edges(v),
         "margin" => s.margin = edges(v),
+        _ if k.starts_with("padding-") || k.starts_with("margin-") => {
+            let (box_, side) = k.split_once('-').unwrap_or_default();
+            let i = ["top", "right", "bottom", "left"].iter().position(|x| *x == side);
+            let e = if box_ == "padding" { &mut s.padding } else { &mut s.margin };
+            if let (Some(i), Some(n)) = (i, px(v)) {
+                e.get_or_insert([0.0; 4])[i] = n;
+            }
+        }
         "border-radius" => s.border_radius = px(v),
         "font-size" => s.font_size = px(v),
         "font-weight" => {
@@ -864,5 +872,14 @@ mod tests {
         assert_eq!((s.border_width, s.border_color.as_deref(), s.border_radius, s.margin), (Some(1.0), Some("#1b1b1b"), Some(12.0), Some([0.0, 0.0, 8.0, 0.0])));
         assert!(Sheet::parse(".a{color:#fff").is_err());
         assert!(Sheet::parse(".a{color}").is_err());
+    }
+
+    #[test]
+    fn margin_and_padding_longhands_set_one_side() {
+        let sh = Sheet::parse(".a{margin-top:18px}.b{padding:4px;padding-right:50px;margin-left:3px}").unwrap();
+        let a = sh.resolve(&Node::new("div").class("a"), None);
+        assert_eq!(a.margin, Some([18.0, 0.0, 0.0, 0.0]));
+        let b = sh.resolve(&Node::new("div").class("b"), None);
+        assert_eq!((b.padding, b.margin), (Some([4.0, 50.0, 4.0, 4.0]), Some([0.0, 0.0, 0.0, 3.0])));
     }
 }
