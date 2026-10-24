@@ -36,3 +36,6 @@ pub const C_58A6FF: &str = "#58a6ff";
 pub const BLACK: &str = "#000000";
 #[allow(dead_code)]
 pub const SCRIM_75: &str = "rgba(0,0,0,0.75)";
+
+/// Glyph of an unavailable mic.
+pub const MIC_OFF: &str = "#5c5c5c";

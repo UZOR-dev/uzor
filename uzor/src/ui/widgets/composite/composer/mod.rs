@@ -105,6 +105,8 @@ pub struct ComposerStyle {
     /// An empty rich composer swaps send for a voice-chat button. Off by
     /// default: the HQ page (`#sendbtn`) always shows send.
     pub voice_when_empty: bool,
+    /// The mic is unavailable (no dictation backend): drawn dimmed, no hover.
+    pub mic_off: bool,
 }
 
 crate::styled!(ComposerStyle {
@@ -138,6 +140,7 @@ impl Default for ComposerStyle {
             send_bg: tokens::SEND_BG,
             send_hover: tokens::SEND_HOVER,
             voice_when_empty: false,
+            mic_off: false,
         }
     }
 }
@@ -288,7 +291,7 @@ fn draw_text_lines(ctx: &mut dyn RenderContext, x0: f64, top: f64, view: &Compos
 fn draw_buttons(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &ComposerView<'_>, voice: bool, st: &ComposerStyle) {
     let hov = |p| view.hovered == Some(p);
     round_btn(ctx, hits.attach, if hov(ComposerPart::Attach) { st.btn_hover } else { st.btn_bg });
-    round_btn(ctx, hits.mic, if hov(ComposerPart::Mic) { st.btn_hover } else { st.btn_bg });
+    round_btn(ctx, hits.mic, if hov(ComposerPart::Mic) && !st.mic_off { st.btn_hover } else { st.btn_bg });
     round_btn(ctx, hits.send, if hov(ComposerPart::Send) { st.send_hover } else { st.send_bg });
     ctx.set_line_cap("round");
     ctx.set_line_join("round");
@@ -302,6 +305,9 @@ fn draw_buttons(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &Compose
     ctx.stroke();
     // mic: <rect x=9 y=3 w=6 h=11 rx=3/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/> 17px
     let g = Svg::new(hits.mic, 17.0);
+    if st.mic_off {
+        ctx.set_stroke_color(tokens::MIC_OFF);
+    }
     ctx.set_stroke_width(2.0 * g.k);
     path_round_rect(ctx, Rect::new(g.x + 9.0 * g.k, g.y + 3.0 * g.k, 6.0 * g.k, 11.0 * g.k), 3.0 * g.k);
     ctx.stroke();
@@ -312,8 +318,7 @@ fn draw_buttons(ctx: &mut dyn RenderContext, hits: &ComposerHits, view: &Compose
     g.m(ctx, 12.0, 18.0); g.l(ctx, 12.0, 21.0);
     ctx.stroke();
     if voice {
-        // Voice chat (empty composer): purple disc, waveform bars.
-        round_btn(ctx, hits.send, if hov(ComposerPart::Send) { VOICE_HOVER } else { VOICE_BG });
+        // Voice chat (empty composer): the send disc (accent) with waveform bars.
         let g = Svg::new(hits.send, 17.0);
         ctx.set_stroke_color(tokens::WHITE);
         ctx.set_stroke_width(2.2 * g.k);
@@ -387,7 +392,8 @@ mod grow_tests {
 // voice-chat button while empty.
 // ---------------------------------------------------------------------------
 
-/// Voice-chat button fill (empty composer).
+/// Purple voice fill: pass it as `send_bg` for the classic look (the voice
+/// button draws with `send_bg` / `send_hover`, the app accent by default).
 pub const VOICE_BG: &str = tokens::VOICE_BG;
 /// Voice-chat button hover fill.
 pub const VOICE_HOVER: &str = tokens::VOICE_HOVER;
