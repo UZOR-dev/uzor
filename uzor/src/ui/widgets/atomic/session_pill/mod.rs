@@ -9,7 +9,7 @@ use crate::render::{RenderContext, TextAlign};
 use crate::ui::css_text::{fill_text_css, INTER};
 use crate::types::{Rect, WidgetId};
 
-use super::critter::{draw_critter_motion, CritterMotion, CritterView};
+use super::critter::{draw_critter, draw_critter_motion, CritterMotion, CritterView};
 
 /// Plain view data.
 #[derive(Clone, Debug)]
@@ -145,8 +145,11 @@ pub fn draw_session_pill(ctx: &mut dyn RenderContext, rect: Rect, view: &Session
     let mut x = rect.x + 1.0 + style.pad_l;
     let cy = rect.y + rect.height / 2.0;
     if let Some(c) = &view.critter {
-        let m = view.motion.unwrap_or(CritterMotion { reduced: true, ..Default::default() });
-        draw_critter_motion(ctx, Rect::new(x, cy - style.avatar / 2.0, style.avatar, style.avatar), c, &m);
+        let r = Rect::new(x, cy - style.avatar / 2.0, style.avatar, style.avatar);
+        match &view.motion {
+            Some(m) => draw_critter_motion(ctx, r, c, m),
+            None => draw_critter(ctx, r, c),
+        }
         x += style.avatar + style.gap;
     }
     ctx.set_font(style.font);

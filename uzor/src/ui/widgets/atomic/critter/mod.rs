@@ -115,7 +115,7 @@ pub fn critter_view(name: &str, family: CritterFamily) -> CritterView {
 
 /// Paint a critter scaled into `rect` (square fit, centred), at rest.
 pub fn draw_critter(ctx: &mut dyn RenderContext, rect: Rect, view: &CritterView) {
-    draw_critter_motion(ctx, rect, view, &CritterMotion { reduced: true, ..Default::default() });
+    draw_critter_pose(ctx, rect, view, &CritterPose::REST);
 }
 
 /// Animation state (HQ `avatarState`). State shows only by motion, never by rings,
