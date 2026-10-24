@@ -1,5 +1,6 @@
 //! A small DOM: a tree of elements styled by a [`Sheet`](crate::ui::style::Sheet), laid out
-//! with [`flow`](crate::ui::flow) and painted as CSS boxes (background, border, radius,
+//! with [`flow`](crate::ui::flow) (`display:flex` needs the `flow-flex` feature, on by default)
+//! and painted as CSS boxes (background, border, radius,
 //! `box-shadow`, one line of text with `text-overflow:ellipsis`). Screens describe *what*
 //! is on them (`El::new("div.card").child(...)`) and the stylesheet decides *how it looks
 //! and where it goes*: no per-screen pixel math. [`render`] returns every element's border
@@ -276,7 +277,7 @@ pub fn render(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64, y: 
     dom
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "flow-flex"))]
 mod tests {
     use super::*;
     use crate::testing::NullRenderContext;

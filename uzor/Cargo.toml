@@ -26,7 +26,11 @@ slotmap = "1.0"
 fastrand = "2"
 
 [features]
-default = ["framework-png"]
+default = ["framework-png", "flow-flex", "flow-grid"]
+# `ui::flow` box layout of `display:flex` / `display:grid` (and so `ui::dom`). Without one, such
+# a box lays out as a block; turn off what an app does not use to keep it out of the binary.
+flow-flex = []
+flow-grid = []
 serde = []
 animation = []
 # PNG icon decoding for AppBuilder::icon_from_png. On by default; turn off

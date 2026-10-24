@@ -168,7 +168,9 @@ pub fn auto_fill(avail: f64, min: f64, gap: f64) -> (usize, f64) {
 
 // ---------------------------------------------------------------------------------------
 // Box tree layout: block, flex (row / column, wrap, justify, align) and grid, with
-// intrinsic (min-/max-content) sizing. Boxes are border-box (`box-sizing: border-box`).
+// intrinsic (min-/max-content) sizing. `display:flex` needs the `flow-flex` feature and
+// `display:grid` the `flow-grid` feature (both default); without one, such a box lays out as a
+// block, so an app pulls in only the solvers it uses. The track functions above are always there. Boxes are border-box (`box-sizing: border-box`).
 
 use crate::ui::style::Style;
 use crate::Rect;
@@ -235,6 +237,7 @@ fn mh(s: &Style) -> f64 {
     let m = s.mar();
     m[1] + m[3]
 }
+#[cfg(any(feature = "flow-flex", feature = "flow-grid"))]
 fn mv(s: &Style) -> f64 {
     let m = s.mar();
     m[0] + m[2]
@@ -245,18 +248,22 @@ fn clamp_w(s: &Style, w: f64) -> f64 {
 fn clamp_h(s: &Style, h: f64) -> f64 {
     h.min(s.max_height.unwrap_or(f64::INFINITY)).max(s.min_height.unwrap_or(0.0))
 }
+#[cfg(feature = "flow-flex")]
 fn is(s: &Option<String>, v: &str) -> bool {
     s.as_deref() == Some(v)
 }
 fn display(s: &Style) -> &str {
     s.display.as_deref().unwrap_or("block")
 }
+#[cfg(feature = "flow-flex")]
 fn is_col(s: &Style) -> bool {
     matches!(s.flex_direction.as_deref(), Some("column") | Some("column-reverse"))
 }
+#[cfg(any(feature = "flow-flex", feature = "flow-grid"))]
 fn row_gap(s: &Style) -> f64 {
     s.row_gap.or(s.gap).unwrap_or(0.0)
 }
+#[cfg(any(feature = "flow-flex", feature = "flow-grid"))]
 fn col_gap(s: &Style) -> f64 {
     s.gap.unwrap_or(0.0)
 }
@@ -339,6 +346,7 @@ fn intrinsic(b: &LBox<'_>, min: bool) -> f64 {
         m(if min { Some(0.0) } else { None }).0
     } else {
         match display(s) {
+            #[cfg(feature = "flow-flex")]
             "flex" if !is_col(s) => {
                 let n = b.children.len();
                 let gaps = col_gap(s) * n.saturating_sub(1) as f64;
@@ -348,6 +356,7 @@ fn intrinsic(b: &LBox<'_>, min: bool) -> f64 {
                     kids.sum::<f64>() + gaps
                 }
             }
+            #[cfg(feature = "flow-grid")]
             "grid" => {
                 let tracks = parse_tracks(s.grid_template_columns.as_deref().unwrap_or("1fr"), 0.0, col_gap(s));
                 let n = tracks.len().max(1);
@@ -375,11 +384,13 @@ pub fn layout(b: &LBox<'_>, x: f64, y: f64, avail: f64) -> Laid {
     lay(b, x + b.style.mar()[3], y + b.style.mar()[0], w, None)
 }
 
+#[cfg(any(feature = "flow-flex", feature = "flow-grid"))]
 /// Height of `b`'s border box at border-box width `w`.
 fn height_at(b: &LBox<'_>, w: f64) -> f64 {
     lay(b, 0.0, 0.0, w, None).rect.height
 }
 
+#[cfg(feature = "flow-flex")]
 fn justify_of(s: &Style) -> Justify {
     match s.justify_content.as_deref() {
         Some("flex-end") | Some("end") => Justify::End,
@@ -389,6 +400,7 @@ fn justify_of(s: &Style) -> Justify {
     }
 }
 
+#[cfg(any(feature = "flow-flex", feature = "flow-grid"))]
 fn align_of<'s>(parent: &'s Style, child: &'s Style) -> &'s str {
     match child.align_self.as_deref() {
         Some(a) if a != "auto" => a,
@@ -405,13 +417,17 @@ fn lay(b: &LBox<'_>, x: f64, y: f64, w: f64, forced_h: Option<f64>) -> Laid {
     let (cx, cy) = (x + p[3] + bw, y + p[0] + bw);
     let cw = (w - hz(s)).max(0.0);
     let def_h = forced_h.or(s.height.map(|h| clamp_h(s, h)));
+    #[cfg_attr(not(feature = "flow-flex"), allow(unused_variables))]
     let ch_def = def_h.map(|h| (h - vt(s)).max(0.0));
     let (children, content_h) = if let Some(m) = b.measure {
         (Vec::new(), m(Some(cw)).1)
     } else {
         match display(s) {
+            #[cfg(feature = "flow-flex")]
             "flex" if is_col(s) => flex_col(b, cx, cy, cw, ch_def),
+            #[cfg(feature = "flow-flex")]
             "flex" => flex_rowbox(b, cx, cy, cw, ch_def),
+            #[cfg(feature = "flow-grid")]
             "grid" => grid_box(b, cx, cy, cw),
             _ => block(b, cx, cy, cw),
         }
@@ -441,6 +457,7 @@ fn block(b: &LBox<'_>, cx: f64, cy: f64, cw: f64) -> (Vec<Laid>, f64) {
     (out, yy)
 }
 
+#[cfg(feature = "flow-flex")]
 /// A flex item's hypothetical main size and its clamps (outer = margins included).
 fn item(c: &LBox<'_>, main_col: bool, cross_w: f64) -> FlexItem {
     let s = &c.style;
@@ -460,6 +477,7 @@ fn item(c: &LBox<'_>, main_col: bool, cross_w: f64) -> FlexItem {
     FlexItem { basis: basis + m, grow: s.flex_grow.unwrap_or(0.0), shrink: s.flex_shrink.unwrap_or(1.0), min: min + m, max: max + m }
 }
 
+#[cfg(feature = "flow-flex")]
 fn flex_rowbox(b: &LBox<'_>, cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec<Laid>, f64) {
     let s = &b.style;
     let wrap = is(&s.flex_wrap, "wrap");
@@ -529,6 +547,7 @@ fn flex_rowbox(b: &LBox<'_>, cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec
     (out.into_iter().flatten().collect(), ch.unwrap_or(yy))
 }
 
+#[cfg(feature = "flow-flex")]
 fn flex_col(b: &LBox<'_>, cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec<Laid>, f64) {
     let s = &b.style;
     // Cross (width) first: stretch fills, otherwise fit-content.
@@ -566,6 +585,7 @@ fn flex_col(b: &LBox<'_>, cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec<La
     (out, ch.unwrap_or(end))
 }
 
+#[cfg(feature = "flow-grid")]
 fn grid_box(b: &LBox<'_>, cx: f64, cy: f64, cw: f64) -> (Vec<Laid>, f64) {
     let s = &b.style;
     let tracks = parse_tracks(s.grid_template_columns.as_deref().unwrap_or("1fr"), cw, col_gap(s));
@@ -656,6 +676,7 @@ mod tests {
         assert_eq!(auto_fill(300.0, 380.0, 10.0), (1, 300.0));
     }
 
+    #[cfg(all(feature = "flow-flex", feature = "flow-grid"))]
     fn words<'a>(text: &'a str) -> impl Fn(Option<f64>) -> (f64, f64) + 'a {
         // 7px per char, 10px per space, 20px lines: a deterministic text measurer.
         move |limit| {
@@ -676,6 +697,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "flow-flex", feature = "flow-grid"))]
     fn text_intrinsic_sizes_and_shrink_to_min_content() {
         let a = words("aaaa bb cccccc");
         let t = LBox::css("").text(&a);
@@ -690,6 +712,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "flow-flex", feature = "flow-grid"))]
     fn golden_layouts_match_chrome() {
         let raw = include_str!("../../tests/golden/flow.json");
         let cases: serde_json::Value = serde_json::from_str(raw).unwrap();
