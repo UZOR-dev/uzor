@@ -1,6 +1,53 @@
 use super::context::RenderContext;
 use super::parse_color;
 
+thread_local! {
+    /// Set while [`draw_svg_icon_exact`] draws: every pixel-grid snap is skipped.
+    static EXACT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn exact() -> bool {
+    EXACT.with(|e| e.get())
+}
+
+/// The icon's top-left, floored to whole pixels unless drawing exactly.
+fn snap_origin(v: f64) -> f64 {
+    if exact() {
+        v
+    } else {
+        v.floor()
+    }
+}
+
+/// [`draw_svg_icon`] without pixel-grid snapping (SVG `shape-rendering:
+/// geometricPrecision`): the icon's origin is not floored to a whole pixel, stroke widths
+/// are not quantized to whole device pixels and axis-aligned strokes are not moved onto
+/// the pixel grid. The icon lands exactly where its box says (a sub-pixel position, a
+/// fractional scale), at the cost of anti-aliased edges; use it for icons that move,
+/// scale or must line up with exactly placed geometry.
+///
+/// ```
+/// use uzor::render::{draw_svg_icon_exact, RenderContext};
+/// const ICON: &str = r#"<svg viewBox="0 0 24 24"><path d="M4 12H20"/></svg>"#;
+/// // An icon riding a drag at a sub-pixel offset: drawn where it is, not snapped.
+/// fn grip(ctx: &mut dyn RenderContext, x: f64, y: f64) {
+///     draw_svg_icon_exact(ctx, ICON, x, y, 18.0, 18.0, "#e5e5e5");
+/// }
+/// ```
+///
+/// In a [`crate::ui::dom`] tree the same switch is the CSS `shape-rendering:
+/// geometricPrecision` on the element holding the [`El::svg`](crate::ui::dom::El::svg).
+pub fn draw_svg_icon_exact(ctx: &mut dyn RenderContext, svg: &str, x: f64, y: f64, width: f64, height: f64, color: &str) {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            EXACT.with(|e| e.set(self.0));
+        }
+    }
+    let _reset = Reset(EXACT.with(|e| e.replace(true)));
+    draw_svg_icon(ctx, svg, x, y, width, height, color);
+}
+
 /// Draw an SVG icon scaled to fit within the given rectangle.
 ///
 /// The SVG is parsed and rendered using the stroke color.
@@ -21,8 +68,8 @@ pub fn draw_svg_icon(ctx: &mut dyn RenderContext, svg: &str, x: f64, y: f64, wid
     let scale_y = height / vb_height;
     let scale = scale_x.min(scale_y); // Uniform scale to fit
 
-    let offset_x = (x + (width - vb_width * scale) / 2.0).floor();
-    let offset_y = (y + (height - vb_height * scale) / 2.0).floor();
+    let offset_x = snap_origin(x + (width - vb_width * scale) / 2.0);
+    let offset_y = snap_origin(y + (height - vb_height * scale) / 2.0);
 
     // Check if root SVG has fill="none" - if so, children default to stroke-only
     // This is the SVG inheritance model: fill="none" on root means no fill unless overridden
@@ -627,6 +674,9 @@ fn parse_root_stroke_width(svg: &str) -> f64 {
 /// directly in the context's own coordinate space.
 #[inline]
 fn quantize_stroke_width(logical_width: f64, dpr: f64) -> f64 {
+    if exact() {
+        return logical_width;
+    }
     let device_width = logical_width * dpr;
     let device_width = if device_width >= 0.75 { device_width.round().max(1.0) } else { device_width };
     device_width / dpr
@@ -650,6 +700,9 @@ struct AxisSnap {
 /// geometry is left exact, matching real SVG rendering.
 #[inline]
 fn snap_axis(v: f64, stroke_width: f64, dpr: f64) -> f64 {
+    if exact() {
+        return v;
+    }
     let device_width = (stroke_width * dpr).round().max(1.0) as i64;
     let odd = device_width % 2 != 0;
     let device_v = v * dpr;
@@ -2217,6 +2270,30 @@ pub fn draw_svg_multicolor(ctx: &mut dyn RenderContext, svg: &str, x: f64, y: f6
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_icons_skip_every_snap() {
+        use crate::testing::{DrawOp, RecordingRenderContext};
+        let icon = r#"<svg viewBox="0 0 24 24" stroke-width="1.5"><path d="M4 12.3H20"/></svg>"#;
+        let first = |exact: bool| {
+            let mut ctx = RecordingRenderContext::new();
+            if exact {
+                draw_svg_icon_exact(&mut ctx, icon, 10.3, 0.0, 24.0, 24.0, "#fff");
+            } else {
+                draw_svg_icon(&mut ctx, icon, 10.3, 0.0, 24.0, 24.0, "#fff");
+            }
+            let w = ctx.ops.iter().find_map(|o| if let DrawOp::StrokeWidth(w) = o { Some(*w) } else { None }).unwrap();
+            let m = ctx.ops.iter().find_map(|o| if let DrawOp::MoveTo { x, y } = o { Some((*x, *y)) } else { None }).unwrap();
+            (w, m)
+        };
+        let (w, (x, _)) = first(false);
+        assert_eq!((w, x), (2.0, 14.0), "snapped: floored origin, whole-pixel stroke");
+        let (w, (x, y)) = first(true);
+        assert_eq!(w, 1.5);
+        assert!((x - 14.3).abs() < 1e-9 && (y - 12.3).abs() < 1e-9, "{x} {y}");
+        // The switch does not leak into the next ordinary draw.
+        assert_eq!(first(false).0, 2.0);
+    }
 
     #[test]
     fn test_parse_viewbox_64x64() {
