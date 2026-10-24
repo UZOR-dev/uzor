@@ -9,6 +9,7 @@
 //! table exists yet to resolve it against (that lands per-widget from H1
 //! Brief 4 onward).
 
+use std::sync::OnceLock;
 use std::collections::HashMap;
 
 use crate::tokens::color::ColorValue;
@@ -101,44 +102,46 @@ impl TokenSet {
 /// token fields (`button`, growing by one per converted widget) stay
 /// private — the only public read path is through a widget's own theme
 /// trait, implemented by [`crate::tokens::theme::TokenTheme`], never a
-/// generic stringly getter.
-#[derive(Clone, Debug)]
+/// generic stringly getter. Each widget's tokens resolve from `semantic` and
+/// `components` on first read, so a binary carries only the resolvers of the
+/// widgets it draws. Cloning copies the inputs and starts with empty caches.
+#[derive(Debug)]
 pub struct Tokens {
     pub semantic: SemanticRoles,
     pub geometry: GeometryRoles,
     pub name: Option<String>,
     pub app: AppTokens,
     pub components: ComponentOverrides,
-    button: crate::ui::widgets::atomic::button::tokens::ButtonTokens,
-    checkbox: crate::ui::widgets::atomic::checkbox::tokens::CheckboxTokens,
-    chevron: crate::ui::widgets::atomic::chevron::tokens::ChevronTokens,
-    clock: crate::ui::widgets::atomic::clock::tokens::ClockTokens,
-    close_button: crate::ui::widgets::atomic::close_button::tokens::CloseButtonTokens,
-    color_swatch: crate::ui::widgets::atomic::color_swatch::tokens::ColorSwatchTokens,
-    drag_handle: crate::ui::widgets::atomic::drag_handle::tokens::DragHandleTokens,
-    dropdown_trigger: crate::ui::widgets::atomic::dropdown_trigger::tokens::DropdownTriggerTokens,
-    item: crate::ui::widgets::atomic::item::tokens::ItemTokens,
-    radio: crate::ui::widgets::atomic::radio::tokens::RadioTokens,
-    scrollbar: crate::ui::widgets::atomic::scrollbar::tokens::ScrollbarTokens,
-    container: crate::ui::widgets::atomic::container::tokens::ContainerTokens,
-    scroll_chevron: crate::ui::widgets::atomic::scroll_chevron::tokens::ScrollChevronTokens,
-    separator: crate::ui::widgets::atomic::separator::tokens::SeparatorTokens,
-    text: crate::ui::widgets::atomic::text::tokens::TextTokens,
-    tab: crate::ui::widgets::atomic::tab::tokens::TabTokens,
-    slider: crate::ui::widgets::atomic::slider::tokens::SliderTokens,
-    text_input: crate::ui::widgets::atomic::text_input::tokens::TextInputTokens,
-    toggle: crate::ui::widgets::atomic::toggle::tokens::ToggleTokens,
-    toast: crate::ui::widgets::atomic::toast::tokens::ToastTokens,
-    tooltip: crate::ui::widgets::atomic::tooltip::tokens::TooltipTokens,
-    blackbox_panel: crate::ui::widgets::composite::blackbox_panel::tokens::BlackboxPanelTokens,
-    chrome: crate::ui::widgets::composite::chrome::tokens::ChromeTokens,
-    context_menu: crate::ui::widgets::composite::context_menu::tokens::ContextMenuTokens,
-    dropdown: crate::ui::widgets::composite::dropdown::tokens::DropdownTokens,
-    modal: crate::ui::widgets::composite::modal::tokens::ModalTokens,
-    panel: crate::ui::widgets::composite::panel::tokens::PanelTokens,
-    popup: crate::ui::widgets::composite::popup::tokens::PopupTokens,
-    sidebar: crate::ui::widgets::composite::sidebar::tokens::SidebarTokens,
-    toolbar: crate::ui::widgets::composite::toolbar::tokens::ToolbarTokens,
+    button: OnceLock<crate::ui::widgets::atomic::button::tokens::ButtonTokens>,
+    checkbox: OnceLock<crate::ui::widgets::atomic::checkbox::tokens::CheckboxTokens>,
+    chevron: OnceLock<crate::ui::widgets::atomic::chevron::tokens::ChevronTokens>,
+    clock: OnceLock<crate::ui::widgets::atomic::clock::tokens::ClockTokens>,
+    close_button: OnceLock<crate::ui::widgets::atomic::close_button::tokens::CloseButtonTokens>,
+    color_swatch: OnceLock<crate::ui::widgets::atomic::color_swatch::tokens::ColorSwatchTokens>,
+    drag_handle: OnceLock<crate::ui::widgets::atomic::drag_handle::tokens::DragHandleTokens>,
+    dropdown_trigger: OnceLock<crate::ui::widgets::atomic::dropdown_trigger::tokens::DropdownTriggerTokens>,
+    item: OnceLock<crate::ui::widgets::atomic::item::tokens::ItemTokens>,
+    radio: OnceLock<crate::ui::widgets::atomic::radio::tokens::RadioTokens>,
+    scrollbar: OnceLock<crate::ui::widgets::atomic::scrollbar::tokens::ScrollbarTokens>,
+    container: OnceLock<crate::ui::widgets::atomic::container::tokens::ContainerTokens>,
+    scroll_chevron: OnceLock<crate::ui::widgets::atomic::scroll_chevron::tokens::ScrollChevronTokens>,
+    separator: OnceLock<crate::ui::widgets::atomic::separator::tokens::SeparatorTokens>,
+    text: OnceLock<crate::ui::widgets::atomic::text::tokens::TextTokens>,
+    tab: OnceLock<crate::ui::widgets::atomic::tab::tokens::TabTokens>,
+    slider: OnceLock<crate::ui::widgets::atomic::slider::tokens::SliderTokens>,
+    text_input: OnceLock<crate::ui::widgets::atomic::text_input::tokens::TextInputTokens>,
+    toggle: OnceLock<crate::ui::widgets::atomic::toggle::tokens::ToggleTokens>,
+    toast: OnceLock<crate::ui::widgets::atomic::toast::tokens::ToastTokens>,
+    tooltip: OnceLock<crate::ui::widgets::atomic::tooltip::tokens::TooltipTokens>,
+    blackbox_panel: OnceLock<crate::ui::widgets::composite::blackbox_panel::tokens::BlackboxPanelTokens>,
+    chrome: OnceLock<crate::ui::widgets::composite::chrome::tokens::ChromeTokens>,
+    context_menu: OnceLock<crate::ui::widgets::composite::context_menu::tokens::ContextMenuTokens>,
+    dropdown: OnceLock<crate::ui::widgets::composite::dropdown::tokens::DropdownTokens>,
+    modal: OnceLock<crate::ui::widgets::composite::modal::tokens::ModalTokens>,
+    panel: OnceLock<crate::ui::widgets::composite::panel::tokens::PanelTokens>,
+    popup: OnceLock<crate::ui::widgets::composite::popup::tokens::PopupTokens>,
+    sidebar: OnceLock<crate::ui::widgets::composite::sidebar::tokens::SidebarTokens>,
+    toolbar: OnceLock<crate::ui::widgets::composite::toolbar::tokens::ToolbarTokens>,
 }
 
 impl Tokens {
@@ -146,49 +149,49 @@ impl Tokens {
     /// through `ButtonTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn button(&self) -> &crate::ui::widgets::atomic::button::tokens::ButtonTokens {
-        &self.button
+        self.button.get_or_init(|| crate::ui::widgets::atomic::button::tokens::ButtonTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `CheckboxTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn checkbox(&self) -> &crate::ui::widgets::atomic::checkbox::tokens::CheckboxTokens {
-        &self.checkbox
+        self.checkbox.get_or_init(|| crate::ui::widgets::atomic::checkbox::tokens::CheckboxTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ChevronTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn chevron(&self) -> &crate::ui::widgets::atomic::chevron::tokens::ChevronTokens {
-        &self.chevron
+        self.chevron.get_or_init(|| crate::ui::widgets::atomic::chevron::tokens::ChevronTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ClockTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn clock(&self) -> &crate::ui::widgets::atomic::clock::tokens::ClockTokens {
-        &self.clock
+        self.clock.get_or_init(|| crate::ui::widgets::atomic::clock::tokens::ClockTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `CloseButtonTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn close_button(&self) -> &crate::ui::widgets::atomic::close_button::tokens::CloseButtonTokens {
-        &self.close_button
+        self.close_button.get_or_init(|| crate::ui::widgets::atomic::close_button::tokens::CloseButtonTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ColorSwatchTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn color_swatch(&self) -> &crate::ui::widgets::atomic::color_swatch::tokens::ColorSwatchTokens {
-        &self.color_swatch
+        self.color_swatch.get_or_init(|| crate::ui::widgets::atomic::color_swatch::tokens::ColorSwatchTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `DragHandleTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn drag_handle(&self) -> &crate::ui::widgets::atomic::drag_handle::tokens::DragHandleTokens {
-        &self.drag_handle
+        self.drag_handle.get_or_init(|| crate::ui::widgets::atomic::drag_handle::tokens::DragHandleTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
@@ -197,35 +200,35 @@ impl Tokens {
     pub(crate) fn dropdown_trigger(
         &self,
     ) -> &crate::ui::widgets::atomic::dropdown_trigger::tokens::DropdownTriggerTokens {
-        &self.dropdown_trigger
+        self.dropdown_trigger.get_or_init(|| crate::ui::widgets::atomic::dropdown_trigger::tokens::DropdownTriggerTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ItemTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn item(&self) -> &crate::ui::widgets::atomic::item::tokens::ItemTokens {
-        &self.item
+        self.item.get_or_init(|| crate::ui::widgets::atomic::item::tokens::ItemTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `RadioTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn radio(&self) -> &crate::ui::widgets::atomic::radio::tokens::RadioTokens {
-        &self.radio
+        self.radio.get_or_init(|| crate::ui::widgets::atomic::radio::tokens::RadioTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ScrollbarTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn scrollbar(&self) -> &crate::ui::widgets::atomic::scrollbar::tokens::ScrollbarTokens {
-        &self.scrollbar
+        self.scrollbar.get_or_init(|| crate::ui::widgets::atomic::scrollbar::tokens::ScrollbarTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ContainerTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn container(&self) -> &crate::ui::widgets::atomic::container::tokens::ContainerTokens {
-        &self.container
+        self.container.get_or_init(|| crate::ui::widgets::atomic::container::tokens::ContainerTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
@@ -234,63 +237,63 @@ impl Tokens {
     pub(crate) fn scroll_chevron(
         &self,
     ) -> &crate::ui::widgets::atomic::scroll_chevron::tokens::ScrollChevronTokens {
-        &self.scroll_chevron
+        self.scroll_chevron.get_or_init(|| crate::ui::widgets::atomic::scroll_chevron::tokens::ScrollChevronTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `SeparatorTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn separator(&self) -> &crate::ui::widgets::atomic::separator::tokens::SeparatorTokens {
-        &self.separator
+        self.separator.get_or_init(|| crate::ui::widgets::atomic::separator::tokens::SeparatorTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `TextTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn text(&self) -> &crate::ui::widgets::atomic::text::tokens::TextTokens {
-        &self.text
+        self.text.get_or_init(|| crate::ui::widgets::atomic::text::tokens::TextTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `TabTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn tab(&self) -> &crate::ui::widgets::atomic::tab::tokens::TabTokens {
-        &self.tab
+        self.tab.get_or_init(|| crate::ui::widgets::atomic::tab::tokens::TabTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `SliderTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn slider(&self) -> &crate::ui::widgets::atomic::slider::tokens::SliderTokens {
-        &self.slider
+        self.slider.get_or_init(|| crate::ui::widgets::atomic::slider::tokens::SliderTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `TextInputTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn text_input(&self) -> &crate::ui::widgets::atomic::text_input::tokens::TextInputTokens {
-        &self.text_input
+        self.text_input.get_or_init(|| crate::ui::widgets::atomic::text_input::tokens::TextInputTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ToggleTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn toggle(&self) -> &crate::ui::widgets::atomic::toggle::tokens::ToggleTokens {
-        &self.toggle
+        self.toggle.get_or_init(|| crate::ui::widgets::atomic::toggle::tokens::ToggleTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ToastTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn toast(&self) -> &crate::ui::widgets::atomic::toast::tokens::ToastTokens {
-        &self.toast
+        self.toast.get_or_init(|| crate::ui::widgets::atomic::toast::tokens::ToastTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `TooltipTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn tooltip(&self) -> &crate::ui::widgets::atomic::tooltip::tokens::TooltipTokens {
-        &self.tooltip
+        self.tooltip.get_or_init(|| crate::ui::widgets::atomic::tooltip::tokens::TooltipTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
@@ -299,14 +302,14 @@ impl Tokens {
     pub(crate) fn blackbox_panel(
         &self,
     ) -> &crate::ui::widgets::composite::blackbox_panel::tokens::BlackboxPanelTokens {
-        &self.blackbox_panel
+        self.blackbox_panel.get_or_init(|| crate::ui::widgets::composite::blackbox_panel::tokens::BlackboxPanelTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ChromeTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn chrome(&self) -> &crate::ui::widgets::composite::chrome::tokens::ChromeTokens {
-        &self.chrome
+        self.chrome.get_or_init(|| crate::ui::widgets::composite::chrome::tokens::ChromeTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
@@ -315,49 +318,49 @@ impl Tokens {
     pub(crate) fn context_menu(
         &self,
     ) -> &crate::ui::widgets::composite::context_menu::tokens::ContextMenuTokens {
-        &self.context_menu
+        self.context_menu.get_or_init(|| crate::ui::widgets::composite::context_menu::tokens::ContextMenuTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `DropdownTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn dropdown(&self) -> &crate::ui::widgets::composite::dropdown::tokens::DropdownTokens {
-        &self.dropdown
+        self.dropdown.get_or_init(|| crate::ui::widgets::composite::dropdown::tokens::DropdownTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ModalTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn modal(&self) -> &crate::ui::widgets::composite::modal::tokens::ModalTokens {
-        &self.modal
+        self.modal.get_or_init(|| crate::ui::widgets::composite::modal::tokens::ModalTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `PanelTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn panel(&self) -> &crate::ui::widgets::composite::panel::tokens::PanelTokens {
-        &self.panel
+        self.panel.get_or_init(|| crate::ui::widgets::composite::panel::tokens::PanelTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `PopupTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn popup(&self) -> &crate::ui::widgets::composite::popup::tokens::PopupTokens {
-        &self.popup
+        self.popup.get_or_init(|| crate::ui::widgets::composite::popup::tokens::PopupTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `SidebarTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn sidebar(&self) -> &crate::ui::widgets::composite::sidebar::tokens::SidebarTokens {
-        &self.sidebar
+        self.sidebar.get_or_init(|| crate::ui::widgets::composite::sidebar::tokens::SidebarTokens::resolve(&self.semantic, &self.components))
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ToolbarTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn toolbar(&self) -> &crate::ui::widgets::composite::toolbar::tokens::ToolbarTokens {
-        &self.toolbar
+        self.toolbar.get_or_init(|| crate::ui::widgets::composite::toolbar::tokens::ToolbarTokens::resolve(&self.semantic, &self.components))
     }
 }
 
@@ -383,6 +386,18 @@ impl TokenValue {
     }
 }
 
+impl Clone for Tokens {
+    fn clone(&self) -> Self {
+        Tokens::assemble(
+            self.semantic.clone(),
+            self.geometry.clone(),
+            self.name.clone(),
+            self.app.clone(),
+            self.components.clone(),
+        )
+    }
+}
+
 impl Tokens {
     /// Builds the per-widget component tokens from resolved semantic roles and
     /// the file's `component.*` overrides. Shared by [`TokenSet::resolve`] and
@@ -394,168 +409,42 @@ impl Tokens {
         app: AppTokens,
         components: ComponentOverrides,
     ) -> Tokens {
-
-        let button = crate::ui::widgets::atomic::button::tokens::ButtonTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let checkbox = crate::ui::widgets::atomic::checkbox::tokens::CheckboxTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let chevron = crate::ui::widgets::atomic::chevron::tokens::ChevronTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let clock = crate::ui::widgets::atomic::clock::tokens::ClockTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let close_button = crate::ui::widgets::atomic::close_button::tokens::CloseButtonTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let color_swatch = crate::ui::widgets::atomic::color_swatch::tokens::ColorSwatchTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let drag_handle = crate::ui::widgets::atomic::drag_handle::tokens::DragHandleTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let dropdown_trigger =
-            crate::ui::widgets::atomic::dropdown_trigger::tokens::DropdownTriggerTokens::resolve(
-                &semantic,
-                &components,
-            );
-        let item = crate::ui::widgets::atomic::item::tokens::ItemTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let radio = crate::ui::widgets::atomic::radio::tokens::RadioTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let scrollbar = crate::ui::widgets::atomic::scrollbar::tokens::ScrollbarTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let container = crate::ui::widgets::atomic::container::tokens::ContainerTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let scroll_chevron =
-            crate::ui::widgets::atomic::scroll_chevron::tokens::ScrollChevronTokens::resolve(
-                &semantic,
-                &components,
-            );
-        let separator = crate::ui::widgets::atomic::separator::tokens::SeparatorTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let text = crate::ui::widgets::atomic::text::tokens::TextTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let tab = crate::ui::widgets::atomic::tab::tokens::TabTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let slider = crate::ui::widgets::atomic::slider::tokens::SliderTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let text_input = crate::ui::widgets::atomic::text_input::tokens::TextInputTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let toggle = crate::ui::widgets::atomic::toggle::tokens::ToggleTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let toast = crate::ui::widgets::atomic::toast::tokens::ToastTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let tooltip = crate::ui::widgets::atomic::tooltip::tokens::TooltipTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let blackbox_panel =
-            crate::ui::widgets::composite::blackbox_panel::tokens::BlackboxPanelTokens::resolve(
-                &semantic,
-                &components,
-            );
-        let chrome = crate::ui::widgets::composite::chrome::tokens::ChromeTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let context_menu =
-            crate::ui::widgets::composite::context_menu::tokens::ContextMenuTokens::resolve(
-                &semantic,
-                &components,
-            );
-        let dropdown = crate::ui::widgets::composite::dropdown::tokens::DropdownTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let modal = crate::ui::widgets::composite::modal::tokens::ModalTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let panel = crate::ui::widgets::composite::panel::tokens::PanelTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let popup = crate::ui::widgets::composite::popup::tokens::PopupTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let sidebar = crate::ui::widgets::composite::sidebar::tokens::SidebarTokens::resolve(
-            &semantic,
-            &components,
-        );
-        let toolbar = crate::ui::widgets::composite::toolbar::tokens::ToolbarTokens::resolve(
-            &semantic,
-            &components,
-        );
-
         Tokens {
             semantic,
             geometry,
             name,
             app,
             components,
-            button,
-            checkbox,
-            chevron,
-            clock,
-            close_button,
-            color_swatch,
-            drag_handle,
-            dropdown_trigger,
-            item,
-            radio,
-            scrollbar,
-            container,
-            scroll_chevron,
-            separator,
-            text,
-            tab,
-            slider,
-            text_input,
-            toggle,
-            toast,
-            tooltip,
-            blackbox_panel,
-            chrome,
-            context_menu,
-            dropdown,
-            modal,
-            panel,
-            popup,
-            sidebar,
-            toolbar,
+            button: OnceLock::new(),
+            checkbox: OnceLock::new(),
+            chevron: OnceLock::new(),
+            clock: OnceLock::new(),
+            close_button: OnceLock::new(),
+            color_swatch: OnceLock::new(),
+            drag_handle: OnceLock::new(),
+            dropdown_trigger: OnceLock::new(),
+            item: OnceLock::new(),
+            radio: OnceLock::new(),
+            scrollbar: OnceLock::new(),
+            container: OnceLock::new(),
+            scroll_chevron: OnceLock::new(),
+            separator: OnceLock::new(),
+            text: OnceLock::new(),
+            tab: OnceLock::new(),
+            slider: OnceLock::new(),
+            text_input: OnceLock::new(),
+            toggle: OnceLock::new(),
+            toast: OnceLock::new(),
+            tooltip: OnceLock::new(),
+            blackbox_panel: OnceLock::new(),
+            chrome: OnceLock::new(),
+            context_menu: OnceLock::new(),
+            dropdown: OnceLock::new(),
+            modal: OnceLock::new(),
+            panel: OnceLock::new(),
+            popup: OnceLock::new(),
+            sidebar: OnceLock::new(),
+            toolbar: OnceLock::new(),
         }
     }
 }
