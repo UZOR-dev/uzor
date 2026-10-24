@@ -2,6 +2,8 @@
 //! the consumer crate defines its Language enum, keys and translation tables
 //! and implements `Translate` for its key types.
 
+pub mod case;
+
 use std::sync::atomic::{AtomicU8, Ordering};
 
 /// Generic translation contract. `lang_index` is the consumer's language

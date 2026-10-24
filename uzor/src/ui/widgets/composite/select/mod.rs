@@ -102,7 +102,7 @@ impl SelectStyle {
 /// `value` / `label` match the search `query` (case-insensitive; `_` and `/` match spaces,
 /// so `new york` finds `America/New_York`).
 pub fn matches(value: &str, label: &str, query: &str) -> bool {
-    let norm = |s: &str| s.to_lowercase().replace(['_', '/'], " ");
+    let norm = |s: &str| crate::ui::i18n::case::lower(s).replace(['_', '/'], " ");
     let q = norm(query.trim());
     q.is_empty() || norm(label).contains(&q) || norm(value).contains(&q)
 }
