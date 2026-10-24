@@ -2,6 +2,67 @@
 
 All crates in the workspace share one version.
 
+## 1.5.10
+
+### Animation nodes in the DOM (uzor)
+
+- `El::anim(AnimNode)` is a box whose content a named `AnimScript` paints. The
+  box is laid out by flex. Its `id` makes it a hit, and document order is its
+  z-order. Its frame is clipped to the content box unless `overflow_visible`,
+  and it gets the element's opacity.
+- `dom::paint_with(ctx, &dom, &mut registry, &AnimFrame)` paints boxes and
+  animations together:
+  - a node outside the visible rect does not run;
+  - a paused frame (hidden page, reduced motion) paints the pose for `t` without
+    asking for another frame;
+  - the script gets its size, its seed, up to eight args (`ANIM_ARGS`) and the
+    pointer in local coordinates;
+  - the pointer comes through `pointer_over(id)`, so a drawer above the node
+    hides it, unless the node is `track_pointer`.
+- `AnimReport` says when the next frame is due and whether any node follows the
+  pointer.
+- `AnimRegistry` maps names to a primary script and a fallback painter (Rust,
+  `BakedAnim` or `FnAnim`):
+  - when an engine is missing, the fallback paints for good;
+  - when a script fails, the fallback paints and the script is retried a second
+    later.
+
+### JS animations (uzor-anim-js, new crate)
+
+- `JsAnimHost` runs `globalThis.uzorAnims[name] = (ctx, t, p) => {}` scripts as
+  `AnimScript`s:
+  - on web, through the page's JS engine (scripts load with `<script src>`; no
+    eval, so it works under a CSP without `unsafe-eval`);
+  - on native, through QuickJS behind the `quickjs` feature (off by default).
+- `JsAnimHost::install(&mut registry, names)` makes the scripts the registry's
+  primary; `has(name)` says whether a script is registered.
+- The scripts belong to the app; the crate ships only `hexstar.js` as an
+  example.
+
+### Op stream (uzor)
+
+- `AnimScript`, `AnimParams`, `AnimOpWriter` and `replay_anim_ops` make a flat
+  f64 stream of Canvas2D-style ops that any `RenderContext` replays.
+  `BakedAnim` plays recorded frames.
+
+### Motion math (uzor)
+
+- Envelope primitives: `smoothstep`, `back_out`, `bell`, `arc`, `hold`, `ring`,
+  `squash_stretch`, `pivot_shift` and `ellipse_lift`.
+- `Rot3` turns a shape around an axis in fake 3D (projection, facing).
+  `TrickCycle`, `slot_hash`, `back_in_out`, `breathe` and `turn_delta` sequence
+  tricks.
+
+### Widgets and effects (uzor)
+
+- `ring_mark` is a polygon ring tumbling around a counter-spinning star, with
+  idle, loading and busy tricks.
+- `effects::text::MatrixText` is a stateless line decode, with an idle flicker
+  and a scramble under the pointer.
+- Composer: `voice_off` draws an unavailable voice-chat button as disabled.
+- Critter: `draw_critter` and a session pill without motion paint the rest pose
+  directly, without going through `critter_pose`. The critter API is unchanged.
+
 ## 1.5.9
 
 ### Input: one topmost hit target (uzor, uzor-framework)

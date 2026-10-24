@@ -8,7 +8,7 @@
 
 UZOR is a low-level UI stack: it owns widget geometry, hit-testing, and a Canvas2D-style `RenderContext`. The app owns visuals and business logic.
 
-The workspace is one version (**1.5.9**). Every crate below publishes at that number.
+The workspace is one version (**1.5.10**). Every crate below publishes at that number.
 
 ## Crate map
 
@@ -22,6 +22,7 @@ The workspace is one version (**1.5.9**). Every crate below publishes at that nu
 | `uzor-vision` | GPU-first CV (denoise + SLIC); CPU fallback |
 | `uzor-vectorize` | PNG/JPEG → SVG tracer (flat-color) |
 | `uzor-framework-macros` | `view!` DSL |
+| `uzor-anim-js` | Canvas-style JS animations as `AnimScript`s: page engine on web, QuickJS (feature `quickjs`) on native |
 | `uzor-agent-api` | _(archived in `_deprecated/` as of C1)_ |
 
 **Windows**
