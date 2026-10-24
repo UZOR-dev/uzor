@@ -52,6 +52,10 @@ pub enum InputEvent {
     Drop(DropInput),
     /// Answer to a `WindowCommand::ClipboardRead`.
     Clipboard(ClipboardResult),
+    /// Text the user pasted with the platform gesture (web: the DOM `paste`
+    /// event, Ctrl/Cmd+V or the context menu). Goes to the focused text
+    /// field, else to the app as `UnhandledInput::Paste`.
+    Paste(String),
     /// The clipboard held an image instead of text when a paste read it.
     ClipboardImage(ClipboardImage),
     /// The host woke the loop at the instant the kernel asked for.

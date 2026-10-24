@@ -68,6 +68,27 @@
 //! the same field is still focused. The IME caret area and the IME-allowed
 //! flag are reported only when they change.
 //!
+//! ## Clipboard for custom widgets
+//!
+//! One widget-facing contract on every host. Paste: the platform gesture's
+//! text ([`InputOp::Paste`], from `InputEvent::Paste` — the web host's DOM
+//! `paste` event) goes to the focused text field, else to the app as
+//! `UnhandledInput::Paste` ([`InputEffect::Pasted`]). Ctrl/Cmd+V with no
+//! field focused reads under an engine ticket like a field paste; a native
+//! host answers from the clipboard crate, the web host leaves it to the
+//! paste event of the same gesture (no `readText` permission prompt, no
+//! second insert: the paste settles the read). Copy / cut: the focused
+//! custom widget sets its answer ahead with `ClipboardCmd::Offer`; Ctrl/Cmd+C
+//! or X with no field and no page selection copies it
+//! ([`InputEffect::CopyText`]) and still passes the key on. The web host
+//! also writes the offer in the DOM `copy` / `cut` event (same gesture).
+//! A focused `BlackboxPanel` owns Ctrl/Cmd+A (no page-text escalation).
+//!
+//! Manual check (web): focus a non-field custom widget, put text on the OS
+//! clipboard, press Ctrl+V — the app gets `UnhandledInput::Paste` with it;
+//! in a text field the text lands once. Offer "x", press Ctrl+C, paste
+//! elsewhere: "x".
+//!
 //! ## Caret blink
 //!
 //! While a text field is focused and engaged (the user clicked or typed
@@ -304,7 +325,11 @@ struct PerWindowInput {
     armed: Option<Seconds>,
     ime_area: Option<Rect>,
     ime_allowed: bool,
-    pending_paste: Option<(Ticket, WidgetId)>,
+    /// An engine-minted paste read in flight: the field it was for, or
+    /// `None` (no text field: the answer goes to the app as pasted text).
+    pending_paste: Option<(Ticket, Option<WidgetId>)>,
+    /// The app's copy offer (`ClipboardCmd::Offer`).
+    offer: Option<String>,
     // Plain-text selection (T2). `selectables` is last completed frame's
     // reported set (read by pointer ops); the compose door fills
     // `reported` and EndFrame swaps them.
@@ -362,6 +387,7 @@ impl PerWindowInput {
             ime_area: None,
             ime_allowed: false,
             pending_paste: None,
+            offer: None,
             selectables: HashMap::new(),
             sel_alias: HashMap::new(),
             reported: Selectables::default(),
@@ -1193,8 +1219,37 @@ impl PerWindowInput {
                 if let Some(text) = self.selected_text_concat() {
                     fx.push(InputEffect::CopyText { win, text });
                 } else {
+                    // The focused custom widget's offer answers the copy;
+                    // the key still reaches it.
+                    if let Some(text) = self.offer.clone() {
+                        fx.push(InputEffect::CopyText { win, text });
+                    }
                     fx.push(InputEffect::KeyPassed { win, key: input });
                 }
+                return false;
+            }
+            (None, Some(Edit::Cut)) => {
+                if let Some(text) = self.offer.clone() {
+                    fx.push(InputEffect::CopyText { win, text });
+                }
+                fx.push(InputEffect::KeyPassed { win, key: input });
+                return false;
+            }
+            (None, Some(Edit::Paste)) => {
+                // No text field: the clipboard text goes to the app
+                // (`UnhandledInput::Paste`). A web host answers with the DOM
+                // paste event instead of a read.
+                let ticket = Ticket(INPUT_TICKET_BASE.saturating_add(*next_ticket));
+                *next_ticket = next_ticket.saturating_add(1);
+                self.pending_paste = Some((ticket, None));
+                fx.push(InputEffect::NeedPaste { win, ticket });
+                return false;
+            }
+            (None, Some(Edit::Key(KeyPress::SelectAll)))
+                if self.focus.as_ref().is_some_and(|f| !f.field && self.coord.widget_kind(&f.id).is_some_and(|k| k.is_blackbox())) =>
+            {
+                // A focused blackbox (terminal, remote view) owns its Ctrl+A.
+                fx.push(InputEffect::KeyPassed { win, key: input });
                 return false;
             }
             (None, Some(Edit::Key(KeyPress::SelectAll))) => {
@@ -1256,7 +1311,7 @@ impl PerWindowInput {
             Edit::Paste => {
                 let ticket = Ticket(INPUT_TICKET_BASE.saturating_add(*next_ticket));
                 *next_ticket = next_ticket.saturating_add(1);
-                self.pending_paste = Some((ticket, field.clone()));
+                self.pending_paste = Some((ticket, Some(field.clone())));
                 fx.push(InputEffect::NeedPaste { win, ticket });
             }
         }
@@ -1309,14 +1364,39 @@ impl PerWindowInput {
             return;
         }
         self.pending_paste = None;
-        let (Some(text), Some(focused)) = (result.text, self.text_focus()) else {
+        let Some(text) = result.text.filter(|t| !t.is_empty()) else {
             return;
         };
-        if focused != field || text.is_empty() {
+        let Some(field) = field else {
+            fx.push(InputEffect::Pasted { win, text });
+            return;
+        };
+        let Some(focused) = self.text_focus() else {
+            return;
+        };
+        if focused != field {
             return;
         }
         if let TextAction::TextChanged(_) = self.coord.on_key(KeyPress::Paste(text)) {
             fx.push(InputEffect::Text(TextIntent::Changed { win, field }));
+        }
+    }
+
+    /// The platform paste gesture's text: into the focused text field,
+    /// else to the app. Settles an engine read still waiting for it (the
+    /// web answers Ctrl/Cmd+V this way), so the text lands once.
+    fn paste(&mut self, win: WindowId, text: String, fx: &mut InputEffects) {
+        self.pending_paste = None;
+        if text.is_empty() {
+            return;
+        }
+        match self.text_focus() {
+            Some(field) => {
+                if let TextAction::TextChanged(_) = self.coord.on_key(KeyPress::Paste(text)) {
+                    fx.push(InputEffect::Text(TextIntent::Changed { win, field }));
+                }
+            }
+            None => fx.push(InputEffect::Pasted { win, text }),
         }
     }
 
@@ -1577,6 +1657,19 @@ impl InputEngine {
                 }
                 None => false,
             },
+            InputOp::Paste { win, now, text } => match windows.get_mut(&win) {
+                Some(w) => {
+                    w.paste(win, text, &mut fx);
+                    w.settle(win, now, &mut fx)
+                }
+                None => false,
+            },
+            InputOp::Offer { win, text } => {
+                if let Some(w) = windows.get_mut(&win) {
+                    w.offer = text;
+                }
+                false
+            }
             InputOp::Clipboard { win, now, result } => match windows.get_mut(&win) {
                 Some(w) => {
                     w.clipboard(win, result, &mut fx);

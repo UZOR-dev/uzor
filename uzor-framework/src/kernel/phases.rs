@@ -2,7 +2,8 @@
 //! window / host lifecycle, and the engine clocks.
 
 use crate::types::bus::{HostEvent, InputEnvelope, InputEvent};
-use crate::types::command::{AppCommand, Domain};
+use crate::types::command::{AppCommand, ClipboardCmd, Domain};
+use crate::types::window::WindowCommand;
 use crate::types::ids::Seconds;
 use crate::types::intent::Intent;
 use crate::types::ops::{CadenceOp, FocusOp, InputOp, KeymapOp, LayoutOp, OverlayOp, WindowOp};
@@ -23,6 +24,13 @@ impl<S: Spec> Kernel<S> {
                         AppCommand::Window(c) => WindowOp::Cmd(c),
                         AppCommand::Theme(c) => WindowOp::Theme(c),
                         AppCommand::Render(c) => WindowOp::Render(c),
+                        AppCommand::Clipboard(ClipboardCmd::Offer { win, text }) => {
+                            // The input engine answers Ctrl/Cmd+C / X with it;
+                            // the host keeps it for a synchronous copy event.
+                            let fx = self.input.apply(InputOp::Offer { win, text: text.clone() });
+                            self.conduct_input(now, fx);
+                            WindowOp::Enqueue { win, cmd: WindowCommand::ClipboardOffer(text) }
+                        }
                         AppCommand::Clipboard(c) => WindowOp::Clipboard(c),
                         AppCommand::Screenshot { win, ticket } => {
                             WindowOp::Screenshot { win, ticket }

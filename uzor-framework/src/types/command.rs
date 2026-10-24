@@ -230,6 +230,18 @@ pub enum ClipboardCmd {
     Write(String),
     /// Write an image to the clipboard.
     WriteImage(crate::types::bus::ClipboardImage),
+    /// The focused custom widget's answer to copy / cut requests, set
+    /// ahead (its current selection; `None` withdraws it). Ctrl/Cmd+C or X
+    /// with no text field focused and no page selection copies it: on the
+    /// web inside the same gesture (`clipboardData.setData` in the `copy` /
+    /// `cut` event), natively through the clipboard crate. The key still
+    /// reaches the app, so a cut can delete or a remote view forward it.
+    Offer {
+        /// Window whose copy requests it answers.
+        win: crate::types::ids::WindowId,
+        /// The text, `None` = nothing to copy.
+        text: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------

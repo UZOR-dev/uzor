@@ -1761,3 +1761,111 @@ fn enter_and_space_activate_the_focused_control() {
     frame(&mut e, 4.1, scene);
     assert!(clicks(&e).is_empty(), "a text field keeps Space");
 }
+
+// ---- clipboard: platform paste, unfocused paste, copy offer -------------
+
+fn pasted(fx: &InputEffects) -> Vec<String> {
+    fx.iter()
+        .filter_map(|f| match f {
+            InputEffect::Pasted { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn need_paste(fx: &InputEffects) -> Option<Ticket> {
+    fx.iter().find_map(|f| match f {
+        InputEffect::NeedPaste { ticket, .. } => Some(*ticket),
+        _ => None,
+    })
+}
+
+#[test]
+fn web_paste_event_fills_the_focused_field_once() {
+    let mut e = with_fields();
+    focus(&mut e, 1.0, FocusOp::Set(id("a")));
+    typ(&mut e, 1.0, "ab");
+    // Ctrl+V asks (a web host ignores the engine ticket) ...
+    let ticket = need_paste(&key(&mut e, 1.1, KeyCode::V, ctrl()));
+    assert!(ticket.is_some());
+    // ... and the DOM paste event of the same gesture answers.
+    let fx = e.apply(InputOp::Paste { win: W, now: s(1.1), text: "xyz".into() });
+    assert_eq!(text(&e, "a"), "abxyz");
+    assert_eq!(changed_fields(&fx), vec![id("a")]);
+    assert!(pasted(&fx).is_empty(), "a field took it");
+    // A late read answer for the settled ticket inserts nothing more.
+    e.apply(InputOp::Clipboard {
+        win: W,
+        now: s(1.2),
+        result: ClipboardResult { ticket: ticket.unwrap(), text: Some("xyz".into()) },
+    });
+    assert_eq!(text(&e, "a"), "abxyz");
+}
+
+#[test]
+fn paste_without_a_text_field_goes_to_the_app() {
+    let mut e = with_fields();
+    // Web: the paste event alone.
+    let fx = e.apply(InputOp::Paste { win: W, now: s(1.0), text: "hello".into() });
+    assert_eq!(pasted(&fx), vec!["hello".to_string()]);
+    assert!(pasted(&e.apply(InputOp::Paste { win: W, now: s(1.0), text: String::new() })).is_empty());
+    // Native: Ctrl+V reads the clipboard; the answer is pasted text, the key is taken.
+    let fx = key(&mut e, 1.1, KeyCode::V, ctrl());
+    assert!(!passed(&fx));
+    let ticket = need_paste(&fx).expect("a read");
+    let fx = e.apply(InputOp::Clipboard {
+        win: W,
+        now: s(1.2),
+        result: ClipboardResult { ticket, text: Some("from os".into()) },
+    });
+    assert_eq!(pasted(&fx), vec!["from os".to_string()]);
+    assert_eq!(text(&e, "a"), "");
+}
+
+#[test]
+fn copy_offer_answers_copy_and_cut_and_the_key_still_passes() {
+    let mut e = with_fields();
+    let fx = key(&mut e, 1.0, KeyCode::C, ctrl());
+    assert!(copied(&fx).is_empty() && passed(&fx), "no offer: the key routes on");
+    e.apply(InputOp::Offer { win: W, text: Some("remote sel".into()) });
+    let fx = key(&mut e, 1.1, KeyCode::C, ctrl());
+    assert_eq!(copied(&fx), vec!["remote sel".to_string()]);
+    assert!(passed(&fx));
+    let fx = key(&mut e, 1.2, KeyCode::X, ctrl());
+    assert_eq!(copied(&fx), vec!["remote sel".to_string()]);
+    assert!(passed(&fx), "the widget deletes or forwards the cut");
+    // A focused text field's own copy wins over the offer.
+    focus(&mut e, 1.3, FocusOp::Set(id("a")));
+    typ(&mut e, 1.3, "abc");
+    key(&mut e, 1.4, KeyCode::A, ctrl());
+    assert_eq!(copied(&key(&mut e, 1.5, KeyCode::C, ctrl())), vec!["abc".to_string()]);
+    e.apply(InputOp::Offer { win: W, text: None });
+    focus(&mut e, 1.6, FocusOp::Clear);
+    assert!(copied(&key(&mut e, 1.7, KeyCode::C, ctrl())).is_empty());
+}
+
+#[test]
+fn focused_blackbox_owns_ctrl_a() {
+    let mut e = engine();
+    let scene = |e: &mut InputEngine| {
+        label(e, "lbl", label_rect(), LABEL);
+        let _ = e.registrar(W).unwrap().register_composite(
+            id("term"),
+            WidgetKind::BlackboxPanel,
+            Rect::new(0.0, 300.0, 400.0, 200.0),
+            Sense::CLICK.with_focus(),
+            &LayerId::main(),
+        );
+    };
+    frame_sel(&mut e, 0.5, scene);
+    // The pointer rests on the label: Ctrl+A has a page-text context.
+    let (lx, ly) = (label_rect().x + 5.0, label_rect().y + 5.0);
+    to_content(&mut e, 0.9, moved(lx, ly));
+    frame_sel(&mut e, 0.95, scene);
+    focus(&mut e, 1.0, FocusOp::Set(id("term")));
+    let fx = key(&mut e, 1.1, KeyCode::A, ctrl());
+    assert!(passed(&fx), "Ctrl+A reaches the terminal / remote page");
+    focus(&mut e, 1.2, FocusOp::Clear);
+    let fx = key(&mut e, 1.3, KeyCode::A, ctrl());
+    assert!(!passed(&fx), "without it, Ctrl+A selects the page text");
+}

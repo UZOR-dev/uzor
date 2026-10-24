@@ -1381,3 +1381,26 @@ fn keys_scroll_the_hovered_container() {
     settle(&mut h);
     assert!(off(&h).abs() < 1.0, "Home: {}", off(&h));
 }
+
+// -- clipboard: platform paste to the app --------------------------------------
+
+/// A paste with no text field focused reaches the app as
+/// `UnhandledInput::Paste` (its focused custom widget inserts it).
+#[test]
+fn platform_paste_without_a_field_reaches_the_app() {
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    h.input(win, InputEvent::Paste("clip text".into()));
+    h.advance(0.017);
+    let got: Vec<_> = h
+        .runtime_mut()
+        .app_mut()
+        .intents
+        .iter()
+        .filter_map(|i| match i {
+            Intent::Unhandled(crate::types::intent::UnhandledInput::Paste { win: w, text }) if *w == win => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(got, vec!["clip text".to_string()]);
+}

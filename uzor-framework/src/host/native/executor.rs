@@ -216,6 +216,9 @@ pub fn execute(window: &mut dyn OsWindow, cmd: WindowCommand) -> Option<Executor
         WindowCommand::ClipboardWrite(text) => Some(ExecutorFollowUp::ClipboardWrite(text)),
         WindowCommand::ClipboardWriteImage(img) => Some(ExecutorFollowUp::ClipboardWriteImage(img)),
         WindowCommand::ClipboardRead(ticket) => Some(ExecutorFollowUp::ClipboardRead(ticket)),
+        // Native copy needs no synchronous answer: the input engine copies the
+        // offer on Ctrl/Cmd+C / X through `ClipboardWrite`.
+        WindowCommand::ClipboardOffer(_) => None,
         WindowCommand::FocusWindow => {
             window.focus_window();
             None

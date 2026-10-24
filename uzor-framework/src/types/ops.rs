@@ -299,6 +299,23 @@ impl FocusOp {
 pub enum InputOp {
     /// Start tracking a window (conducted from `WindowEffect::Created`).
     Open(WindowId),
+    /// The platform's paste gesture delivered text
+    /// ([`crate::types::bus::InputEvent::Paste`]).
+    Paste {
+        /// The window.
+        win: WindowId,
+        /// Host clock.
+        now: Seconds,
+        /// The text.
+        text: String,
+    },
+    /// The app's copy offer for the window (`ClipboardCmd::Offer`).
+    Offer {
+        /// The window.
+        win: WindowId,
+        /// The offered text.
+        text: Option<String>,
+    },
     /// Drop a window's input state (conducted from `WindowEffect::Closed`).
     Close(WindowId),
     /// OS keyboard focus entered or left the window
@@ -461,6 +478,14 @@ pub enum InputEffect {
     /// Copy / cut produced clipboard text; the kernel enqueues
     /// `WindowCommand::ClipboardWrite`.
     CopyText {
+        /// The window.
+        win: WindowId,
+        /// The text.
+        text: String,
+    },
+    /// Pasted text no text field took; the kernel reports it as
+    /// `UnhandledInput::Paste`.
+    Pasted {
         /// The window.
         win: WindowId,
         /// The text.

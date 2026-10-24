@@ -26,7 +26,7 @@ use super::translate::{
 };
 use super::WebHostError;
 use crate::types::bus::{
-    ClipboardResult, DropInput, DroppedFile, InputEnvelope, InputEvent, WindowInput,
+    DropInput, DroppedFile, InputEnvelope, InputEvent, WindowInput,
 };
 use crate::types::ids::{Seconds, Ticket, WindowId};
 use uzor_window_web::normalize_wheel_delta_to_css_px;
@@ -60,7 +60,8 @@ pub struct Queue {
     window: Rc<Cell<Option<WindowId>>>,
     raw_delta: Rc<Cell<bool>>,
     pending_reads: Rc<RefCell<VecDeque<Ticket>>>,
-    paste_buf: Rc<RefCell<Option<String>>>,
+    /// The focused widget's copy offer (`ClipboardCmd::Offer`), written by
+    /// the `copy` / `cut` events inside the gesture.
     copy_buf: Rc<RefCell<Option<String>>>,
 }
 
@@ -72,7 +73,6 @@ impl Queue {
             window: Rc::new(Cell::new(None)),
             raw_delta: Rc::new(Cell::new(false)),
             pending_reads: Rc::new(RefCell::new(VecDeque::new())),
-            paste_buf: Rc::new(RefCell::new(None)),
             copy_buf: Rc::new(RefCell::new(None)),
         }
     }
@@ -84,10 +84,6 @@ impl Queue {
 
     pub(super) fn raw_delta_flag(&self) -> Rc<Cell<bool>> {
         Rc::clone(&self.raw_delta)
-    }
-
-    pub(super) fn paste_buf(&self) -> Rc<RefCell<Option<String>>> {
-        Rc::clone(&self.paste_buf)
     }
 
     pub(super) fn copy_buf(&self) -> Rc<RefCell<Option<String>>> {
@@ -687,15 +683,10 @@ fn install_clipboard(
         if text.is_empty() {
             return;
         }
+        // Taken: the canvas has no native editable to receive it.
         ev.prevent_default();
-        if let Some(ticket) = q1.pending_reads.borrow_mut().pop_front() {
-            q1.push_raw(InputEvent::Clipboard(ClipboardResult {
-                ticket,
-                text: Some(text),
-            }));
-        } else {
-            *q1.paste_buf.borrow_mut() = Some(text);
-        }
+        let pending = q1.pending_reads.borrow_mut().pop_front();
+        q1.push_raw(super::executor::paste_input(pending, text));
         wake1.request();
     }) as Box<dyn FnMut(Event)>);
     listen(target, "paste", &paste, false)?;
@@ -706,7 +697,7 @@ fn install_clipboard(
         let Ok(ev) = raw.dyn_into::<web_sys::ClipboardEvent>() else {
             return;
         };
-        let Some(text) = q2.copy_buf.borrow().clone() else {
+        let Some(text) = super::executor::copy_event_text(q2.copy_buf.borrow().as_deref()).map(str::to_owned) else {
             return;
         };
         if let Some(dt) = ev.clipboard_data() {
@@ -723,7 +714,7 @@ fn install_clipboard(
         let Ok(ev) = raw.dyn_into::<web_sys::ClipboardEvent>() else {
             return;
         };
-        let Some(text) = q3.copy_buf.borrow().clone() else {
+        let Some(text) = super::executor::copy_event_text(q3.copy_buf.borrow().as_deref()).map(str::to_owned) else {
             return;
         };
         if let Some(dt) = ev.clipboard_data() {

@@ -37,6 +37,11 @@ impl<S: Spec> Kernel<S> {
                 InputEvent::Key(input) => self.route_key(now, win, input),
                 InputEvent::Ime(input) => self.route_ime(now, win, input),
                 InputEvent::Clipboard(result) => self.route_clipboard(now, win, result),
+                InputEvent::Paste(text) => {
+                    self.trace_push("route::paste");
+                    let fx = self.input.apply(InputOp::Paste { win, now, text });
+                    self.conduct_input(now, fx);
+                }
                 InputEvent::ClipboardImage(image) => {
                     self.outbox.intents.push(Intent::PasteImage(crate::types::intent::PastedImage { win, image }));
                 }

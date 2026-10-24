@@ -486,6 +486,11 @@ impl<S: Spec> Kernel<S> {
                     });
                     self.conduct_window_all(now, effects);
                 }
+                InputEffect::Pasted { win, text } => {
+                    self.outbox
+                        .intents
+                        .push(Intent::Unhandled(crate::types::intent::UnhandledInput::Paste { win, text }));
+                }
                 InputEffect::NeedPaste { win, ticket } => {
                     let effects = self.windows.apply(WindowOp::Enqueue {
                         win,

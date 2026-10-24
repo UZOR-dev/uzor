@@ -7,14 +7,17 @@
 
 use uzor::CursorIcon;
 
+use crate::types::bus::{ClipboardResult, InputEvent};
 use crate::types::ids::Ticket;
 use crate::types::window::{CursorMode, FullscreenMode, SizePx, WindowCommand, WindowSpec};
 
 /// Side-effects the DOM surface cannot finish inside the match.
 #[derive(Clone, Debug, PartialEq)]
 pub enum WebFollowUp {
-    /// Write text to the clipboard (and the copy-event buffer).
+    /// Write text to the clipboard (async `navigator.clipboard`).
     ClipboardWrite(String),
+    /// Keep what the next `copy` / `cut` event writes (`ClipboardCmd::Offer`).
+    ClipboardOffer(Option<String>),
     /// Read the clipboard; answer with this ticket.
     ClipboardRead(Ticket),
     /// Bind the single canvas to this window, or ignore if one is bound.
@@ -118,6 +121,7 @@ pub fn execute(window: &mut dyn WebSurface, cmd: WindowCommand) -> Option<WebFol
         // Image writes need the async Clipboard API; not wired on the web yet.
         WindowCommand::ClipboardWriteImage(_) => None,
         WindowCommand::ClipboardRead(ticket) => Some(WebFollowUp::ClipboardRead(ticket)),
+        WindowCommand::ClipboardOffer(text) => Some(WebFollowUp::ClipboardOffer(text)),
         WindowCommand::FocusWindow => {
             window.focus();
             None
@@ -126,6 +130,32 @@ pub fn execute(window: &mut dyn WebSurface, cmd: WindowCommand) -> Option<WebFol
         WindowCommand::Close => Some(WebFollowUp::Close),
         WindowCommand::ExitApp => Some(WebFollowUp::ExitApp),
     }
+}
+
+/// Where the DOM `paste` event's text goes: an app read waiting on the
+/// clipboard (`ClipboardRead` with an app ticket) gets it as its answer;
+/// otherwise it is the platform paste ([`InputEvent::Paste`]): the focused
+/// text field, else the app's focused widget.
+pub(super) fn paste_input(pending_app_read: Option<Ticket>, text: String) -> InputEvent {
+    match pending_app_read {
+        Some(ticket) => InputEvent::Clipboard(ClipboardResult { ticket, text: Some(text) }),
+        None => InputEvent::Paste(text),
+    }
+}
+
+/// A clipboard read the host performs with `navigator.clipboard.readText`.
+/// Engine-minted reads (Ctrl/Cmd+V) are not: the browser's own `paste`
+/// event, fired in the same gesture, answers them — no permission prompt,
+/// no second insert.
+pub(super) fn reads_async(ticket: Ticket) -> bool {
+    ticket.0 < crate::engine::input::INPUT_TICKET_BASE
+}
+
+/// The `copy` / `cut` event's text: the focused widget's current offer.
+/// Without one the event keeps the browser default (a text field's copy is
+/// written by `ClipboardWrite` from the same key).
+pub(super) fn copy_event_text(offer: Option<&str>) -> Option<&str> {
+    offer.filter(|t| !t.is_empty())
 }
 
 /// Recording fake for executor unit tests.
@@ -165,6 +195,26 @@ impl WebSurface for RecordingSurface {
 mod tests {
     use super::*;
     use crate::types::ids::Ticket;
+
+    #[test]
+    fn dom_paste_maps_to_a_waiting_app_read_or_the_paste_event() {
+        assert_eq!(paste_input(None, "hi".into()), InputEvent::Paste("hi".into()));
+        assert_eq!(
+            paste_input(Some(Ticket(3)), "hi".into()),
+            InputEvent::Clipboard(ClipboardResult { ticket: Ticket(3), text: Some("hi".into()) })
+        );
+        // Ctrl/Cmd+V reads are answered by the paste event, app reads by readText.
+        assert!(reads_async(Ticket(3)));
+        assert!(!reads_async(Ticket(crate::engine::input::INPUT_TICKET_BASE + 1)));
+        assert_eq!(copy_event_text(Some("sel")), Some("sel"));
+        assert_eq!(copy_event_text(Some("")), None);
+        assert_eq!(copy_event_text(None), None);
+        let mut w = RecordingSurface::default();
+        assert_eq!(
+            execute(&mut w, WindowCommand::ClipboardOffer(Some("x".into()))),
+            Some(WebFollowUp::ClipboardOffer(Some("x".into())))
+        );
+    }
 
     #[test]
     fn title_cursor_fullscreen_focus() {

@@ -313,6 +313,10 @@ pub enum WindowCommand {
     /// Read the clipboard; the host answers with `InputEvent::Clipboard`
     /// carrying the same ticket.
     ClipboardRead(Ticket),
+    /// What the window's copy / cut gesture copies right now (see
+    /// `ClipboardCmd::Offer`); a host that answers copy events
+    /// synchronously keeps it, others ignore it.
+    ClipboardOffer(Option<String>),
     /// Bring the window to the front and focus it.
     FocusWindow,
     /// Request user attention, or cancel a pending request.

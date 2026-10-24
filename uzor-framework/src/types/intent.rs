@@ -446,4 +446,13 @@ pub enum UnhandledInput {
         /// The event.
         wheel: WheelInput,
     },
+    /// Pasted text with no focused text field to take it (Ctrl/Cmd+V or
+    /// the browser's paste): the app's focused custom widget (a terminal,
+    /// a remote view) inserts it.
+    Paste {
+        /// Its window.
+        win: WindowId,
+        /// The pasted text (never empty).
+        text: String,
+    },
 }

@@ -255,6 +255,9 @@ impl WindowEngine {
             WindowOp::Clipboard(ClipboardCmd::WriteImage(img)) => {
                 self.push_primary(WindowCommand::ClipboardWriteImage(img))
             }
+            WindowOp::Clipboard(ClipboardCmd::Offer { win, text }) => {
+                self.push(win, WindowCommand::ClipboardOffer(text))
+            }
             WindowOp::Screenshot { win, ticket } => {
                 self.push(win, WindowCommand::Screenshot(ticket))
             }

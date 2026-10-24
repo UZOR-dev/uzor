@@ -284,6 +284,7 @@ impl<S: Spec, A: App<Spec = S>> RafDriver<S, A> {
         match follow {
             WebFollowUp::ClipboardWrite(text) => self.write_clipboard(&text),
             WebFollowUp::ClipboardRead(ticket) => self.read_clipboard(ticket),
+            WebFollowUp::ClipboardOffer(text) => *self.queue.copy_buf().borrow_mut() = text,
             WebFollowUp::Spawn(spec) => self.bind_spawn(id, spec),
             WebFollowUp::Close => self.close_window(id),
             WebFollowUp::ExitApp => self.stop(),
@@ -340,8 +341,9 @@ impl<S: Spec, A: App<Spec = S>> RafDriver<S, A> {
         self.needs_tick = true;
     }
 
+    /// Async fallback for writes outside a copy gesture (where the browser
+    /// allows it: a focused page, or a recent user activation).
     fn write_clipboard(&mut self, text: &str) {
-        *self.queue.copy_buf().borrow_mut() = Some(text.to_string());
         let Some(window) = web_sys::window() else {
             return;
         };
@@ -353,16 +355,11 @@ impl<S: Spec, A: App<Spec = S>> RafDriver<S, A> {
         let Some(window_id) = self.queue.window() else {
             return;
         };
-        if let Some(text) = self.queue.paste_buf().borrow_mut().take() {
-            self.push_runtime(
-                window_id,
-                InputEvent::Clipboard(ClipboardResult {
-                    ticket,
-                    text: Some(text),
-                }),
-            );
+        // Ctrl/Cmd+V: the DOM paste event of the same gesture answers it.
+        if !super::executor::reads_async(ticket) {
             return;
         }
+        let _ = window_id;
         self.queue.pending_reads().borrow_mut().push_back(ticket);
         let Some(win) = web_sys::window() else {
             self.finish_read(window_id, ticket, None);
