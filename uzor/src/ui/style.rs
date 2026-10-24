@@ -153,6 +153,13 @@ impl Style {
     pub fn custom(&self, name: &str) -> Option<&str> {
         self.custom.get(name).map(String::as_str)
     }
+    /// The custom property for a [`styled!`] field: `pad_x` reads `--pad-x`. One shared body,
+    /// so each styled field costs a call rather than its own name rewrite.
+    #[doc(hidden)]
+    #[inline(never)]
+    pub fn field_css(&self, field: &str) -> Option<&str> {
+        self.custom(&format!("--{}", field.replace('_', "-")))
+    }
     /// The colour, or `fallback` when unset.
     pub fn color_or<'a>(&'a self, fallback: &'a str) -> &'a str {
         self.color.as_deref().unwrap_or(fallback)
@@ -748,8 +755,7 @@ macro_rules! styled {
                             self.$f = v;
                         }
                     )+)?
-                    let name = concat!("--", stringify!($f)).replace('_', "-");
-                    if let Some(v) = s.custom(&name).and_then(StyleField::from_css) {
+                    if let Some(v) = s.field_css(stringify!($f)).and_then(StyleField::from_css) {
                         self.$f = v;
                     }
                 )*
