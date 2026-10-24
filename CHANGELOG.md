@@ -2,6 +2,69 @@
 
 All crates in the workspace share one version.
 
+## 1.5.11
+
+### Inline rich text in the DOM (uzor)
+
+- `El::runs([Run, ...])` gives an element mixed-style inline text in place of
+  `text`. Each `Run` has a selector (`b`, `i`, `code`, `a.link`, ...) resolved
+  against the sheet with the element as parent, plus optional inline `css` and
+  an `id`.
+- Runs wrap together like one text (`white-space: normal`/`pre-wrap`, forced
+  newlines, and break-anywhere with `overflow-wrap: anywhere`/`break-word`).
+  They size their box like text does.
+- A run with a background and padding paints as a rounded chip (inline code).
+  `font-style: italic` is supported.
+- Each piece of a run with an `id` is a hit of its own (`Dom::hits`),
+  `Dom::run_at(x, y)` finds the run under a point, and `Placed::char_at(x, y)`
+  gives a char index for carets and selection. `Placed::inline` holds the laid
+  lines, pieces and their bounds.
+
+### Positioned boxes (uzor)
+
+- `position: absolute` with `top`/`right`/`bottom`/`left`/`inset`, sized by
+  `width`/`height`, both insets, or shrink-to-fit. It is placed against the
+  padding box of the nearest positioned ancestor (the root otherwise) and takes
+  no space in the flow.
+- `position: relative` shifts a box and its subtree, leaving its slot in place.
+- Positioned boxes paint and hit-test above the flow, ordered by `z-index`.
+  Negative `z-index` paints under the flow.
+
+### Corners and sides (uzor)
+
+- Per-corner and elliptical `border-radius` (`12px 12px 0 0`,
+  `20px / 10px`), plus the `border-*-*-radius` longhands.
+- Per-side `border-width` and `border-color`, and the `border-top`/
+  `border-right`/`border-bottom`/`border-left` shorthands and longhands. The
+  content box follows each side's width.
+- Uniform borders and radii paint exactly as before.
+- `path_border_box` traces a box's rounded outline (for a shadow or a custom
+  fill), and `clip_padding_box` clips to its padding box with the inner radii,
+  so children stay inside rounded corners.
+
+### Exact icons (uzor)
+
+- `draw_svg_icon_exact` draws an icon without rounding its origin or
+  quantising stroke widths. `shape-rendering: geometricPrecision` on a DOM
+  element does the same for its `svg`.
+
+### Press origin (uzor-framework)
+
+- `VisualView::press_origin()` / `pressed_at(id)` give the point where the held
+  press went down. `InputEngineView::press_origin(win)` gives the same point
+  at the engine level.
+- A drag anchored there keeps the grabbed point under the pointer, even when
+  the first frame sees the pointer already moved.
+
+### Compatibility
+
+- New public fields: `El::runs`, `Placed::inline`, and on `Style`:
+  `position`, `top`, `right`, `bottom`, `left`, `z_index`, `border_radii`,
+  `border_widths`, `border_colors`, `font_style`, `overflow_wrap`,
+  `shape_rendering`.
+- Code that builds `Placed` with a struct literal adds `inline: None` or
+  `..Default::default()`. `Placed` now implements `Default`.
+
 ## 1.5.10
 
 ### Animation nodes in the DOM (uzor)
