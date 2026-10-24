@@ -5,6 +5,7 @@ pub mod blend;
 pub mod color;
 pub mod decay;
 pub mod easing;
+pub mod envelope;
 pub mod layers;
 pub mod path;
 pub mod scroll;
@@ -20,6 +21,7 @@ pub use blend::{
 pub use color::{Color, ColorSpace, Oklab, Oklch};
 pub use decay::Decay;
 pub use easing::{Easing, StepPosition};
+pub use envelope::{arc, back_out, bell, ellipse_lift, hold, pivot_shift, ring, smoothstep, squash_stretch};
 pub use layers::{LayerStack, ManagedLayer};
 pub use path::{MotionPath, PathSample, PathSegment, Point};
 pub use scroll::{ParallaxLayer, ScrollTimeline, ScrollTween, ViewTimeline};
