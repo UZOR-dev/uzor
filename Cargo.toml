@@ -55,6 +55,8 @@ members = [
     "uzor-graph",
     # Headless render-to-file (PNG export, no window/GPU dependency)
     "uzor-export",
+    # JS-authored animations: page engine on web, optional QuickJS on native
+    "uzor-anim-js",
     # Data-figure engine core (scales/coord/marks/guides/figures)
     "uzor-figures",
     # Serde-able spec/IR registry for uzor-figures (authored .figure.json
