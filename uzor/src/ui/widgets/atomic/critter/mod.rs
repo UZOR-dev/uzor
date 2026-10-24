@@ -1,7 +1,7 @@
 //! Critter avatar: a soft body shape with two tilted eyes (Hatchery HQ style).
 //!
 //! - [`CritterFamily`] picks the shape set; chat kinds differ by shape, not by label.
-//! - [`critter_view`] derives shape, colour and eye height from a stable name.
+//! - [`critter_view`] derives shape, colour, eye height and blink phase from a stable name.
 //! - [`draw_critter`] paints into any [`RenderContext`]; [`register_critter`] declares the hit rect.
 //! - [`draw_critter_motion`] paints one animation frame of a [`CritterState`] at a time `t`
 //!   (the HQ style.css `.av.st-*` keyframes); [`critter_next_frame`] says when the next frame
@@ -15,8 +15,10 @@ use crate::input::{InputCoordinator, Sense, WidgetKind};
 use crate::render::{emit_svg_path, RenderContext};
 use crate::types::{Rect, WidgetId};
 
-/// Body outlines in a 64x64 box (SVG path data).
-pub const CRITTER_SHAPES: [&str; 7] = [
+/// Body outlines in a 64x64 box (SVG path data): circle, egg, pear, rounded square,
+/// octagon, pebble, flower, ghost, rounded hexagon, squircle, blob, capsule, rounded
+/// triangle. Every outline covers both eyes (x 19..45, y 20..36).
+pub const CRITTER_SHAPES: [&str; 13] = [
     "M32 5c15 0 27 11 27 27S47 59 32 59 5 47 5 32 17 5 32 5z",
     "M32 4c16 0 28 10 28 26 0 18-10 30-28 30S4 48 4 30C4 14 16 4 32 4z",
     "M32 6c5 0 26 38 26 46 0 6-6 8-26 8S6 58 6 52C6 44 27 6 32 6z",
@@ -24,6 +26,12 @@ pub const CRITTER_SHAPES: [&str; 7] = [
     "M23 5h18l17 17v20L41 59H23L6 42V22z",
     "M30 5c14-2 29 9 28 27-1 17-13 27-28 26C14 57 4 46 6 30 7 16 17 6 30 5z",
     "M32 4c6 0 9 6 15 8s12 4 12 12c0 6-4 9-4 15 0 12-9 21-23 21S9 51 9 39c0-6-4-9-4-15 0-8 6-10 12-12s9-8 15-8z",
+    "M32 6c13 0 24 11 24 24v26l-6-4-6 4-6-4-6 4-6-4-6 4-6-4-6 4V30C8 17 19 6 32 6z",
+    "M27 7.9q5-2.9 10 0l15.4 8.9q5 2.9 5 8.7v17q0 5.8-5 8.7L37 60.1q-5 2.9-10 0l-15.4-8.9q-5-2.9-5-8.7v-17q0-5.8 5-8.7z",
+    "M32 5c22 0 27 5 27 27S54 59 32 59 5 54 5 32 10 5 32 5z",
+    "M34 5c12 1 24 9 24 22 0 9-5 13-4 20 1 8-8 13-20 12-14-1-26-8-27-22C6 22 18 4 34 5z",
+    "M32 5c12 0 20 8 20 18v18c0 10-8 18-20 18S12 51 12 41V23C12 13 20 5 32 5z",
+    "M27 9q5-7 10 0l20 35q4 8-5 9H12q-9-1-5-9z",
 ];
 
 /// Body colours.
@@ -46,9 +54,9 @@ impl CritterFamily {
     /// Shape indices this family draws from.
     pub fn shapes(self) -> &'static [usize] {
         match self {
-            CritterFamily::Dm => &[0, 5],
-            CritterFamily::Group => &[3],
-            CritterFamily::Agent => &[1, 2, 6],
+            CritterFamily::Dm => tokens::DM_SHAPES,
+            CritterFamily::Group => &[3, 8],
+            CritterFamily::Agent => &[1, 2, 6, 7, 10, 12],
             CritterFamily::Node => &[4],
         }
     }
@@ -65,6 +73,8 @@ pub struct CritterView {
     pub eye_y: f64,
     /// Half-closed, faded (session off).
     pub off: bool,
+    /// Seconds added to the motion clock, so a list of critters does not blink in step.
+    pub phase: f64,
 }
 
 /// FNV-1a over UTF-16 units (matches the HQ JS `hashOf`).
@@ -93,6 +103,7 @@ pub fn critter_view(name: &str, family: CritterFamily) -> CritterView {
         color: CRITTER_PALETTE[(color_hash(name) as usize) % CRITTER_PALETTE.len()],
         eye_y: 28.0 + ((h >> 4) % 5) as f64 - 2.0,
         off: false,
+        phase: (h >> 16) as f64 / 65536.0 * BLINK,
     }
 }
 
@@ -142,9 +153,12 @@ fn swing(t: f64, period: f64) -> f64 {
     if f < 0.5 { ease(f * 2.0) } else { ease((1.0 - f) * 2.0) }
 }
 
-/// `blink 5.5s`: scaleY 1 until 92%, 0.1 at 95%, 1 at 100%.
+/// Blink period, seconds: a rare blink (HQ CSS had 5.5 s, in step for every avatar).
+pub const BLINK: f64 = 7.5;
+
+/// `blink`: scaleY 1 until 92%, 0.1 at 95%, 1 at 100% of [`BLINK`].
 fn blink(t: f64) -> f64 {
-    let f = (t / 5.5).rem_euclid(1.0);
+    let f = (t / BLINK).rem_euclid(1.0);
     if f < 0.92 {
         1.0
     } else if f < 0.95 {
@@ -182,8 +196,8 @@ pub fn critter_next_frame(state: CritterState, t: f64, reduced: bool) -> Option<
     match state {
         CritterState::Off => None,
         CritterState::Idle => {
-            let f = (t / 5.5).rem_euclid(1.0) * 5.5;
-            let start = 0.92 * 5.5;
+            let f = (t / BLINK).rem_euclid(1.0) * BLINK;
+            let start = 0.92 * BLINK;
             if f >= start { Some(FAST) } else { Some((start - f).max(FAST)) }
         }
         _ => Some(FAST),
@@ -194,7 +208,7 @@ pub fn critter_next_frame(state: CritterState, t: f64, reduced: bool) -> Option<
 pub fn draw_critter_motion(ctx: &mut dyn RenderContext, rect: Rect, view: &CritterView, m: &CritterMotion) {
     use CritterState::*;
     let st = if view.off { Off } else { m.state };
-    let t = if m.reduced { 0.0 } else { m.t };
+    let t = if m.reduced { 0.0 } else { m.t + view.phase };
     let s = rect.width.min(rect.height) / 64.0;
     let ox = rect.x + (rect.width - 64.0 * s) / 2.0;
     let oy = rect.y + (rect.height - 64.0 * s) / 2.0;
@@ -311,7 +325,7 @@ mod tests {
         let a = critter_view("pty:node-a-1", CritterFamily::Agent);
         assert_eq!(a, critter_view("pty:node-a-1", CritterFamily::Agent));
         assert!(CritterFamily::Agent.shapes().contains(&a.shape));
-        assert_eq!(critter_view("x", CritterFamily::Group).shape, 3);
+        assert!(CritterFamily::Group.shapes().contains(&critter_view("x", CritterFamily::Group).shape));
         assert!((26.0..=30.0).contains(&a.eye_y));
     }
 
@@ -319,10 +333,10 @@ mod tests {
     fn motion_keyframes_and_cadence() {
         // blink closes at 95% of 5.5 s, open otherwise
         assert_eq!(blink(1.0), 1.0);
-        assert!((blink(0.95 * 5.5) - 0.1).abs() < 1e-9);
+        assert!((blink(0.95 * BLINK) - 0.1).abs() < 1e-9);
         // idle: slow steps outside the blink, fast inside, nothing when off / reduced
-        assert!((critter_next_frame(CritterState::Idle, 1.0, false).unwrap() - (0.92 * 5.5 - 1.0)).abs() < 1e-9);
-        assert_eq!(critter_next_frame(CritterState::Idle, 5.2, false), Some(1.0 / 30.0));
+        assert!((critter_next_frame(CritterState::Idle, 1.0, false).unwrap() - (0.92 * BLINK - 1.0)).abs() < 1e-9);
+        assert_eq!(critter_next_frame(CritterState::Idle, 0.93 * BLINK, false), Some(1.0 / 30.0));
         assert_eq!(critter_next_frame(CritterState::Off, 1.0, false), None);
         assert_eq!(critter_next_frame(CritterState::Working, 1.0, true), None);
         // roll passes its keyframes; look caps at 4 units

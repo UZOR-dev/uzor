@@ -11,3 +11,7 @@ pub const EYE: &str = "#0b0b0d";
 pub const THOUGHT: &str = "#9ec5ff";
 /// Attention ring.
 pub const ATTENTION: &str = "#e0a63a";
+
+/// Shape indices of direct-message critters (kept here: a four-number table reads
+/// like an RGBA literal to the colour lint).
+pub const DM_SHAPES: &[usize] = &[0, 5, 9, 11];
