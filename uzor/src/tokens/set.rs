@@ -112,36 +112,9 @@ pub struct Tokens {
     pub name: Option<String>,
     pub app: AppTokens,
     pub components: ComponentOverrides,
-    button: OnceLock<crate::ui::widgets::atomic::button::tokens::ButtonTokens>,
-    checkbox: OnceLock<crate::ui::widgets::atomic::checkbox::tokens::CheckboxTokens>,
-    chevron: OnceLock<crate::ui::widgets::atomic::chevron::tokens::ChevronTokens>,
-    clock: OnceLock<crate::ui::widgets::atomic::clock::tokens::ClockTokens>,
-    close_button: OnceLock<crate::ui::widgets::atomic::close_button::tokens::CloseButtonTokens>,
-    color_swatch: OnceLock<crate::ui::widgets::atomic::color_swatch::tokens::ColorSwatchTokens>,
-    drag_handle: OnceLock<crate::ui::widgets::atomic::drag_handle::tokens::DragHandleTokens>,
-    dropdown_trigger: OnceLock<crate::ui::widgets::atomic::dropdown_trigger::tokens::DropdownTriggerTokens>,
-    item: OnceLock<crate::ui::widgets::atomic::item::tokens::ItemTokens>,
-    radio: OnceLock<crate::ui::widgets::atomic::radio::tokens::RadioTokens>,
-    scrollbar: OnceLock<crate::ui::widgets::atomic::scrollbar::tokens::ScrollbarTokens>,
-    container: OnceLock<crate::ui::widgets::atomic::container::tokens::ContainerTokens>,
-    scroll_chevron: OnceLock<crate::ui::widgets::atomic::scroll_chevron::tokens::ScrollChevronTokens>,
-    separator: OnceLock<crate::ui::widgets::atomic::separator::tokens::SeparatorTokens>,
-    text: OnceLock<crate::ui::widgets::atomic::text::tokens::TextTokens>,
-    tab: OnceLock<crate::ui::widgets::atomic::tab::tokens::TabTokens>,
-    slider: OnceLock<crate::ui::widgets::atomic::slider::tokens::SliderTokens>,
-    text_input: OnceLock<crate::ui::widgets::atomic::text_input::tokens::TextInputTokens>,
-    toggle: OnceLock<crate::ui::widgets::atomic::toggle::tokens::ToggleTokens>,
-    toast: OnceLock<crate::ui::widgets::atomic::toast::tokens::ToastTokens>,
-    tooltip: OnceLock<crate::ui::widgets::atomic::tooltip::tokens::TooltipTokens>,
-    blackbox_panel: OnceLock<crate::ui::widgets::composite::blackbox_panel::tokens::BlackboxPanelTokens>,
-    chrome: OnceLock<crate::ui::widgets::composite::chrome::tokens::ChromeTokens>,
-    context_menu: OnceLock<crate::ui::widgets::composite::context_menu::tokens::ContextMenuTokens>,
-    dropdown: OnceLock<crate::ui::widgets::composite::dropdown::tokens::DropdownTokens>,
-    modal: OnceLock<crate::ui::widgets::composite::modal::tokens::ModalTokens>,
-    panel: OnceLock<crate::ui::widgets::composite::panel::tokens::PanelTokens>,
-    popup: OnceLock<crate::ui::widgets::composite::popup::tokens::PopupTokens>,
-    sidebar: OnceLock<crate::ui::widgets::composite::sidebar::tokens::SidebarTokens>,
-    toolbar: OnceLock<crate::ui::widgets::composite::toolbar::tokens::ToolbarTokens>,
+    /// One lazily resolved component-token cache per widget (`slot::*`), type-erased so the
+    /// binary carries drop code only for the widgets it reads.
+    caches: [Cache; slot::COUNT],
 }
 
 impl Tokens {
@@ -149,49 +122,49 @@ impl Tokens {
     /// through `ButtonTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn button(&self) -> &crate::ui::widgets::atomic::button::tokens::ButtonTokens {
-        self.button.get_or_init(|| crate::ui::widgets::atomic::button::tokens::ButtonTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::BUTTON, crate::ui::widgets::atomic::button::tokens::ButtonTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `CheckboxTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn checkbox(&self) -> &crate::ui::widgets::atomic::checkbox::tokens::CheckboxTokens {
-        self.checkbox.get_or_init(|| crate::ui::widgets::atomic::checkbox::tokens::CheckboxTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::CHECKBOX, crate::ui::widgets::atomic::checkbox::tokens::CheckboxTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ChevronTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn chevron(&self) -> &crate::ui::widgets::atomic::chevron::tokens::ChevronTokens {
-        self.chevron.get_or_init(|| crate::ui::widgets::atomic::chevron::tokens::ChevronTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::CHEVRON, crate::ui::widgets::atomic::chevron::tokens::ChevronTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ClockTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn clock(&self) -> &crate::ui::widgets::atomic::clock::tokens::ClockTokens {
-        self.clock.get_or_init(|| crate::ui::widgets::atomic::clock::tokens::ClockTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::CLOCK, crate::ui::widgets::atomic::clock::tokens::ClockTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `CloseButtonTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn close_button(&self) -> &crate::ui::widgets::atomic::close_button::tokens::CloseButtonTokens {
-        self.close_button.get_or_init(|| crate::ui::widgets::atomic::close_button::tokens::CloseButtonTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::CLOSE_BUTTON, crate::ui::widgets::atomic::close_button::tokens::CloseButtonTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ColorSwatchTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn color_swatch(&self) -> &crate::ui::widgets::atomic::color_swatch::tokens::ColorSwatchTokens {
-        self.color_swatch.get_or_init(|| crate::ui::widgets::atomic::color_swatch::tokens::ColorSwatchTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::COLOR_SWATCH, crate::ui::widgets::atomic::color_swatch::tokens::ColorSwatchTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `DragHandleTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn drag_handle(&self) -> &crate::ui::widgets::atomic::drag_handle::tokens::DragHandleTokens {
-        self.drag_handle.get_or_init(|| crate::ui::widgets::atomic::drag_handle::tokens::DragHandleTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::DRAG_HANDLE, crate::ui::widgets::atomic::drag_handle::tokens::DragHandleTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
@@ -200,35 +173,35 @@ impl Tokens {
     pub(crate) fn dropdown_trigger(
         &self,
     ) -> &crate::ui::widgets::atomic::dropdown_trigger::tokens::DropdownTriggerTokens {
-        self.dropdown_trigger.get_or_init(|| crate::ui::widgets::atomic::dropdown_trigger::tokens::DropdownTriggerTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::DROPDOWN_TRIGGER, crate::ui::widgets::atomic::dropdown_trigger::tokens::DropdownTriggerTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ItemTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn item(&self) -> &crate::ui::widgets::atomic::item::tokens::ItemTokens {
-        self.item.get_or_init(|| crate::ui::widgets::atomic::item::tokens::ItemTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::ITEM, crate::ui::widgets::atomic::item::tokens::ItemTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `RadioTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn radio(&self) -> &crate::ui::widgets::atomic::radio::tokens::RadioTokens {
-        self.radio.get_or_init(|| crate::ui::widgets::atomic::radio::tokens::RadioTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::RADIO, crate::ui::widgets::atomic::radio::tokens::RadioTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ScrollbarTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn scrollbar(&self) -> &crate::ui::widgets::atomic::scrollbar::tokens::ScrollbarTokens {
-        self.scrollbar.get_or_init(|| crate::ui::widgets::atomic::scrollbar::tokens::ScrollbarTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::SCROLLBAR, crate::ui::widgets::atomic::scrollbar::tokens::ScrollbarTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ContainerTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn container(&self) -> &crate::ui::widgets::atomic::container::tokens::ContainerTokens {
-        self.container.get_or_init(|| crate::ui::widgets::atomic::container::tokens::ContainerTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::CONTAINER, crate::ui::widgets::atomic::container::tokens::ContainerTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
@@ -237,63 +210,63 @@ impl Tokens {
     pub(crate) fn scroll_chevron(
         &self,
     ) -> &crate::ui::widgets::atomic::scroll_chevron::tokens::ScrollChevronTokens {
-        self.scroll_chevron.get_or_init(|| crate::ui::widgets::atomic::scroll_chevron::tokens::ScrollChevronTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::SCROLL_CHEVRON, crate::ui::widgets::atomic::scroll_chevron::tokens::ScrollChevronTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `SeparatorTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn separator(&self) -> &crate::ui::widgets::atomic::separator::tokens::SeparatorTokens {
-        self.separator.get_or_init(|| crate::ui::widgets::atomic::separator::tokens::SeparatorTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::SEPARATOR, crate::ui::widgets::atomic::separator::tokens::SeparatorTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `TextTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn text(&self) -> &crate::ui::widgets::atomic::text::tokens::TextTokens {
-        self.text.get_or_init(|| crate::ui::widgets::atomic::text::tokens::TextTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::TEXT, crate::ui::widgets::atomic::text::tokens::TextTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `TabTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn tab(&self) -> &crate::ui::widgets::atomic::tab::tokens::TabTokens {
-        self.tab.get_or_init(|| crate::ui::widgets::atomic::tab::tokens::TabTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::TAB, crate::ui::widgets::atomic::tab::tokens::TabTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `SliderTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn slider(&self) -> &crate::ui::widgets::atomic::slider::tokens::SliderTokens {
-        self.slider.get_or_init(|| crate::ui::widgets::atomic::slider::tokens::SliderTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::SLIDER, crate::ui::widgets::atomic::slider::tokens::SliderTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `TextInputTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn text_input(&self) -> &crate::ui::widgets::atomic::text_input::tokens::TextInputTokens {
-        self.text_input.get_or_init(|| crate::ui::widgets::atomic::text_input::tokens::TextInputTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::TEXT_INPUT, crate::ui::widgets::atomic::text_input::tokens::TextInputTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ToggleTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn toggle(&self) -> &crate::ui::widgets::atomic::toggle::tokens::ToggleTokens {
-        self.toggle.get_or_init(|| crate::ui::widgets::atomic::toggle::tokens::ToggleTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::TOGGLE, crate::ui::widgets::atomic::toggle::tokens::ToggleTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ToastTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn toast(&self) -> &crate::ui::widgets::atomic::toast::tokens::ToastTokens {
-        self.toast.get_or_init(|| crate::ui::widgets::atomic::toast::tokens::ToastTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::TOAST, crate::ui::widgets::atomic::toast::tokens::ToastTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `TooltipTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn tooltip(&self) -> &crate::ui::widgets::atomic::tooltip::tokens::TooltipTokens {
-        self.tooltip.get_or_init(|| crate::ui::widgets::atomic::tooltip::tokens::TooltipTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::TOOLTIP, crate::ui::widgets::atomic::tooltip::tokens::TooltipTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
@@ -302,14 +275,14 @@ impl Tokens {
     pub(crate) fn blackbox_panel(
         &self,
     ) -> &crate::ui::widgets::composite::blackbox_panel::tokens::BlackboxPanelTokens {
-        self.blackbox_panel.get_or_init(|| crate::ui::widgets::composite::blackbox_panel::tokens::BlackboxPanelTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::BLACKBOX_PANEL, crate::ui::widgets::composite::blackbox_panel::tokens::BlackboxPanelTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ChromeTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn chrome(&self) -> &crate::ui::widgets::composite::chrome::tokens::ChromeTokens {
-        self.chrome.get_or_init(|| crate::ui::widgets::composite::chrome::tokens::ChromeTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::CHROME, crate::ui::widgets::composite::chrome::tokens::ChromeTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
@@ -318,49 +291,49 @@ impl Tokens {
     pub(crate) fn context_menu(
         &self,
     ) -> &crate::ui::widgets::composite::context_menu::tokens::ContextMenuTokens {
-        self.context_menu.get_or_init(|| crate::ui::widgets::composite::context_menu::tokens::ContextMenuTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::CONTEXT_MENU, crate::ui::widgets::composite::context_menu::tokens::ContextMenuTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `DropdownTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn dropdown(&self) -> &crate::ui::widgets::composite::dropdown::tokens::DropdownTokens {
-        self.dropdown.get_or_init(|| crate::ui::widgets::composite::dropdown::tokens::DropdownTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::DROPDOWN, crate::ui::widgets::composite::dropdown::tokens::DropdownTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ModalTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn modal(&self) -> &crate::ui::widgets::composite::modal::tokens::ModalTokens {
-        self.modal.get_or_init(|| crate::ui::widgets::composite::modal::tokens::ModalTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::MODAL, crate::ui::widgets::composite::modal::tokens::ModalTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `PanelTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn panel(&self) -> &crate::ui::widgets::composite::panel::tokens::PanelTokens {
-        self.panel.get_or_init(|| crate::ui::widgets::composite::panel::tokens::PanelTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::PANEL, crate::ui::widgets::composite::panel::tokens::PanelTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `PopupTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn popup(&self) -> &crate::ui::widgets::composite::popup::tokens::PopupTokens {
-        self.popup.get_or_init(|| crate::ui::widgets::composite::popup::tokens::PopupTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::POPUP, crate::ui::widgets::composite::popup::tokens::PopupTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `SidebarTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn sidebar(&self) -> &crate::ui::widgets::composite::sidebar::tokens::SidebarTokens {
-        self.sidebar.get_or_init(|| crate::ui::widgets::composite::sidebar::tokens::SidebarTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::SIDEBAR, crate::ui::widgets::composite::sidebar::tokens::SidebarTokens::resolve)
     }
 
     /// This widget's resolved component tokens (H1 §3). `pub(crate)` — read
     /// through `ToolbarTheme`'s trait methods via
     /// [`crate::tokens::theme::TokenTheme`], not directly.
     pub(crate) fn toolbar(&self) -> &crate::ui::widgets::composite::toolbar::tokens::ToolbarTokens {
-        self.toolbar.get_or_init(|| crate::ui::widgets::composite::toolbar::tokens::ToolbarTokens::resolve(&self.semantic, &self.components))
+        self.cached(slot::TOOLBAR, crate::ui::widgets::composite::toolbar::tokens::ToolbarTokens::resolve)
     }
 }
 
@@ -382,6 +355,56 @@ impl TokenValue {
             TokenValue::Color(_) => "color",
             TokenValue::Dimension(_) => "dimension",
             TokenValue::Number(_) => "number",
+        }
+    }
+}
+
+/// A widget's resolved tokens, behind `dyn Any` (see [`Tokens::cached`]).
+type Cache = OnceLock<Box<dyn std::any::Any + Send + Sync>>;
+
+/// The index of each widget's cache in `Tokens::caches`.
+mod slot {
+    pub(super) const BUTTON: usize = 0;
+    pub(super) const CHECKBOX: usize = 1;
+    pub(super) const CHEVRON: usize = 2;
+    pub(super) const CLOCK: usize = 3;
+    pub(super) const CLOSE_BUTTON: usize = 4;
+    pub(super) const COLOR_SWATCH: usize = 5;
+    pub(super) const DRAG_HANDLE: usize = 6;
+    pub(super) const DROPDOWN_TRIGGER: usize = 7;
+    pub(super) const ITEM: usize = 8;
+    pub(super) const RADIO: usize = 9;
+    pub(super) const SCROLLBAR: usize = 10;
+    pub(super) const CONTAINER: usize = 11;
+    pub(super) const SCROLL_CHEVRON: usize = 12;
+    pub(super) const SEPARATOR: usize = 13;
+    pub(super) const TEXT: usize = 14;
+    pub(super) const TAB: usize = 15;
+    pub(super) const SLIDER: usize = 16;
+    pub(super) const TEXT_INPUT: usize = 17;
+    pub(super) const TOGGLE: usize = 18;
+    pub(super) const TOAST: usize = 19;
+    pub(super) const TOOLTIP: usize = 20;
+    pub(super) const BLACKBOX_PANEL: usize = 21;
+    pub(super) const CHROME: usize = 22;
+    pub(super) const CONTEXT_MENU: usize = 23;
+    pub(super) const DROPDOWN: usize = 24;
+    pub(super) const MODAL: usize = 25;
+    pub(super) const PANEL: usize = 26;
+    pub(super) const POPUP: usize = 27;
+    pub(super) const SIDEBAR: usize = 28;
+    pub(super) const TOOLBAR: usize = 29;
+    pub(super) const COUNT: usize = 30;
+}
+
+impl Tokens {
+    /// The tokens in cache `i`, resolved by `resolve` on first read. Each slot only ever holds
+    /// the type its accessor resolves, so the downcast cannot fail.
+    fn cached<T: std::any::Any + Send + Sync>(&self, i: usize, resolve: fn(&SemanticRoles, &ComponentOverrides) -> T) -> &T {
+        let v = self.caches[i].get_or_init(|| Box::new(resolve(&self.semantic, &self.components)));
+        match v.downcast_ref() {
+            Some(t) => t,
+            None => unreachable!("token cache {i} holds another widget's tokens"),
         }
     }
 }
@@ -415,36 +438,7 @@ impl Tokens {
             name,
             app,
             components,
-            button: OnceLock::new(),
-            checkbox: OnceLock::new(),
-            chevron: OnceLock::new(),
-            clock: OnceLock::new(),
-            close_button: OnceLock::new(),
-            color_swatch: OnceLock::new(),
-            drag_handle: OnceLock::new(),
-            dropdown_trigger: OnceLock::new(),
-            item: OnceLock::new(),
-            radio: OnceLock::new(),
-            scrollbar: OnceLock::new(),
-            container: OnceLock::new(),
-            scroll_chevron: OnceLock::new(),
-            separator: OnceLock::new(),
-            text: OnceLock::new(),
-            tab: OnceLock::new(),
-            slider: OnceLock::new(),
-            text_input: OnceLock::new(),
-            toggle: OnceLock::new(),
-            toast: OnceLock::new(),
-            tooltip: OnceLock::new(),
-            blackbox_panel: OnceLock::new(),
-            chrome: OnceLock::new(),
-            context_menu: OnceLock::new(),
-            dropdown: OnceLock::new(),
-            modal: OnceLock::new(),
-            panel: OnceLock::new(),
-            popup: OnceLock::new(),
-            sidebar: OnceLock::new(),
-            toolbar: OnceLock::new(),
+            caches: [const { OnceLock::new() }; slot::COUNT],
         }
     }
 }
