@@ -13,6 +13,43 @@
 //! `display:none` removes an element; `:hover` / `:focus-visible` / `:disabled` /
 //! `:active` rules apply through the state callback given to [`render`].
 //!
+//! Inline rich text: [`El::runs`] puts styled [`Run`]s (bold, italic, code chips, links)
+//! in one text flow that wraps across them; each run is styled by the sheet as an element
+//! of its own (`b`, `code`, `a.link`, ...) inheriting the element's font, and a run with an
+//! id is a hit of its own, one rect per wrapped piece.
+//!
+//! `position: absolute` takes an element out of the flow and places it against its nearest
+//! positioned ancestor (`top` / `right` / `bottom` / `left`); positioned elements paint and
+//! hit-test above the flow, ordered by `z-index`. Corners may differ (`border-radius: 12px
+//! 12px 0 0`, elliptical `20px / 10px`, `border-top-left-radius`) and so may border sides
+//! (`border-width: 0 0 1px`, `border-left: 3px solid red`). `shape-rendering:
+//! geometricPrecision` draws an element's icon exactly, without pixel snapping.
+//!
+//! ```
+//! use uzor::ui::dom::{lay_out, El, Run};
+//! use uzor::ui::style::{Sheet, State};
+//! fn card(ctx: &mut dyn uzor::render::RenderContext) {
+//! let sheet = Sheet::parse(r#"
+//!     div.card { position: relative; width: 240px; padding: 8px; white-space: normal;
+//!                border-radius: 12px 12px 4px 12px; border-bottom: 2px solid #3b82f6 }
+//!     b { font-weight: 700 }
+//!     code { font-family: monospace; background: #222; padding: 0 6px; border-radius: 6px }
+//!     a.link { color: #60a5fa }
+//!     div.badge { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; z-index: 1 }
+//! "#).unwrap();
+//! let card = El::new("div.card").id("card")
+//!     .runs([Run::text("Run "), Run::new("code", "cargo test"), Run::text(" and see "),
+//!            Run::new("a.link", "the docs").id("url:docs"), Run::new("b", " now")])
+//!     .child(El::new("div.badge").id("badge"));
+//! let dom = lay_out(ctx, &sheet, &card, 0.0, 0.0, 800.0, &|_| State::NONE);
+//! // The badge hangs over the card's corner and is the topmost hit there.
+//! let (badge, card) = (dom.rect("badge").unwrap(), dom.rect("card").unwrap());
+//! assert_eq!((badge.x + badge.width, badge.y), (card.x + card.width + 6.0, card.y - 6.0));
+//! // The link run is a hit of its own.
+//! assert!(dom.hits().any(|(id, _)| id == "url:docs"));
+//! }
+//! ```
+//!
 //! Animation nodes ([`El::anim`]) are boxes like any other (flex sizes them, an `id` makes
 //! them hits, document order is their z-order) whose content is painted every frame by a
 //! named [`AnimScript`](crate::render::AnimScript) from an
@@ -47,6 +84,92 @@ pub struct El {
     /// Animated content ([`El::anim`]).
     pub anim: Option<AnimNode>,
     pub children: Vec<El>,
+    /// Inline rich text ([`El::runs`]); when set it replaces `text`.
+    pub runs: Vec<Run>,
+}
+
+/// One styled run of inline text ([`El::runs`]).
+///
+/// `spec` styles the run as an element of its own (`span`, `b`, `i`, `code`,
+/// `a.link`), resolved by the sheet as a child of the element holding the runs, so it
+/// inherits that element's font and colour. A run paints its `background` as a chip
+/// behind each of its pieces (with its `border-radius`, its left / right `padding` at its
+/// first / last piece, and its vertical padding around a `1.2em` content height), and
+/// takes its own `color`, `font-*` and `font-style`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Run {
+    pub spec: String,
+    pub text: String,
+    /// Hit id: each of the run's pieces is a hit ([`Dom::hits`], [`Dom::run_at`]).
+    pub id: Option<String>,
+    /// Inline declarations over the sheet.
+    pub css: Option<String>,
+}
+
+impl Run {
+    /// A run styled as `spec` (`"code"`, `"a.link"`).
+    pub fn new(spec: impl Into<String>, text: impl Into<String>) -> Self {
+        Self { spec: spec.into(), text: text.into(), ..Self::default() }
+    }
+    /// A plain run (a `span`: the element's own font and colour).
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::new("span", text)
+    }
+    pub fn id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+    pub fn css(mut self, decls: impl Into<String>) -> Self {
+        self.css = Some(decls.into());
+        self
+    }
+}
+
+/// A run's resolved look on a placed element.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlacedRun {
+    pub id: Option<String>,
+    pub style: Style,
+    pub text: String,
+}
+
+/// One piece of a run on one line. Coordinates are relative to the element's content
+/// box, so they survive [`Dom::moved`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunPiece {
+    /// Index into [`Inline::runs`].
+    pub run: usize,
+    /// Left edge of the piece's box (a chip's left edge) and its width (text plus padding).
+    pub x: f64,
+    pub w: f64,
+    /// Where the text starts inside the box (a chip's left padding on its first piece).
+    pub pad: f64,
+    pub text: String,
+    /// Char offset of the piece's first char in [`Inline::text`].
+    pub start: usize,
+    /// X of each char boundary from the text start (`text.chars().count() + 1` values),
+    /// for carets and selections.
+    pub bounds: Vec<f64>,
+}
+
+/// One wrapped line of inline runs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunLine {
+    /// Top of the line box, relative to the content box.
+    pub y: f64,
+    pub height: f64,
+    /// Width up to the end of its last non-space piece.
+    pub width: f64,
+    pub pieces: Vec<RunPiece>,
+}
+
+/// Laid-out inline runs of a placed element ([`Placed::inline`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Inline {
+    pub runs: Vec<PlacedRun>,
+    pub lines: Vec<RunLine>,
+    /// Every run's text, concatenated (the element's text content).
+    pub text: String,
 }
 
 /// What an animation node paints: the script `name` in an [`AnimRegistry`] and its
@@ -136,6 +259,14 @@ impl El {
         self.children.push(c);
         self
     }
+    /// Inline rich text: styled runs in one text flow (replacing [`El::text`]). Under
+    /// `white-space: normal` / `pre-wrap` the runs wrap together at spaces, a run's chip
+    /// padding counting at its ends; `overflow-wrap: anywhere` breaks a word that does
+    /// not fit a line. `\n` always starts a line. `line-clamp` keeps the first lines.
+    pub fn runs(mut self, runs: impl IntoIterator<Item = Run>) -> Self {
+        self.runs.extend(runs);
+        self
+    }
     pub fn children(mut self, cs: impl IntoIterator<Item = El>) -> Self {
         self.children.extend(cs);
         self
@@ -162,6 +293,45 @@ pub struct Placed {
     pub name: Option<String>,
     pub svg: Option<String>,
     pub anim: Option<AnimNode>,
+    /// Laid-out inline runs ([`El::runs`]).
+    pub inline: Option<Box<Inline>>,
+}
+
+impl Default for Placed {
+    fn default() -> Self {
+        Self { id: None, kind: "div".into(), rect: Rect::default(), style: Style::default(), text: None, tab: false, name: None, svg: None, anim: None, inline: None }
+    }
+}
+
+impl Placed {
+    /// Every inline run piece as `(run index, rect)` in window coordinates (the piece's
+    /// box over its full line height), line by line.
+    pub fn run_boxes(&self) -> Vec<(usize, Rect)> {
+        let Some(inl) = &self.inline else { return Vec::new() };
+        let c = content_box(self);
+        inl.lines
+            .iter()
+            .flat_map(|l| l.pieces.iter().map(move |p| (p.run, Rect::new(c.x + p.x, c.y + l.y, p.w, l.height))))
+            .collect()
+    }
+    /// The char offset (in [`Inline::text`]) of the inline text boundary nearest to
+    /// `(x, y)`: the line under `y` (clamped to the first / last), the nearest boundary
+    /// on it. For carets and drag selections.
+    pub fn char_at(&self, x: f64, y: f64) -> Option<usize> {
+        let inl = self.inline.as_ref()?;
+        let c = content_box(self);
+        let line = inl.lines.iter().find(|l| y < c.y + l.y + l.height).or(inl.lines.last())?;
+        let mut best: Option<(f64, usize)> = None;
+        for p in &line.pieces {
+            for (i, bx) in p.bounds.iter().enumerate() {
+                let d = (c.x + p.x + p.pad + bx - x).abs();
+                if best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, p.start + i));
+                }
+            }
+        }
+        best.map(|b| b.1).or_else(|| line.pieces.first().map(|p| p.start))
+    }
 }
 
 /// A rendered tree, in paint (document) order.
@@ -177,9 +347,30 @@ impl Dom {
     pub fn rect(&self, id: &str) -> Option<Rect> {
         self.boxes.iter().find(|b| b.id.as_deref() == Some(id)).map(|b| b.rect)
     }
-    /// `(id, rect)` of every element with an id, in document order (later = on top).
+    /// `(id, rect)` of every element with an id, in paint order (later = on top): document
+    /// order, positioned elements after the flow by `z-index`. An element's inline runs
+    /// with ids follow it, one rect per piece.
     pub fn hits(&self) -> impl Iterator<Item = (&str, Rect)> {
-        self.boxes.iter().filter_map(|b| b.id.as_deref().map(|i| (i, b.rect)))
+        self.boxes.iter().flat_map(|b| {
+            let own = b.id.as_deref().map(|i| (i, b.rect));
+            let runs: Vec<(&str, Rect)> = match &b.inline {
+                Some(inl) if inl.runs.iter().any(|r| r.id.is_some()) => {
+                    b.run_boxes().into_iter().filter_map(|(ri, r)| Some((inl.runs[ri].id.as_deref()?, r))).collect()
+                }
+                _ => Vec::new(),
+            };
+            own.into_iter().chain(runs)
+        })
+    }
+    /// The topmost element with inline runs under `(x, y)` and the run there (a piece of
+    /// it contains the point): `(element, run index)`.
+    pub fn run_at(&self, x: f64, y: f64) -> Option<(&Placed, usize)> {
+        self.boxes.iter().rev().filter(|b| b.inline.is_some()).find_map(|b| {
+            b.run_boxes()
+                .into_iter()
+                .find(|(_, r)| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+                .map(|(ri, _)| (b, ri))
+        })
     }
     /// The Tab stops in document order.
     pub fn tabbable(&self) -> impl Iterator<Item = &str> {
@@ -195,7 +386,9 @@ impl Dom {
     }
     /// `(id, accessible name)` for elements with an id and a name or text.
     pub fn names(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.boxes.iter().filter_map(|b| Some((b.id.as_deref()?, b.name.as_deref().or(b.text.as_deref())?)))
+        self.boxes
+            .iter()
+            .filter_map(|b| Some((b.id.as_deref()?, b.name.as_deref().or(b.text.as_deref()).or(b.inline.as_ref().map(|i| i.text.as_str()))?)))
     }
 }
 
@@ -212,7 +405,221 @@ struct Resolved {
     measured: Option<(Units, f64)>,
     /// Width of a space in the element's font (wrapping text).
     space: f64,
+    /// Measured inline runs.
+    runs: Option<std::rc::Rc<RunsMeasured>>,
     children: Vec<Resolved>,
+}
+
+/// Token kinds of inline runs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Tok {
+    Word,
+    Space,
+    Newline,
+}
+
+/// A measured token of inline runs: a word, a run of spaces, or a newline.
+#[derive(Clone, Debug)]
+struct RunTok {
+    run: usize,
+    kind: Tok,
+    text: String,
+    /// Char offset in the whole text.
+    start: usize,
+    /// Chip padding before / after (the run's first / last token).
+    lp: f64,
+    rp: f64,
+    /// Char boundary x from the token start; the last is its text width.
+    bounds: Vec<f64>,
+}
+
+/// Inline runs measured at resolve time (layout and placing need no render context).
+#[derive(Debug)]
+struct RunsMeasured {
+    toks: Vec<RunTok>,
+    runs: Vec<PlacedRun>,
+    lh: f64,
+    wrap: bool,
+    anywhere: bool,
+    clamp: usize,
+    text: String,
+}
+
+fn measure_runs(ctx: &mut dyn RenderContext, sheet: &Sheet, el: &El, s: &Style) -> RunsMeasured {
+    let mut toks = Vec::new();
+    let mut runs = Vec::new();
+    let mut text = String::new();
+    let mut off = 0usize;
+    for (ri, run) in el.runs.iter().enumerate() {
+        let mut rs = sheet.resolve(&Node::parse(&run.spec), Some(s));
+        if let Some(css) = &run.css {
+            for d in css.split(';') {
+                if let Some((k, v)) = d.split_once(':') {
+                    apply_decl(&mut rs, k.trim(), v.trim());
+                }
+            }
+        }
+        ctx.set_font(&font_str(&rs));
+        let pad = rs.pad();
+        let first = toks.len();
+        // Some backends trim spaces when measuring: measure spaces between two glyphs.
+        let xx = ctx.measure_text("xx");
+        let mut push = |ctx: &mut dyn RenderContext, kind: Tok, t: &str, start: usize| {
+            let n = t.chars().count();
+            let bounds: Vec<f64> = match kind {
+                Tok::Newline => vec![0.0],
+                Tok::Space => {
+                    let w = ctx.measure_text(&format!("x{t}x")) - xx;
+                    (0..=n).map(|i| w * i as f64 / n.max(1) as f64).collect()
+                }
+                Tok::Word => {
+                    let mut b = vec![0.0];
+                    let mut acc = String::new();
+                    for ch in t.chars() {
+                        acc.push(ch);
+                        b.push(ctx.measure_text(&acc));
+                    }
+                    b
+                }
+            };
+            toks.push(RunTok { run: ri, kind, text: t.to_string(), start, lp: 0.0, rp: 0.0, bounds });
+        };
+        let mut cur = String::new();
+        let mut cur_start = off;
+        let mut cur_sp = false;
+        for (ci, ch) in run.text.chars().enumerate() {
+            let at = off + ci;
+            if ch == '\n' {
+                if !cur.is_empty() {
+                    push(ctx, if cur_sp { Tok::Space } else { Tok::Word }, &std::mem::take(&mut cur), cur_start);
+                }
+                push(ctx, Tok::Newline, "", at);
+                cur_start = at + 1;
+                continue;
+            }
+            let sp = ch == ' ';
+            if !cur.is_empty() && sp != cur_sp {
+                push(ctx, if cur_sp { Tok::Space } else { Tok::Word }, &std::mem::take(&mut cur), cur_start);
+            }
+            if cur.is_empty() {
+                cur_start = at;
+            }
+            cur_sp = sp;
+            cur.push(ch);
+        }
+        if !cur.is_empty() {
+            push(ctx, if cur_sp { Tok::Space } else { Tok::Word }, &cur, cur_start);
+        }
+        if toks.len() > first {
+            toks[first].lp = pad[3];
+            toks.last_mut().unwrap().rp = pad[1];
+        }
+        off += run.text.chars().count();
+        text.push_str(&run.text);
+        runs.push(PlacedRun { id: run.id.clone(), style: rs, text: run.text.clone() });
+    }
+    RunsMeasured {
+        toks,
+        runs,
+        lh: font_of(s).2,
+        wrap: wraps(s),
+        anywhere: matches!(s.overflow_wrap.as_deref(), Some("anywhere" | "break-word")),
+        clamp: clamp_of(s),
+        text,
+    }
+}
+
+/// Greedy wrap of measured runs at `limit` (`None` or not wrapping: only newlines break).
+/// Spaces at a line start are dropped, spaces before a wrapped word too; with `anywhere`
+/// a word too long for a line breaks between chars.
+fn wrap_runs(m: &RunsMeasured, limit: Option<f64>) -> Vec<RunLine> {
+    let max_w = if m.wrap { limit.unwrap_or(f64::INFINITY) } else { f64::INFINITY };
+    let mut lines: Vec<Vec<RunPiece>> = vec![Vec::new()];
+    let mut x = 0.0;
+    let piece = |t: &RunTok, a: usize, b: usize, x: f64, lp: f64, rp: f64| {
+        let base = t.bounds[a];
+        let bounds: Vec<f64> = t.bounds[a..=b].iter().map(|v| v - base).collect();
+        let w = bounds[b - a] + lp + rp;
+        RunPiece { run: t.run, x, w, pad: lp, text: t.text.chars().skip(a).take(b - a).collect(), start: t.start + a, bounds }
+    };
+    for t in &m.toks {
+        let n = t.bounds.len() - 1;
+        let w = t.bounds[n] + t.lp + t.rp;
+        match t.kind {
+            Tok::Newline => {
+                lines.push(Vec::new());
+                x = 0.0;
+                continue;
+            }
+            Tok::Space => {
+                if x > 0.0 && x + w <= max_w {
+                    lines.last_mut().unwrap().push(piece(t, 0, n, x, t.lp, t.rp));
+                    x += w;
+                } else if x > 0.0 {
+                    lines.push(Vec::new());
+                    x = 0.0;
+                }
+                continue;
+            }
+            Tok::Word => {}
+        }
+        if x + w <= max_w {
+            lines.last_mut().unwrap().push(piece(t, 0, n, x, t.lp, t.rp));
+            x += w;
+            continue;
+        }
+        if x > 0.0 && (w <= max_w || !m.anywhere) {
+            if let Some(l) = lines.last_mut() {
+                while l.last().is_some_and(|p| p.text.trim().is_empty()) {
+                    l.pop();
+                }
+            }
+            lines.push(vec![piece(t, 0, n, 0.0, t.lp, t.rp)]);
+            x = w;
+            continue;
+        }
+        if !m.anywhere {
+            lines.last_mut().unwrap().push(piece(t, 0, n, x, t.lp, t.rp));
+            x += w;
+            continue;
+        }
+        // Break anywhere: fill the line char by char, then carry on below.
+        let (mut a, mut lp) = (0, t.lp);
+        loop {
+            let mut b = a;
+            while b < n && x + lp + (t.bounds[b + 1] - t.bounds[a]) <= max_w {
+                b += 1;
+            }
+            if b == a {
+                if x > 0.0 {
+                    lines.push(Vec::new());
+                    x = 0.0;
+                    continue;
+                }
+                b = a + 1;
+            }
+            let last = b == n;
+            let p = piece(t, a, b, x, lp, if last { t.rp } else { 0.0 });
+            x += p.w;
+            lines.last_mut().unwrap().push(p);
+            if last {
+                break;
+            }
+            lines.push(Vec::new());
+            x = 0.0;
+            a = b;
+            lp = 0.0;
+        }
+    }
+    lines.truncate(m.clamp.max(1));
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(i, pieces)| {
+            let width = pieces.iter().rev().find(|p| !p.text.trim().is_empty()).map_or(0.0, |p| p.x + p.w);
+            RunLine { y: m.lh * i as f64, height: m.lh, width, pieces }
+        })
+        .collect()
 }
 
 fn font_of(s: &Style) -> (u32, f64, f64, String) {
@@ -223,7 +630,10 @@ fn font_of(s: &Style) -> (u32, f64, f64, String) {
 
 fn font_str(s: &Style) -> String {
     let (w, px, _, fam) = font_of(s);
-    format!("{w} {px}px {fam}")
+    match s.font_style.as_deref() {
+        Some(st @ ("italic" | "oblique")) => format!("{st} {w} {px}px {fam}"),
+        _ => format!("{w} {px}px {fam}"),
+    }
 }
 
 fn resolve(ctx: &mut dyn RenderContext, sheet: &Sheet, el: &El, parent: Option<&Style>, state: &dyn Fn(&str) -> State) -> Option<Resolved> {
@@ -239,14 +649,16 @@ fn resolve(ctx: &mut dyn RenderContext, sheet: &Sheet, el: &El, parent: Option<&
     if s.display.as_deref() == Some("none") {
         return None;
     }
-    let measured = el.text.as_ref().map(|t| {
+    let runs = (!el.runs.is_empty()).then(|| std::rc::Rc::new(measure_runs(ctx, sheet, el, &s)));
+    let text = if runs.is_some() { None } else { el.text.clone() };
+    let measured = text.as_ref().map(|t| {
         ctx.set_font(&font_str(&s));
         (units(ctx, t, wraps(&s)), font_of(&s).2)
     });
-    let space = if el.text.is_some() && wraps(&s) { ctx.measure_text(" ") } else { 0.0 };
+    let space = if text.is_some() && wraps(&s) { ctx.measure_text(" ") } else { 0.0 };
     let children = el.children.iter().filter_map(|c| resolve(ctx, sheet, c, Some(&s), state)).collect();
     let kind = el.spec.split(['.', '#', ':']).next().unwrap_or("div").to_string();
-    Some(Resolved { kind, id: el.id.clone(), style: s, text: el.text.clone(), tab: el.tab, name: el.name.clone(), svg: el.svg.clone(), anim: el.anim.clone(), measured, space, children })
+    Some(Resolved { kind, id: el.id.clone(), style: s, text, tab: el.tab, name: el.name.clone(), svg: el.svg.clone(), anim: el.anim.clone(), measured, space, runs, children })
 }
 
 /// The most lines wrapping text may take (`line-clamp`).
@@ -311,7 +723,7 @@ fn line_text(u: &Units, a: usize, b: usize) -> String {
 
 fn lbox<'a>(r: &Resolved, measures: &'a [Box<dyn Fn(Option<f64>) -> (f64, f64)>], next: &mut usize) -> LBox<'a> {
     let mut b = LBox::new(r.style.clone());
-    if r.measured.is_some() {
+    if r.measured.is_some() || r.runs.is_some() {
         b = b.text(measures[*next].as_ref());
         *next += 1;
     }
@@ -322,7 +734,13 @@ fn lbox<'a>(r: &Resolved, measures: &'a [Box<dyn Fn(Option<f64>) -> (f64, f64)>]
 }
 
 fn collect_measures(r: &Resolved, out: &mut Vec<Box<dyn Fn(Option<f64>) -> (f64, f64)>>) {
-    if let Some((u, lh)) = &r.measured {
+    if let Some(m) = &r.runs {
+        let m = m.clone();
+        out.push(Box::new(move |lim: Option<f64>| {
+            let ls = wrap_runs(&m, lim);
+            (ls.iter().map(|l| l.width).fold(0.0, f64::max).ceil(), m.lh * ls.len().max(1) as f64)
+        }));
+    } else if let Some((u, lh)) = &r.measured {
         if wraps(&r.style) {
             // Wrapping: min-content is the widest unit, else the lines at the limit.
             let (u, lh, space, clamp) = (u.clone(), *lh, r.space, clamp_of(&r.style));
@@ -344,13 +762,46 @@ fn collect_measures(r: &Resolved, out: &mut Vec<Box<dyn Fn(Option<f64>) -> (f64,
 
 /// `alpha`: the ancestors' opacity; a placed box carries its effective opacity (CSS
 /// `opacity` applies to the whole subtree).
-fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, alpha: f64) {
+/// Positioned subtrees (absolute / relative) leave the flow's paint order: they are
+/// collected in `layers` with their `z-index` and painted after it.
+fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(i32, Vec<Placed>)>, alpha: f64) {
     let mut style = r.style;
     let a = alpha * style.opacity.unwrap_or(1.0);
     style.opacity = (a < 1.0).then_some(a);
-    out.push(Placed { id: r.id, kind: r.kind, rect: l.rect, style, text: r.text, tab: r.tab, name: r.name, svg: r.svg, anim: r.anim });
+    let inline = r.runs.map(|m| {
+        let c = content_rect(&style, l.rect);
+        let mut lines = wrap_runs(&m, Some(c.width));
+        // A box taller than its lines centres them (as plain text); text-align moves each line.
+        let top = ((c.height - m.lh * lines.len() as f64) / 2.0).max(0.0);
+        for ln in &mut lines {
+            ln.y += top;
+            let dx = match style.text_align.as_deref() {
+                Some("center") => (c.width - ln.width) / 2.0,
+                Some("right") | Some("end") => c.width - ln.width,
+                _ => 0.0,
+            };
+            if dx != 0.0 {
+                for pc in &mut ln.pieces {
+                    pc.x += dx;
+                }
+            }
+        }
+        let (runs, text) = std::rc::Rc::try_unwrap(m).map(|m| (m.runs, m.text)).unwrap_or_else(|rc| (rc.runs.clone(), rc.text.clone()));
+        Box::new(Inline { runs, lines, text })
+    });
+    out.push(Placed { id: r.id, kind: r.kind, rect: l.rect, style, text: r.text, tab: r.tab, name: r.name, svg: r.svg, anim: r.anim, inline });
     for (c, cl) in r.children.into_iter().zip(&l.children) {
-        place(c, cl, out, a);
+        if c.style.positioned() {
+            let z = c.style.z_index.unwrap_or(0);
+            // Reserve the slot first: positioned descendants inside it paint above it.
+            let at = layers.len();
+            layers.push((z, Vec::new()));
+            let mut sub = Vec::new();
+            place(c, cl, &mut sub, layers, a);
+            layers[at].1 = sub;
+        } else {
+            place(c, cl, out, layers, a);
+        }
     }
 }
 
@@ -365,8 +816,28 @@ pub fn lay_out(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64, y:
         let b = lbox(&r, &measures, &mut next);
         layout(&b, x, y, w)
     };
-    let mut boxes = Vec::new();
-    place(r, &laid, &mut boxes, 1.0);
+    drop(measures);
+    let mut flow = Vec::new();
+    let mut layers = Vec::new();
+    place(r, &laid, &mut flow, &mut layers, 1.0);
+    if layers.is_empty() {
+        return Dom { boxes: flow, root: laid.rect };
+    }
+    // Paint order: the root, negative z-index layers, the flow, then the other layers by
+    // z-index (ties in document order).
+    crate::sort::sort_by_key(&mut layers, |l| l.0);
+    let mut boxes = Vec::with_capacity(flow.len() + layers.iter().map(|l| l.1.len()).sum::<usize>());
+    let mut flow = flow.into_iter();
+    boxes.extend(flow.next());
+    let split = layers.iter().position(|l| l.0 >= 0).unwrap_or(layers.len());
+    let mut layers = layers.into_iter();
+    for (_, l) in layers.by_ref().take(split) {
+        boxes.extend(l);
+    }
+    boxes.extend(flow);
+    for (_, l) in layers {
+        boxes.extend(l);
+    }
     Dom { boxes, root: laid.rect }
 }
 
@@ -377,29 +848,38 @@ pub fn paint_box(ctx: &mut dyn RenderContext, b: &Placed) {
         ctx.set_global_alpha(a);
     }
     let r = b.rect;
-    let rad = s.border_radius.unwrap_or(0.0);
     let shadow: Option<Shadow> = s.box_shadow.as_deref().and_then(<Option<Shadow>>::from_css).flatten();
-    let bw = s.border_width.unwrap_or(0.0);
-    let border = s.border_color.as_deref().filter(|_| bw > 0.0);
-    if let Some(sh) = shadow {
-        ctx.set_shadow(0.0, sh.dy, sh.blur, sh.color);
+    let bg = s.background.as_deref().filter(|b| *b != "transparent" && *b != "none");
+    if s.border_radii.is_some() || s.border_widths.is_some() || s.border_colors.is_some() {
+        paint_frame(ctx, r, s, bg, shadow);
+    } else {
+        let rad = s.border_radius.unwrap_or(0.0);
+        let bw = s.border_width.unwrap_or(0.0);
+        let border = s.border_color.as_deref().filter(|_| bw > 0.0);
+        if let Some(sh) = shadow {
+            ctx.set_shadow(0.0, sh.dy, sh.blur, sh.color);
+        }
+        if let Some(bg) = bg {
+            fill_round_rect(ctx, r, rad, bg);
+        } else if let Some(sh) = shadow {
+            // A shadow needs something to cast it.
+            fill_round_rect(ctx, r, rad, sh.color);
+        }
+        ctx.clear_shadow();
+        if let Some(bc) = border {
+            ctx.set_stroke_color(bc);
+            ctx.set_stroke_width(bw);
+            path_round_rect(ctx, Rect::new(r.x + bw / 2.0, r.y + bw / 2.0, r.width - bw, r.height - bw), (rad - bw / 2.0).max(0.0));
+            ctx.stroke();
+        }
     }
-    if let Some(bg) = s.background.as_deref().filter(|b| *b != "transparent" && *b != "none") {
-        fill_round_rect(ctx, r, rad, bg);
-    } else if let Some(sh) = shadow {
-        // A shadow needs something to cast it.
-        fill_round_rect(ctx, r, rad, sh.color);
-    }
-    ctx.clear_shadow();
-    if let Some(bc) = border {
-        ctx.set_stroke_color(bc);
-        ctx.set_stroke_width(bw);
-        path_round_rect(ctx, Rect::new(r.x + bw / 2.0, r.y + bw / 2.0, r.width - bw, r.height - bw), (rad - bw / 2.0).max(0.0));
-        ctx.stroke();
-    }
-    let p = s.padding.unwrap_or([0.0; 4]);
-    let content = Rect::new(r.x + p[3] + bw, r.y + p[0] + bw, (r.width - p[1] - p[3] - 2.0 * bw).max(0.0), (r.height - p[0] - p[2] - 2.0 * bw).max(0.0));
+    let p = s.pad();
+    let be = s.border_edges();
+    let content = content_rect(s, r);
     let color = s.color.as_deref().unwrap_or("#000000");
+    if let Some(inl) = &b.inline {
+        paint_runs(ctx, inl, content, color);
+    }
     if let Some(t) = &b.text {
         let (_, px, lh, _) = font_of(s);
         ctx.set_font(&font_str(s));
@@ -433,15 +913,59 @@ pub fn paint_box(ctx: &mut dyn RenderContext, b: &Placed) {
         }
     }
     if let Some(svg) = &b.svg {
-        crate::render::draw_svg_icon(ctx, svg, content.x, content.y, content.width, content.height, color);
+        if s.shape_rendering.as_deref() == Some("geometricPrecision") {
+            crate::render::draw_svg_icon_exact(ctx, svg, content.x, content.y, content.width, content.height, color);
+        } else {
+            crate::render::draw_svg_icon(ctx, svg, content.x, content.y, content.width, content.height, color);
+        }
     }
     if b.kind == "select" {
         let c = s.custom("--chevron").unwrap_or(color);
-        let (ax, ay) = (r.x + r.width - bw - p[1].min(20.0).max(12.0) / 2.0 - 8.0, r.y + r.height / 2.0 - 2.0);
+        let (ax, ay) = (r.x + r.width - be[1] - p[1].min(20.0).max(12.0) / 2.0 - 8.0, r.y + r.height / 2.0 - 2.0);
         chevron(ctx, ax.max(content.x + content.width + 2.0), ay, c);
     }
     if s.opacity.is_some() {
         ctx.set_global_alpha(1.0);
+    }
+}
+
+/// Paint inline runs in content box `c`: each run's chip (a run with a background) once per
+/// line it is on, spanning its pieces there, then the text in the run's font and colour
+/// (`fg` when the run sets none).
+fn paint_runs(ctx: &mut dyn RenderContext, inl: &Inline, c: Rect, fg: &str) {
+    for line in &inl.lines {
+        let mut i = 0;
+        while i < line.pieces.len() {
+            let p = &line.pieces[i];
+            let mut j = i + 1;
+            while j < line.pieces.len() && line.pieces[j].run == p.run {
+                j += 1;
+            }
+            let last = &line.pieces[j - 1];
+            if let Some(rs) = inl.runs.get(p.run).map(|r| &r.style) {
+                if let Some(bg) = rs.background.as_deref().filter(|b| *b != "transparent" && *b != "none") {
+                    // The chip: a 1.2em content box plus the run's vertical padding, centred in the line.
+                    let (_, px, _, _) = font_of(rs);
+                    let rp = rs.pad();
+                    let h = (px * 1.2 + rp[0] + rp[2]).round();
+                    let chip = Rect::new(c.x + p.x, c.y + line.y + ((line.height - h) / 2.0).round(), last.x + last.w - p.x, h);
+                    let rad = fit_radii(chip, rs.radii());
+                    ctx.begin_path();
+                    add_radii_path(ctx, chip, rad, false);
+                    ctx.set_fill_color(bg);
+                    ctx.fill();
+                }
+            }
+            i = j;
+        }
+        for p in &line.pieces {
+            let Some(run) = inl.runs.get(p.run) else { continue };
+            let rs = &run.style;
+            let (_, px, _, _) = font_of(rs);
+            ctx.set_font(&font_str(rs));
+            ctx.set_fill_color(rs.color.as_deref().unwrap_or(fg));
+            fill_text_css(ctx, &p.text, c.x + p.x + p.pad, c.y + line.y, px, line.height, INTER, TextAlign::Left);
+        }
     }
 }
 
@@ -502,9 +1026,187 @@ pub struct AnimReport {
 
 /// The content box of a placed element.
 pub fn content_box(b: &Placed) -> Rect {
-    let s = &b.style;
-    let (r, bw, p) = (b.rect, s.border_width.unwrap_or(0.0), s.padding.unwrap_or([0.0; 4]));
-    Rect::new(r.x + p[3] + bw, r.y + p[0] + bw, (r.width - p[1] - p[3] - 2.0 * bw).max(0.0), (r.height - p[0] - p[2] - 2.0 * bw).max(0.0))
+    content_rect(&b.style, b.rect)
+}
+
+fn content_rect(s: &Style, r: Rect) -> Rect {
+    let (e, p) = (s.border_edges(), s.pad());
+    Rect::new(r.x + p[3] + e[3], r.y + p[0] + e[0], (r.width - p[1] - p[3] - e[1] - e[3]).max(0.0), (r.height - p[0] - p[2] - e[0] - e[2]).max(0.0))
+}
+
+/// Corner radii scaled down as CSS does when adjacent ones overflow a side.
+fn fit_radii(r: Rect, rad: [[f64; 2]; 4]) -> [[f64; 2]; 4] {
+    let mut f: f64 = 1.0;
+    for (sum, len) in [
+        (rad[0][0] + rad[1][0], r.width),
+        (rad[3][0] + rad[2][0], r.width),
+        (rad[0][1] + rad[3][1], r.height),
+        (rad[1][1] + rad[2][1], r.height),
+    ] {
+        if sum > len && sum > 0.0 {
+            f = f.min(len.max(0.0) / sum);
+        }
+    }
+    rad.map(|c| [c[0].max(0.0) * f, c[1].max(0.0) * f])
+}
+
+/// A rounded rect outline with per-corner elliptical radii (top-left, top-right,
+/// bottom-right, bottom-left; `[h, v]`, already fitted) as cubic segments from
+/// `start`, clockwise.
+fn radii_segments(r: Rect, rad: [[f64; 2]; 4]) -> ((f64, f64), Vec<[(f64, f64); 3]>) {
+    const K: f64 = 0.5523;
+    let (x0, y0, x1, y1) = (r.x, r.y, r.x + r.width, r.y + r.height);
+    let [tl, tr, br, bl] = rad;
+    let line = |a: (f64, f64), b: (f64, f64)| [a, b, b];
+    let mut v = Vec::with_capacity(8);
+    v.push(line((x0 + tl[0], y0), (x1 - tr[0], y0)));
+    v.push([(x1 - tr[0] + tr[0] * K, y0), (x1, y0 + tr[1] - tr[1] * K), (x1, y0 + tr[1])]);
+    v.push(line((x1, y0 + tr[1]), (x1, y1 - br[1])));
+    v.push([(x1, y1 - br[1] + br[1] * K), (x1 - br[0] + br[0] * K, y1), (x1 - br[0], y1)]);
+    v.push(line((x1 - br[0], y1), (x0 + bl[0], y1)));
+    v.push([(x0 + bl[0] - bl[0] * K, y1), (x0, y1 - bl[1] + bl[1] * K), (x0, y1 - bl[1])]);
+    v.push(line((x0, y1 - bl[1]), (x0, y0 + tl[1])));
+    v.push([(x0, y0 + tl[1] - tl[1] * K), (x0 + tl[0] - tl[0] * K, y0), (x0 + tl[0], y0)]);
+    ((x0 + tl[0], y0), v)
+}
+
+/// Add a per-corner rounded rect to the current path; `reverse` winds it
+/// counter-clockwise (a hole under the non-zero rule).
+fn add_radii_path(ctx: &mut dyn RenderContext, r: Rect, rad: [[f64; 2]; 4], reverse: bool) {
+    let (start, segs) = radii_segments(r, rad);
+    if !reverse {
+        ctx.move_to(start.0, start.1);
+        for [c1, c2, e] in segs {
+            ctx.bezier_curve_to(c1.0, c1.1, c2.0, c2.1, e.0, e.1);
+        }
+    } else {
+        ctx.move_to(start.0, start.1);
+        let mut prev = start;
+        // Walk backwards: each segment's end becomes the next start.
+        let pts: Vec<((f64, f64), [(f64, f64); 3])> = segs
+            .iter()
+            .map(|s| {
+                let from = prev;
+                prev = s[2];
+                (from, *s)
+            })
+            .collect();
+        for (from, [c1, c2, _]) in pts.into_iter().rev() {
+            ctx.bezier_curve_to(c2.0, c2.1, c1.0, c1.1, from.0, from.1);
+        }
+    }
+    ctx.close_path();
+}
+
+/// Start a path along a placed box's border-box outline, its corner radii included
+/// (per-corner, elliptical). For a shadow or fill the box style cannot express.
+pub fn path_border_box(ctx: &mut dyn RenderContext, b: &Placed) {
+    ctx.begin_path();
+    add_radii_path(ctx, b.rect, fit_radii(b.rect, b.style.radii()), false);
+}
+
+/// Clip to a placed box's padding box with the inner corner radii CSS gives it (outer
+/// radius less the border width on each axis): what `overflow: hidden` clips its
+/// children to. Pair with `save` / `restore`.
+///
+/// ```
+/// # use uzor::ui::dom::{clip_padding_box, paint_box, Dom};
+/// # fn f(ctx: &mut dyn uzor::render::RenderContext, dom: &Dom) {
+/// let (frame, kids) = dom.boxes.split_first().unwrap();
+/// paint_box(ctx, frame);
+/// ctx.save();
+/// clip_padding_box(ctx, frame);
+/// kids.iter().for_each(|b| paint_box(ctx, b));
+/// ctx.restore();
+/// # }
+/// ```
+pub fn clip_padding_box(ctx: &mut dyn RenderContext, b: &Placed) {
+    let (r, e) = (b.rect, b.style.border_edges());
+    let inner = Rect::new(r.x + e[3], r.y + e[0], (r.width - e[1] - e[3]).max(0.0), (r.height - e[0] - e[2]).max(0.0));
+    ctx.begin_path();
+    add_radii_path(ctx, inner, inner_radii(fit_radii(r, b.style.radii()), e), false);
+    ctx.clip();
+}
+
+/// CSS inner (padding-box) radii: each outer radius less the adjacent border widths.
+fn inner_radii(rad: [[f64; 2]; 4], e: [f64; 4]) -> [[f64; 2]; 4] {
+    [
+        [(rad[0][0] - e[3]).max(0.0), (rad[0][1] - e[0]).max(0.0)],
+        [(rad[1][0] - e[1]).max(0.0), (rad[1][1] - e[0]).max(0.0)],
+        [(rad[2][0] - e[1]).max(0.0), (rad[2][1] - e[2]).max(0.0)],
+        [(rad[3][0] - e[3]).max(0.0), (rad[3][1] - e[2]).max(0.0)],
+    ]
+}
+
+/// Paint a CSS box's background and border with per-corner radii and per-side border
+/// widths / colours (the uniform case keeps the classic single-radius path).
+fn paint_frame(ctx: &mut dyn RenderContext, r: Rect, s: &Style, bg: Option<&str>, shadow: Option<Shadow>) {
+    let rad = fit_radii(r, s.radii());
+    let e = s.border_edges();
+    let colors: [Option<&str>; 4] = [0, 1, 2, 3].map(|i| s.border_side_color(i));
+    if let Some(sh) = shadow {
+        ctx.set_shadow(0.0, sh.dy, sh.blur, sh.color);
+    }
+    if let Some(fill) = bg.or(shadow.map(|sh| sh.color)) {
+        ctx.begin_path();
+        add_radii_path(ctx, r, rad, false);
+        ctx.set_fill_color(fill);
+        ctx.fill();
+    }
+    ctx.clear_shadow();
+    if e.iter().all(|w| *w <= 0.0) || colors.iter().all(Option::is_none) {
+        return;
+    }
+    let uniform_w = e.iter().all(|w| *w == e[0]);
+    let uniform_c = colors.iter().all(|c| *c == colors[0]);
+    if uniform_w && uniform_c {
+        // One stroke along the inset outline (radii shrunk by half the width).
+        let w = e[0];
+        let inner = Rect::new(r.x + w / 2.0, r.y + w / 2.0, r.width - w, r.height - w);
+        let ir = rad.map(|c| [(c[0] - w / 2.0).max(0.0), (c[1] - w / 2.0).max(0.0)]);
+        ctx.set_stroke_color(colors[0].unwrap_or("#000000"));
+        ctx.set_stroke_width(w);
+        ctx.begin_path();
+        add_radii_path(ctx, inner, ir, false);
+        ctx.stroke();
+        return;
+    }
+    // The border ring: the outer outline minus the padding-box outline (CSS inner radii).
+    let inner = Rect::new(r.x + e[3], r.y + e[0], (r.width - e[1] - e[3]).max(0.0), (r.height - e[0] - e[2]).max(0.0));
+    let ir = inner_radii(rad, e);
+    let ring = |ctx: &mut dyn RenderContext, color: &str| {
+        ctx.begin_path();
+        add_radii_path(ctx, r, rad, false);
+        add_radii_path(ctx, inner, ir, true);
+        ctx.set_fill_color(color);
+        ctx.fill();
+    };
+    if uniform_c {
+        ring(ctx, colors[0].unwrap_or("#000000"));
+        return;
+    }
+    // Each side clipped to its trapezoid (outer corners to inner corners).
+    let (x0, y0, x1, y1) = (r.x, r.y, r.x + r.width, r.y + r.height);
+    let (ix0, iy0, ix1, iy1) = (inner.x, inner.y, inner.x + inner.width, inner.y + inner.height);
+    let quads = [
+        [(x0, y0), (x1, y0), (ix1, iy0), (ix0, iy0)],
+        [(x1, y0), (x1, y1), (ix1, iy1), (ix1, iy0)],
+        [(x1, y1), (x0, y1), (ix0, iy1), (ix1, iy1)],
+        [(x0, y1), (x0, y0), (ix0, iy0), (ix0, iy1)],
+    ];
+    for i in 0..4 {
+        let Some(c) = colors[i].filter(|_| e[i] > 0.0) else { continue };
+        ctx.save();
+        ctx.begin_path();
+        ctx.move_to(quads[i][0].0, quads[i][0].1);
+        for q in &quads[i][1..] {
+            ctx.line_to(q.0, q.1);
+        }
+        ctx.close_path();
+        ctx.clip();
+        ring(ctx, c);
+        ctx.restore();
+    }
 }
 
 /// Run `b`'s animation (if it has one) for `frame`: the script paints in content-box
@@ -711,5 +1413,205 @@ mod tests {
             assert_eq!(ops.contains("Clip"), !overflow, "{ops}");
             assert!(ops.contains("Translate"), "{ops}");
         }
+    }
+
+    #[test]
+    fn runs_wrap_across_styles_and_hit_per_piece() {
+        // 7px per char in every font: easy arithmetic.
+        let mut ctx = crate::testing::RecordingRenderContext::with_char_width(7.0);
+        let sh = Sheet::parse(
+            "div.m { width: 100px; font-size: 10px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; color: #eee }
+             code { font-family: monospace; background: #222; padding: 1px 6px; border-radius: 6px }
+             a.link { color: #60a5fa } b { font-weight: 700 } i { font-style: italic }",
+        )
+        .unwrap();
+        let el = El::new("div.m").id("m").runs([
+            Run::text("see "),
+            Run::new("code", "ab"),
+            Run::text(" "),
+            Run::new("a.link", "https://x.y/zzzz").id("url:1"),
+            Run::new("b", " ok"),
+            Run::new("i", "\nit"),
+        ]);
+        let d = render(&mut ctx, &sh, &el, 0.0, 0.0, 500.0, &|_| State::NONE);
+        let b = d.boxes.iter().find(|b| b.id.as_deref() == Some("m")).unwrap();
+        let inl = b.inline.as_ref().unwrap();
+        assert_eq!(inl.text, "see ab https://x.y/zzzz ok\nit");
+        // "see " 28 + chip 6+14+6 = 54, " " 61; the 16-char link (112px) breaks anywhere:
+        // 5 chars fill line one (61 + 35 = 96), the rest wraps.
+        let l0 = &inl.lines[0];
+        let ab = l0.pieces.iter().find(|p| p.text == "ab").unwrap();
+        assert_eq!((ab.x, ab.w, ab.pad, ab.start), (28.0, 26.0, 6.0, 4));
+        assert_eq!(l0.pieces.last().unwrap().text, "https");
+        assert_eq!(inl.lines[1].pieces[0].text, "://x.y/zzzz");
+        // The forced newline starts the italic run on its own line.
+        let last = inl.lines.last().unwrap();
+        assert_eq!(last.pieces[0].text, "it");
+        assert_eq!(b.rect.height, 20.0 * inl.lines.len() as f64);
+        // The link is a hit on each of its pieces; the plain runs are not.
+        let hits: Vec<_> = d.hits().filter(|(id, _)| *id == "url:1").collect();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].1, Rect::new(61.0, 0.0, 35.0, 20.0));
+        assert_eq!(d.run_at(65.0, 5.0).map(|(_, r)| r), Some(3));
+        assert_eq!(d.run_at(5.0, 5.0).map(|(_, r)| r), Some(0));
+        // Char boundaries for carets: "see " is 4 chars, the chip text starts after its padding.
+        assert_eq!(b.char_at(28.0 + 6.0 + 7.5, 5.0), Some(5));
+        assert_eq!(b.char_at(0.0, 25.0), Some(inl.lines[1].pieces[0].start));
+        // Painted: the chip, the italic and bold fonts, the link colour.
+        let ops = format!("{:?}", ctx.ops);
+        assert!(ops.contains("#222") && ops.contains("italic 400 10px") && ops.contains("700 10px") && ops.contains("#60a5fa"), "{ops}");
+        assert!(d.names().any(|(id, n)| id == "m" && n.starts_with("see ab")));
+    }
+
+    #[test]
+    fn a_multi_word_chip_is_one_box_per_line() {
+        let mut ctx = crate::testing::RecordingRenderContext::with_char_width(7.0);
+        let sh = Sheet::parse(
+            "div.m { width: 100px; font-size: 10px; line-height: 20px; white-space: pre-wrap }
+             code { background: #222; padding: 1px 6px; border-radius: 6px }",
+        )
+        .unwrap();
+        // "x " then the chip "aa bb cc dd" (77px + 12px padding) does not fit after it: the
+        // chip's words wrap, and each line gets one chip spanning its words.
+        let el = El::new("div.m").id("m").runs([Run::text("x "), Run::new("code", "aa bb cc dd ee")]);
+        let d = lay_out(&mut ctx, &sh, &el, 0.0, 0.0, 500.0, &|_| State::NONE);
+        ctx.ops.clear();
+        paint(&mut ctx, &d);
+        let fills = ctx.ops.iter().filter(|o| format!("{o:?}").contains("#222")).count();
+        let b = d.boxes.iter().find(|b| b.id.as_deref() == Some("m")).unwrap();
+        let lines = &b.inline.as_ref().unwrap().lines;
+        assert_eq!(lines.len(), 2);
+        assert_eq!(fills, 2, "one chip per line, not one per word");
+        // Line one's chip spans "aa bb cc " from after "x " (14px).
+        let chip_line = &lines[0].pieces;
+        let first = chip_line.iter().find(|p| p.run == 1).unwrap();
+        assert_eq!((first.x, first.pad), (14.0, 6.0));
+    }
+
+    #[test]
+    fn runs_size_their_box_like_text() {
+        let mut ctx = crate::testing::RecordingRenderContext::with_char_width(7.0);
+        let sh = Sheet::parse("div.row { display: flex } div.m { font-size: 10px; line-height: 20px; white-space: normal; max-width: 70px }").unwrap();
+        let el = El::new("div.row").child(El::new("div.m").id("m").runs([Run::text("aaaa "), Run::new("b", "bbbb cc")]));
+        let d = lay_out(&mut ctx, &sh, &el, 0.0, 0.0, 500.0, &|_| State::NONE);
+        let r = d.rect("m").unwrap();
+        // max-content 84 > 70: "aaaa bbbb" (63) | "cc".
+        assert_eq!((r.width, r.height), (70.0, 40.0));
+        // Wrapped spaces are dropped from the line's width.
+        let b = d.boxes.iter().find(|b| b.id.as_deref() == Some("m")).unwrap();
+        assert_eq!(b.inline.as_ref().unwrap().lines[0].width, 63.0);
+        // Not wrapping (white-space unset): one line at max-content.
+        let sh2 = Sheet::parse("div.row { display: flex } div.m { font-size: 10px; line-height: 20px }").unwrap();
+        let d2 = lay_out(&mut ctx, &sh2, &el, 0.0, 0.0, 500.0, &|_| State::NONE);
+        assert_eq!(d2.rect("m").unwrap(), Rect::new(0.0, 0.0, 84.0, 20.0));
+    }
+
+    #[test]
+    fn absolute_boxes_leave_the_flow_and_paint_on_top() {
+        let mut ctx = NullRenderContext::default();
+        let sh = Sheet::parse(
+            "div.card { position: relative; width: 200px; padding: 10px; border: 2px solid #333 }
+             div.line { height: 30px }
+             div.badge { position: absolute; top: -4px; right: -4px; width: 16px; height: 16px }
+             div.under { position: absolute; inset: 0; z-index: -1 }
+             div.cover { position: absolute; left: 10px; bottom: 0; width: 50px; height: 5px; z-index: 2 }
+             div.wrap { padding: 4px }",
+        )
+        .unwrap();
+        let el = El::new("div.card")
+            .id("card")
+            .child(El::new("div.cover").id("cover"))
+            .child(El::new("div.line").id("l1"))
+            .child(El::new("div.badge").id("badge"))
+            .child(El::new("div.wrap").id("wrap").child(El::new("div.badge").id("deep")))
+            .child(El::new("div.under").id("under"));
+        let d = lay_out(&mut ctx, &sh, &el, 0.0, 0.0, 500.0, &|_| State::NONE);
+        // The flow ignores the absolute boxes: l1 at the content top, the card as tall as l1 + wrap.
+        assert_eq!(d.rect("l1").unwrap().y, 12.0);
+        let card = d.rect("card").unwrap();
+        assert_eq!(card.height, 2.0 + 10.0 + 30.0 + 8.0 + 10.0 + 2.0);
+        // Against the padding box (inside the 2px border).
+        assert_eq!(d.rect("badge").unwrap(), Rect::new(200.0 - 2.0 + 4.0 - 16.0, 2.0 - 4.0, 16.0, 16.0));
+        // A static wrapper is no containing block: `deep` uses the card too.
+        assert_eq!(d.rect("deep").unwrap(), d.rect("badge").unwrap());
+        assert_eq!(d.rect("under").unwrap(), Rect::new(2.0, 2.0, 196.0, card.height - 4.0));
+        assert_eq!(d.rect("cover").unwrap(), Rect::new(12.0, card.height - 2.0 - 5.0, 50.0, 5.0));
+        // Paint (and hit) order: root, z<0, flow, then z>=0 layers by z-index.
+        let order: Vec<&str> = d.boxes.iter().filter_map(|b| b.id.as_deref()).collect();
+        assert_eq!(order, ["card", "under", "l1", "wrap", "badge", "deep", "cover"]);
+        // A relative box shifts with its subtree, its flow slot unchanged.
+        let sh2 = Sheet::parse("div.r { position: relative; top: 5px; left: -3px; height: 10px } div.n { height: 10px }").unwrap();
+        let d2 = lay_out(&mut ctx, &sh2, &El::new("div").child(El::new("div.r").id("r")).child(El::new("div.n").id("n")), 0.0, 0.0, 100.0, &|_| State::NONE);
+        assert_eq!(d2.rect("r").unwrap(), Rect::new(-3.0, 5.0, 100.0, 10.0));
+        assert_eq!(d2.rect("n").unwrap().y, 10.0);
+        // Shrink-to-fit width of an absolute box with text.
+        let mut rc = crate::testing::RecordingRenderContext::with_char_width(7.0);
+        let sh3 = Sheet::parse("div.p { position: relative; width: 300px; height: 50px } span.t { position: absolute; right: 0; bottom: 0; font-size: 10px; line-height: 20px }").unwrap();
+        let d3 = lay_out(&mut rc, &sh3, &El::new("div.p").child(El::new("span.t").id("t").text("abc")), 0.0, 0.0, 500.0, &|_| State::NONE);
+        assert_eq!(d3.rect("t").unwrap(), Rect::new(279.0, 30.0, 21.0, 20.0));
+    }
+
+    #[test]
+    fn per_corner_radii_and_per_side_borders() {
+        let mut ctx = crate::testing::RecordingRenderContext::new();
+        let sh = Sheet::parse(
+            "div.top { width: 100px; height: 40px; background: #111; border-radius: 12px 12px 0 0 }
+             div.ell { width: 100px; height: 40px; background: #111; border-radius: 20px / 10px }
+             div.side { width: 100px; padding: 4px; border-width: 0 0 2px 3px; border-color: red; height: 20px }
+             div.mix { width: 100px; height: 20px; border: 1px solid #333; border-left: 4px solid #3b82f6 }",
+        )
+        .unwrap();
+        let s = sh.el("div.top");
+        assert_eq!(s.radii(), [[12.0, 12.0], [12.0, 12.0], [0.0, 0.0], [0.0, 0.0]]);
+        assert_eq!(sh.el("div.ell").radii()[2], [20.0, 10.0]);
+        // Per-side widths move the content box.
+        let d = render(&mut ctx, &sh, &El::new("div.side").id("s").child(El::new("div").id("in").css("height: 5px")), 0.0, 0.0, 500.0, &|_| State::NONE);
+        assert_eq!(d.rect("in").unwrap(), Rect::new(3.0 + 4.0, 4.0, 100.0 - 3.0 - 8.0, 5.0));
+        assert_eq!(d.rect("s").unwrap().height, 20.0);
+        let mix = sh.el("div.mix");
+        assert_eq!(mix.border_edges(), [1.0, 1.0, 1.0, 4.0]);
+        assert_eq!(mix.border_side_color(3), Some("#3b82f6"));
+        assert_eq!(mix.border_side_color(0), Some("#333"));
+        // Painting a square-bottomed box: the bottom corners are plain line joins (zero
+        // radius), the top ones curves; mixed side colours clip each side.
+        ctx.ops.clear();
+        render(&mut ctx, &sh, &El::new("div.top"), 0.0, 0.0, 500.0, &|_| State::NONE);
+        let ops = format!("{:?}", ctx.ops);
+        assert!(ops.contains("BezierCurveTo"), "{ops}");
+        ctx.ops.clear();
+        render(&mut ctx, &sh, &El::new("div.mix"), 0.0, 0.0, 500.0, &|_| State::NONE);
+        let ops = format!("{:?}", ctx.ops);
+        assert_eq!(ops.matches("Clip").count(), 4, "{ops}");
+        assert!(ops.contains("#3b82f6") && ops.contains("#333"));
+        // The classic single radius keeps its exact old path.
+        let classic = Sheet::parse("div { width: 10px; height: 10px; background: #000; border-radius: 3px }").unwrap();
+        assert_eq!(classic.el("div").border_radii, None);
+    }
+
+    #[test]
+    fn geometric_precision_icons_are_not_snapped() {
+        let icon = r#"<svg viewBox="0 0 24 24" stroke-width="1.5"><path d="M4 12H20"/></svg>"#;
+        let mut ctx = crate::testing::RecordingRenderContext::new();
+        let sh = Sheet::parse("i.ic { width: 24px; height: 24px } i.x { shape-rendering: geometricPrecision }").unwrap();
+        for (spec, want) in [("i.ic", 2.0), ("i.ic.x", 1.5)] {
+            ctx.ops.clear();
+            render(&mut ctx, &sh, &El::new(spec).svg(icon), 0.3, 0.0, 100.0, &|_| State::NONE);
+            let w = ctx.ops.iter().find_map(|o| if let crate::testing::DrawOp::StrokeWidth(w) = o { Some(*w) } else { None });
+            assert_eq!(w, Some(want), "{spec}");
+        }
+    }
+
+    #[test]
+    fn padding_box_clip_uses_the_inner_radii() {
+        let mut ctx = crate::testing::RecordingRenderContext::new();
+        let sh = Sheet::parse("div { width: 100px; height: 50px; border-width: 0 0 1px 1px; border-color: #222; border-radius: 12px 0 0 12px }").unwrap();
+        let d = lay_out(&mut ctx, &sh, &El::new("div"), 0.0, 0.0, 500.0, &|_| State::NONE);
+        clip_padding_box(&mut ctx, &d.boxes[0]);
+        let ops = format!("{:?}", ctx.ops);
+        // Starts after the top-left corner: 1px border, 11px inner horizontal radius.
+        assert!(ops.contains("MoveTo { x: 12.0, y: 0.0 }") && ops.contains("Clip"), "{ops}");
+        ctx.ops.clear();
+        path_border_box(&mut ctx, &d.boxes[0]);
+        assert!(format!("{:?}", ctx.ops).contains("MoveTo { x: 12.0, y: 0.0 }"));
     }
 }

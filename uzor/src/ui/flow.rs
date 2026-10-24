@@ -222,16 +222,13 @@ impl Laid {
     }
 }
 
-fn bw(s: &Style) -> f64 {
-    s.border_width.unwrap_or(0.0)
-}
 fn hz(s: &Style) -> f64 {
-    let p = s.pad();
-    p[1] + p[3] + 2.0 * bw(s)
+    let (p, b) = (s.pad(), s.border_edges());
+    p[1] + p[3] + b[1] + b[3]
 }
 fn vt(s: &Style) -> f64 {
-    let p = s.pad();
-    p[0] + p[2] + 2.0 * bw(s)
+    let (p, b) = (s.pad(), s.border_edges());
+    p[0] + p[2] + b[0] + b[2]
 }
 fn mh(s: &Style) -> f64 {
     let m = s.mar();
@@ -341,14 +338,14 @@ fn intrinsic(b: &LBox<'_>, min: bool) -> f64 {
     if let Some(w) = s.width {
         return clamp_w(s, w);
     }
-    let kids = b.children.iter().map(|c| intrinsic(c, min) + mh(&c.style));
+    let kids = b.children.iter().filter(|c| !c.style.out_of_flow()).map(|c| intrinsic(c, min) + mh(&c.style));
     let content = if let Some(m) = b.measure {
         m(if min { Some(0.0) } else { None }).0
     } else {
         match display(s) {
             #[cfg(feature = "flow-flex")]
             "flex" if !is_col(s) => {
-                let n = b.children.len();
+                let n = b.children.iter().filter(|c| !c.style.out_of_flow()).count();
                 let gaps = col_gap(s) * n.saturating_sub(1) as f64;
                 if min && is(&s.flex_wrap, "wrap") {
                     kids.fold(0.0, f64::max)
@@ -360,7 +357,7 @@ fn intrinsic(b: &LBox<'_>, min: bool) -> f64 {
             "grid" => {
                 let tracks = parse_tracks(s.grid_template_columns.as_deref().unwrap_or("1fr"), 0.0, col_gap(s));
                 let n = tracks.len().max(1);
-                let widest = b.children.iter().map(|c| intrinsic(c, min) + mh(&c.style)).fold(0.0, f64::max);
+                let widest = b.children.iter().filter(|c| !c.style.out_of_flow()).map(|c| intrinsic(c, min) + mh(&c.style)).fold(0.0, f64::max);
                 let mut sum = col_gap(s) * (n - 1) as f64;
                 for t in &tracks {
                     sum += match *t {
@@ -379,9 +376,96 @@ fn intrinsic(b: &LBox<'_>, min: bool) -> f64 {
 
 /// Lay out `b` at `(x, y)` in a containing block `avail` wide (its border box fills it
 /// unless `width` says otherwise). Coordinates are absolute.
+///
+/// `position: absolute` boxes take no space in the flow; each is placed against the
+/// padding box of its nearest positioned (`relative` / `absolute`) ancestor, or the
+/// root's border box when there is none, by its `top` / `right` / `bottom` / `left`
+/// (both of a pair and no size stretch it; no inset keeps its static position) and
+/// sized by `width` / `height` or shrink-to-fit. A `relative` box is shifted by its
+/// insets after the flow is laid out. Paint order (`z-index`) is the DOM's concern
+/// ([`crate::ui::dom`]).
+///
+/// ```
+/// use uzor::ui::flow::{layout, LBox};
+/// let root = LBox::css("position:relative;width:200px;height:100px;padding:10px")
+///     .child(LBox::css("height:30px"))
+///     .child(LBox::css("position:absolute;top:4px;right:6px;width:20px;height:20px"));
+/// let l = layout(&root, 0.0, 0.0, 500.0);
+/// // The badge sits in the top-right corner of the padding box ...
+/// assert_eq!((l.children[1].rect.x, l.children[1].rect.y), (200.0 - 6.0 - 20.0, 4.0));
+/// // ... and takes no space: the root keeps its height, the first child its place.
+/// assert_eq!(l.children[0].rect.y, 10.0);
+/// ```
 pub fn layout(b: &LBox<'_>, x: f64, y: f64, avail: f64) -> Laid {
     let w = clamp_w(&b.style, b.style.width.unwrap_or(avail - mh(&b.style)));
-    lay(b, x + b.style.mar()[3], y + b.style.mar()[0], w, None)
+    let mut l = lay(b, x + b.style.mar()[3], y + b.style.mar()[0], w, None);
+    if !b.style.positioned() {
+        // The initial containing block: the root's border box.
+        let cb = l.rect;
+        place_abs(b, &mut l, cb);
+    }
+    l
+}
+
+/// Move a laid-out subtree by `(dx, dy)`.
+fn translate(l: &mut Laid, dx: f64, dy: f64) {
+    l.rect = Rect::new(l.rect.x + dx, l.rect.y + dy, l.rect.width, l.rect.height);
+    for c in &mut l.children {
+        translate(c, dx, dy);
+    }
+}
+
+/// The padding box of a laid-out box (the containing block it gives absolute children).
+fn padding_box(s: &Style, r: Rect) -> Rect {
+    let b = s.border_edges();
+    Rect::new(r.x + b[3], r.y + b[0], (r.width - b[1] - b[3]).max(0.0), (r.height - b[0] - b[2]).max(0.0))
+}
+
+/// Lay out the absolutely positioned descendants of `b` whose containing block is `cb`:
+/// its absolute children, and those of static descendants (a positioned descendant
+/// handles its own). Their entries in `l` hold their static position until then.
+fn place_abs(b: &LBox<'_>, l: &mut Laid, cb: Rect) {
+    for (c, cl) in b.children.iter().zip(l.children.iter_mut()) {
+        let s = &c.style;
+        if s.out_of_flow() {
+            *cl = lay_abs(c, cb, (cl.rect.x, cl.rect.y));
+        } else if !s.positioned() {
+            place_abs(c, cl, cb);
+        }
+    }
+}
+
+/// An absolutely positioned box in containing block `cb`; `stat` = its static position
+/// (border-box top-left).
+fn lay_abs(c: &LBox<'_>, cb: Rect, stat: (f64, f64)) -> Laid {
+    let s = &c.style;
+    let m = s.mar();
+    let w = match (s.width, s.left, s.right) {
+        (Some(w), _, _) => clamp_w(s, w),
+        (None, Some(l), Some(r)) => clamp_w(s, cb.width - l - r - m[1] - m[3]),
+        (None, l, r) => {
+            // shrink-to-fit
+            let avail = cb.width - l.unwrap_or(0.0) - r.unwrap_or(0.0) - m[1] - m[3];
+            clamp_w(s, max_content(c).min(avail.max(min_content(c))))
+        }
+    };
+    let forced = match (s.height, s.top, s.bottom) {
+        (None, Some(t), Some(bt)) => Some(clamp_h(s, (cb.height - t - bt - m[0] - m[2]).max(0.0))),
+        _ => None,
+    };
+    let mut l = lay(c, 0.0, 0.0, w, forced);
+    let x = match (s.left, s.right) {
+        (Some(left), _) => cb.x + left + m[3],
+        (None, Some(r)) => cb.x + cb.width - r - m[1] - w,
+        (None, None) => stat.0,
+    };
+    let y = match (s.top, s.bottom) {
+        (Some(t), _) => cb.y + t + m[0],
+        (None, Some(bt)) => cb.y + cb.height - bt - m[2] - l.rect.height,
+        (None, None) => stat.1,
+    };
+    translate(&mut l, x, y);
+    l
 }
 
 #[cfg(any(feature = "flow-flex", feature = "flow-grid"))]
@@ -413,34 +497,71 @@ fn align_of<'s>(parent: &'s Style, child: &'s Style) -> &'s str {
 fn lay(b: &LBox<'_>, x: f64, y: f64, w: f64, forced_h: Option<f64>) -> Laid {
     let s = &b.style;
     let p = s.pad();
-    let bw = bw(s);
-    let (cx, cy) = (x + p[3] + bw, y + p[0] + bw);
+    let be = s.border_edges();
+    let (cx, cy) = (x + p[3] + be[3], y + p[0] + be[0]);
     let cw = (w - hz(s)).max(0.0);
     let def_h = forced_h.or(s.height.map(|h| clamp_h(s, h)));
     #[cfg_attr(not(feature = "flow-flex"), allow(unused_variables))]
     let ch_def = def_h.map(|h| (h - vt(s)).max(0.0));
-    let (children, content_h) = if let Some(m) = b.measure {
+    // Out-of-flow children take no part in the container's layout: lay out the rest,
+    // then give each absolute child a static-position placeholder (laid out for real
+    // by its containing block, `place_abs`).
+    let abs = b.children.iter().any(|c| c.style.out_of_flow());
+    let flow: Vec<&LBox<'_>> = b.children.iter().filter(|c| !c.style.out_of_flow()).collect();
+    let (laid, content_h) = if let Some(m) = b.measure {
         (Vec::new(), m(Some(cw)).1)
     } else {
         match display(s) {
             #[cfg(feature = "flow-flex")]
-            "flex" if is_col(s) => flex_col(b, cx, cy, cw, ch_def),
+            "flex" if is_col(s) => flex_col(s, &flow, cx, cy, cw, ch_def),
             #[cfg(feature = "flow-flex")]
-            "flex" => flex_rowbox(b, cx, cy, cw, ch_def),
+            "flex" => flex_rowbox(s, &flow, cx, cy, cw, ch_def),
             #[cfg(feature = "flow-grid")]
-            "grid" => grid_box(b, cx, cy, cw),
-            _ => block(b, cx, cy, cw),
+            "grid" => grid_box(s, &flow, cx, cy, cw),
+            _ => block(&flow, cx, cy, cw),
         }
     };
+    let children = if abs && b.measure.is_none() {
+        let mut it = laid.into_iter();
+        let mut out = Vec::with_capacity(b.children.len());
+        // Static position: below the previous in-flow sibling (block flow), else the
+        // content box's top-left.
+        let mut stat = (cx, cy);
+        for c in &b.children {
+            if c.style.out_of_flow() {
+                out.push(Laid { rect: Rect::new(stat.0, stat.1, 0.0, 0.0), children: Vec::new() });
+            } else if let Some(l) = it.next() {
+                if display(s) == "block" {
+                    stat = (cx, l.rect.y + l.rect.height + c.style.mar()[2]);
+                }
+                out.push(l);
+            }
+        }
+        out
+    } else {
+        laid
+    };
     let h = def_h.unwrap_or_else(|| clamp_h(s, content_h + vt(s)));
-    Laid { rect: Rect::new(x, y, w, h), children }
+    let mut l = Laid { rect: Rect::new(x, y, w, h), children };
+    if s.positioned() {
+        let cb = padding_box(s, l.rect);
+        place_abs(b, &mut l, cb);
+    }
+    if s.position.as_deref() == Some("relative") {
+        let dx = s.left.or(s.right.map(|r| -r)).unwrap_or(0.0);
+        let dy = s.top.or(s.bottom.map(|b| -b)).unwrap_or(0.0);
+        if dx != 0.0 || dy != 0.0 {
+            translate(&mut l, dx, dy);
+        }
+    }
+    l
 }
 
-fn block(b: &LBox<'_>, cx: f64, cy: f64, cw: f64) -> (Vec<Laid>, f64) {
+fn block(kids: &[&LBox<'_>], cx: f64, cy: f64, cw: f64) -> (Vec<Laid>, f64) {
     let mut yy = 0.0;
     let mut prev_mb: Option<f64> = None;
     let mut out = Vec::new();
-    for c in &b.children {
+    for &c in kids {
         let m = c.style.mar();
         // Adjacent sibling margins collapse (the larger one wins).
         let top = match prev_mb {
@@ -478,10 +599,9 @@ fn item(c: &LBox<'_>, main_col: bool, cross_w: f64) -> FlexItem {
 }
 
 #[cfg(feature = "flow-flex")]
-fn flex_rowbox(b: &LBox<'_>, cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec<Laid>, f64) {
-    let s = &b.style;
+fn flex_rowbox(s: &Style, kids: &[&LBox<'_>], cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec<Laid>, f64) {
     let wrap = is(&s.flex_wrap, "wrap");
-    let items: Vec<FlexItem> = b.children.iter().map(|c| item(c, false, cw)).collect();
+    let items: Vec<FlexItem> = kids.iter().map(|c| item(c, false, cw)).collect();
     // Break into lines by hypothetical outer sizes.
     let mut lines: Vec<Vec<usize>> = vec![vec![]];
     let mut used = 0.0;
@@ -496,7 +616,7 @@ fn flex_rowbox(b: &LBox<'_>, cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec
             cur.push(i);
         }
     }
-    let mut out: Vec<Option<Laid>> = (0..b.children.len()).map(|_| None).collect();
+    let mut out: Vec<Option<Laid>> = (0..kids.len()).map(|_| None).collect();
     lines.retain(|l| !l.is_empty());
     // Main sizes and natural cross sizes per line.
     let solved: Vec<(Vec<(f64, f64)>, Vec<(f64, f64)>, f64)> = lines
@@ -508,12 +628,12 @@ fn flex_rowbox(b: &LBox<'_>, cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec
                 .iter()
                 .zip(&main)
                 .map(|(&i, &(_, ow))| {
-                    let c = &b.children[i];
+                    let c = kids[i];
                     let w = ow - mh(&c.style);
                     (w, c.style.height.unwrap_or_else(|| height_at(c, w)))
                 })
                 .collect();
-            let lh = line.iter().zip(&sizes).map(|(&i, &(_, h))| h + mv(&b.children[i].style)).fold(0.0, f64::max);
+            let lh = line.iter().zip(&sizes).map(|(&i, &(_, h))| h + mv(&kids[i].style)).fold(0.0, f64::max);
             (main, sizes, lh)
         })
         .collect();
@@ -532,7 +652,7 @@ fn flex_rowbox(b: &LBox<'_>, cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec
         }
         let line_h = lh + extra;
         for ((&i, &(ox, _)), &(w, h)) in line.iter().zip(main).zip(sizes) {
-            let c = &b.children[i];
+            let c = kids[i];
             let m = c.style.mar();
             let (hh, dy) = match align_of(s, &c.style) {
                 "stretch" if c.style.height.is_none() => (clamp_h(&c.style, line_h - mv(&c.style)), 0.0),
@@ -548,11 +668,9 @@ fn flex_rowbox(b: &LBox<'_>, cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec
 }
 
 #[cfg(feature = "flow-flex")]
-fn flex_col(b: &LBox<'_>, cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec<Laid>, f64) {
-    let s = &b.style;
+fn flex_col(s: &Style, kids: &[&LBox<'_>], cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec<Laid>, f64) {
     // Cross (width) first: stretch fills, otherwise fit-content.
-    let widths: Vec<f64> = b
-        .children
+    let widths: Vec<f64> = kids
         .iter()
         .map(|c| {
             let avail = cw - mh(&c.style);
@@ -564,14 +682,14 @@ fn flex_col(b: &LBox<'_>, cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec<La
             clamp_w(&c.style, w)
         })
         .collect();
-    let items: Vec<FlexItem> = b.children.iter().zip(&widths).map(|(c, &w)| item(c, true, w)).collect();
+    let items: Vec<FlexItem> = kids.iter().zip(&widths).map(|(c, &w)| item(c, true, w)).collect();
     let main = match ch {
         Some(h) => flex_row(h, &items, row_gap(s), justify_of(s)),
         None => flex_row(f64::NEG_INFINITY.max(items.iter().map(|i| i.basis.clamp(i.min, i.max)).sum::<f64>() + row_gap(s) * items.len().saturating_sub(1) as f64), &items, row_gap(s), Justify::Start),
     };
     let mut out = Vec::new();
     let mut end: f64 = 0.0;
-    for ((c, &(oy, oh)), &w) in b.children.iter().zip(&main).zip(&widths) {
+    for ((&c, &(oy, oh)), &w) in kids.iter().zip(&main).zip(&widths) {
         let m = c.style.mar();
         let dx = match align_of(s, &c.style) {
             "center" => (cw - w - mh(&c.style)) / 2.0,
@@ -586,24 +704,23 @@ fn flex_col(b: &LBox<'_>, cx: f64, cy: f64, cw: f64, ch: Option<f64>) -> (Vec<La
 }
 
 #[cfg(feature = "flow-grid")]
-fn grid_box(b: &LBox<'_>, cx: f64, cy: f64, cw: f64) -> (Vec<Laid>, f64) {
-    let s = &b.style;
+fn grid_box(s: &Style, kids: &[&LBox<'_>], cx: f64, cy: f64, cw: f64) -> (Vec<Laid>, f64) {
     let tracks = parse_tracks(s.grid_template_columns.as_deref().unwrap_or("1fr"), cw, col_gap(s));
     let cols = grid_tracks(cw, &tracks, col_gap(s));
     let n = cols.len().max(1);
     let mut out = Vec::new();
     let mut yy = 0.0;
-    for (ri, row) in b.children.chunks(n).enumerate() {
+    for (ri, row) in kids.chunks(n).enumerate() {
         if ri > 0 {
             yy += row_gap(s);
         }
         let hs: Vec<f64> = row
             .iter()
             .zip(&cols)
-            .map(|(c, &(_, tw))| c.style.height.unwrap_or_else(|| height_at(c, tw - mh(&c.style))) + mv(&c.style))
+            .map(|(&c, &(_, tw))| c.style.height.unwrap_or_else(|| height_at(c, tw - mh(&c.style))) + mv(&c.style))
             .collect();
         let rh = hs.iter().copied().fold(0.0, f64::max);
-        for ((c, &(tx, tw)), &h) in row.iter().zip(&cols).zip(&hs) {
+        for ((&c, &(tx, tw)), &h) in row.iter().zip(&cols).zip(&hs) {
             let m = c.style.mar();
             let w = c.style.width.unwrap_or(tw - mh(&c.style));
             let hh = match align_of(s, &c.style) {

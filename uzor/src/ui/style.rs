@@ -149,6 +149,38 @@ pub struct Style {
     pub transitions: Vec<super::motion::Transition>,
     /// `animation` entries naming `@keyframes` (see [`crate::ui::motion`]).
     pub animations: Vec<super::motion::Animation>,
+    /// `position`: `static` (unset), `relative`, `absolute`. An absolute box leaves the
+    /// flow and is placed against its nearest positioned ancestor's padding box
+    /// (see [`crate::ui::flow`]); a relative one is shifted by its insets.
+    pub position: Option<String>,
+    /// `top` (px), with `right` / `bottom` / `left` the insets of a positioned box.
+    pub top: Option<f64>,
+    pub right: Option<f64>,
+    pub bottom: Option<f64>,
+    pub left: Option<f64>,
+    /// `z-index` of a positioned box: higher paints (and hit-tests) on top.
+    pub z_index: Option<i32>,
+    /// Per-corner radii `[horizontal, vertical]` in the order top-left, top-right,
+    /// bottom-right, bottom-left, set by a multi-value or elliptical (`a / b`)
+    /// `border-radius` or the `border-*-*-radius` longhands. `None`: every corner is
+    /// [`Style::border_radius`]. Read both through [`Style::radii`].
+    pub border_radii: Option<[[f64; 2]; 4]>,
+    /// Per-side border widths (top, right, bottom, left), set by a multi-value
+    /// `border-width` or the `border-<side>[-width]` longhands. `None`: every side is
+    /// [`Style::border_width`]. Read both through [`Style::border_edges`].
+    pub border_widths: Option<[f64; 4]>,
+    /// Per-side border colours (top, right, bottom, left); `None` sides and a `None`
+    /// list fall back to [`Style::border_color`]. Read through [`Style::border_side_color`].
+    pub border_colors: Option<[Option<String>; 4]>,
+    /// `font-style` (inherited): `italic` / `oblique` slant the font.
+    pub font_style: Option<String>,
+    /// `overflow-wrap` (inherited): `anywhere` / `break-word` let inline runs
+    /// ([`crate::ui::dom::El::runs`]) break inside a word that does not fit a line.
+    pub overflow_wrap: Option<String>,
+    /// `shape-rendering` (inherited, as in SVG): `geometricPrecision` draws an element's
+    /// [`crate::ui::dom::El::svg`] icon exactly (no pixel-grid snapping of its origin or
+    /// strokes); unset / `auto` / `crispEdges` snap for crispness.
+    pub shape_rendering: Option<String>,
 }
 
 impl Style {
@@ -190,6 +222,32 @@ impl Style {
     /// Font weight (400 when unset).
     pub fn weight(&self) -> u32 {
         self.font_weight.unwrap_or(400)
+    }
+    /// Border widths (top, right, bottom, left): the per-side widths, else
+    /// `border-width` on every side, else zero.
+    pub fn border_edges(&self) -> [f64; 4] {
+        self.border_widths.unwrap_or([self.border_width.unwrap_or(0.0); 4])
+    }
+    /// The border colour of side `i` (0 top, 1 right, 2 bottom, 3 left).
+    pub fn border_side_color(&self, i: usize) -> Option<&str> {
+        self.border_colors.as_ref().and_then(|c| c.get(i)?.as_deref()).or(self.border_color.as_deref())
+    }
+    /// Corner radii `[horizontal, vertical]` (top-left, top-right, bottom-right,
+    /// bottom-left): the per-corner radii, else `border-radius` on every corner.
+    pub fn radii(&self) -> [[f64; 2]; 4] {
+        self.border_radii.unwrap_or_else(|| {
+            let r = self.border_radius.unwrap_or(0.0);
+            [[r, r]; 4]
+        })
+    }
+    /// `position` is `relative`, `absolute`, `fixed` or `sticky` (a containing block
+    /// for absolutely positioned descendants).
+    pub fn positioned(&self) -> bool {
+        matches!(self.position.as_deref(), Some("relative" | "absolute" | "fixed" | "sticky"))
+    }
+    /// `position: absolute` (or `fixed`): out of the flow.
+    pub fn out_of_flow(&self) -> bool {
+        matches!(self.position.as_deref(), Some("absolute" | "fixed"))
     }
 }
 
@@ -465,6 +523,9 @@ impl Sheet {
             s.line_height = p.line_height;
             s.text_align = p.text_align.clone();
             s.white_space = p.white_space.clone();
+            s.font_style = p.font_style.clone();
+            s.overflow_wrap = p.overflow_wrap.clone();
+            s.shape_rendering = p.shape_rendering.clone();
             s.custom = p.custom.clone();
         }
         let mut hits: Vec<&Rule> = self.rules.iter().filter(|r| r.sel.matches(n)).collect();
@@ -523,6 +584,60 @@ fn edges(v: &str) -> Option<[f64; 4]> {
     })
 }
 
+/// Values split at top-level whitespace (a colour function's inner spaces stay).
+fn split_values(v: &str) -> Vec<String> {
+    let (mut out, mut cur, mut depth) = (Vec::new(), String::new(), 0i32);
+    for ch in v.trim().chars() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+        if ch.is_whitespace() && depth <= 0 {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+        } else {
+            cur.push(ch);
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// One to four values expanded to top, right, bottom, left (as `padding`).
+fn edges4<T: Clone>(n: &[T]) -> Option<[T; 4]> {
+    Some(match n {
+        [a] => [a.clone(), a.clone(), a.clone(), a.clone()],
+        [a, b] => [a.clone(), b.clone(), a.clone(), b.clone()],
+        [a, b, c] => [a.clone(), b.clone(), c.clone(), b.clone()],
+        [a, b, c, d] => [a.clone(), b.clone(), c.clone(), d.clone()],
+        _ => return None,
+    })
+}
+
+/// `border-radius: 1-4 values [/ 1-4 values]` as `[h, v]` per corner (top-left,
+/// top-right, bottom-right, bottom-left; the value order is the same as `padding`'s
+/// with corners for sides).
+fn radius_list(v: &str) -> Option<[[f64; 2]; 4]> {
+    let (h, vv) = match v.split_once('/') {
+        Some((a, b)) => (a, Some(b)),
+        None => (v, None),
+    };
+    let side = |t: &str| -> Option<[f64; 4]> {
+        let n: Vec<f64> = t.split_whitespace().map(px).collect::<Option<_>>()?;
+        edges4(&n)
+    };
+    let hs = side(h)?;
+    let vs = match vv {
+        Some(t) => side(t)?,
+        None => hs,
+    };
+    Some([[hs[0], vs[0]], [hs[1], vs[1]], [hs[2], vs[2]], [hs[3], vs[3]]])
+}
+
 /// Apply one declaration (`k` lower-case) to `s`.
 pub(crate) fn apply_decl(s: &mut Style, k: &str, v: &str) {
     apply(s, k, v)
@@ -532,15 +647,74 @@ fn apply(s: &mut Style, k: &str, v: &str) {
     match k {
         "color" => s.color = Some(v.into()),
         "background" | "background-color" => s.background = Some(v.into()),
-        "border-color" => s.border_color = Some(v.into()),
-        "border-width" => s.border_width = px(v),
+        "border-color" => {
+            let parts = split_values(v);
+            if parts.len() <= 1 {
+                s.border_color = Some(v.into());
+                s.border_colors = None;
+            } else if let Some(e) = edges4(&parts) {
+                s.border_color = Some(e[0].to_string());
+                s.border_colors = Some(e.map(|c| Some(c.to_string())));
+            }
+        }
+        "border-width" => {
+            if let Some(e) = edges(v) {
+                if e.iter().all(|w| *w == e[0]) {
+                    s.border_width = Some(e[0]);
+                    s.border_widths = None;
+                } else {
+                    s.border_width = None;
+                    s.border_widths = Some(e);
+                }
+            } else {
+                s.border_width = None;
+                s.border_widths = None;
+            }
+        }
         "border" => {
             // `1px solid #333`
-            for part in v.split_whitespace() {
-                if let Some(w) = px(part).filter(|_| part.ends_with("px") || part == "0") {
+            for part in split_values(v) {
+                if let Some(w) = px(&part).filter(|_| part.ends_with("px") || part == "0") {
                     s.border_width = Some(w);
-                } else if !matches!(part, "solid" | "dashed" | "none") {
-                    s.border_color = Some(part.into());
+                    s.border_widths = None;
+                } else if !matches!(part.as_str(), "solid" | "dashed" | "none") {
+                    s.border_color = Some(part);
+                    s.border_colors = None;
+                }
+            }
+        }
+        "border-top" | "border-right" | "border-bottom" | "border-left" | "border-top-width" | "border-right-width" | "border-bottom-width"
+        | "border-left-width" | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" => {
+            let mut it = k["border-".len()..].splitn(2, '-');
+            let side = it.next().unwrap_or_default();
+            let what = it.next();
+            let Some(i) = ["top", "right", "bottom", "left"].iter().position(|x| *x == side) else { return };
+            let set_w = |s: &mut Style, w: f64| {
+                let mut e = s.border_edges();
+                e[i] = w;
+                s.border_widths = Some(e);
+            };
+            let set_c = |s: &mut Style, c: String| {
+                let base = s.border_color.clone();
+                s.border_colors.get_or_insert_with(|| [base.clone(), base.clone(), base.clone(), base])[i] = Some(c);
+            };
+            match what {
+                Some("width") => {
+                    if let Some(w) = px(v) {
+                        set_w(s, w)
+                    }
+                }
+                Some(_) => set_c(s, v.trim().to_string()),
+                None => {
+                    for part in split_values(v) {
+                        if let Some(w) = px(&part).filter(|_| part.ends_with("px") || part == "0") {
+                            set_w(s, w);
+                        } else if part == "none" {
+                            set_w(s, 0.0);
+                        } else if part != "solid" && part != "dashed" {
+                            set_c(s, part);
+                        }
+                    }
                 }
             }
         }
@@ -554,7 +728,48 @@ fn apply(s: &mut Style, k: &str, v: &str) {
                 e.get_or_insert([0.0; 4])[i] = n;
             }
         }
-        "border-radius" => s.border_radius = px(v),
+        "border-radius" => match radius_list(v) {
+            Some(r) if r.iter().all(|c| c[0] == r[0][0] && c[1] == r[0][0]) => {
+                s.border_radius = Some(r[0][0]);
+                s.border_radii = None;
+            }
+            Some(r) => {
+                s.border_radius = Some(r[0][0]);
+                s.border_radii = Some(r);
+            }
+            None => {
+                s.border_radius = None;
+                s.border_radii = None;
+            }
+        },
+        "border-top-left-radius" | "border-top-right-radius" | "border-bottom-right-radius" | "border-bottom-left-radius" => {
+            let i = ["border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius"]
+                .iter()
+                .position(|x| *x == k)
+                .unwrap_or(0);
+            let n: Option<Vec<f64>> = v.split_whitespace().map(px).collect();
+            let c = match n.as_deref() {
+                Some([a]) => [*a, *a],
+                Some([a, b]) => [*a, *b],
+                _ => return,
+            };
+            let mut r = s.radii();
+            r[i] = c;
+            s.border_radii = Some(r);
+        }
+        "position" => s.position = Some(v.trim().into()),
+        "top" => s.top = px(v),
+        "right" => s.right = px(v),
+        "bottom" => s.bottom = px(v),
+        "left" => s.left = px(v),
+        "inset" => {
+            let e = edges(v);
+            [s.top, s.right, s.bottom, s.left] = e.map_or([None; 4], |e| e.map(Some));
+        }
+        "z-index" => s.z_index = v.trim().parse().ok(),
+        "font-style" => s.font_style = Some(v.trim().into()),
+        "overflow-wrap" | "word-wrap" => s.overflow_wrap = Some(v.trim().into()),
+        "shape-rendering" => s.shape_rendering = Some(v.trim().into()),
         "font-size" => s.font_size = px(v),
         "font-weight" => {
             s.font_weight = match v {
@@ -901,5 +1116,29 @@ mod tests {
         assert_eq!(a.margin, Some([18.0, 0.0, 0.0, 0.0]));
         let b = sh.resolve(&Node::new("div").class("b"), None);
         assert_eq!((b.padding, b.margin), (Some([4.0, 50.0, 4.0, 4.0]), Some([0.0, 0.0, 0.0, 3.0])));
+    }
+
+    #[test]
+    fn corners_sides_and_positions_parse() {
+        let s = inline("border-radius: 1px 2px 3px / 4px 5px; border-top-right-radius: 7px 8px");
+        assert_eq!(s.radii(), [[1.0, 4.0], [7.0, 8.0], [3.0, 4.0], [2.0, 5.0]]);
+        assert_eq!(s.border_radius, Some(1.0), "the first corner stays readable as the radius");
+        // A later uniform radius resets the corners.
+        assert_eq!(inline("border-radius: 2px 0; border-radius: 6px").border_radii, None);
+        let b = inline("border: 1px solid rgba(0, 0, 0, 0.5); border-bottom-width: 3px; border-right: none");
+        assert_eq!(b.border_color.as_deref(), Some("rgba(0, 0, 0, 0.5)"));
+        assert_eq!(b.border_edges(), [1.0, 0.0, 3.0, 1.0]);
+        let c = inline("border-color: red green; border-width: 2px");
+        assert_eq!((c.border_side_color(0), c.border_side_color(1)), (Some("red"), Some("green")));
+        assert_eq!((c.border_width, c.border_widths), (Some(2.0), None));
+        let p = inline("position: absolute; inset: 1px 2px; z-index: 3; font-style: italic; overflow-wrap: anywhere; shape-rendering: geometricPrecision");
+        assert!(p.positioned() && p.out_of_flow());
+        assert_eq!([p.top, p.right, p.bottom, p.left], [Some(1.0), Some(2.0), Some(1.0), Some(2.0)]);
+        assert_eq!((p.z_index, p.font_style.as_deref()), (Some(3), Some("italic")));
+        // font-style, overflow-wrap and shape-rendering inherit.
+        let sh = Sheet::parse("div { font-style: italic; overflow-wrap: anywhere; shape-rendering: geometricPrecision }").unwrap();
+        let parent = sh.el("div");
+        let kid = sh.resolve(&Node::parse("span"), Some(&parent));
+        assert_eq!((kid.font_style, kid.overflow_wrap, kid.shape_rendering), (parent.font_style.clone(), parent.overflow_wrap.clone(), parent.shape_rendering.clone()));
     }
 }
