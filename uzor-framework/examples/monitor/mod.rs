@@ -412,9 +412,13 @@ fn status_line(snap: Option<&serde_json::Value>) -> String {
     let proven = snap.get("frame_proven").and_then(|v| v.as_bool()).unwrap_or(false);
     let gen = snap.get("gen").and_then(|v| v.as_u64()).unwrap_or(0);
     let shells = snap.get("cycles").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    let windows = snap.get("rows").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let rows = snap.get("rows").and_then(|v| v.as_array());
+    let n_rows = rows.map(|a| a.len()).unwrap_or(0);
+    let consoles = rows
+        .map(|a| a.iter().filter(|r| r.get("window").and_then(|x| x.as_bool()).unwrap_or(false)).count())
+        .unwrap_or(0);
     let frame = if proven { "frame" } else { "no frame" };
-    format!("observe  {collector}  {frame}  gen {gen}  {shells} shells  {windows} windows")
+    format!("observe  {collector}  {frame}  gen {gen}  {shells} shells  {consoles} consoles  {n_rows} rows")
 }
 
 fn field<'a>(v: &'a serde_json::Value, key: &str) -> &'a str {
@@ -484,6 +488,7 @@ fn window_lines(snap: Option<&serde_json::Value>) -> Vec<Line> {
             let cmd = field(row, "cmdline");
             let ancestor = field(row, "ancestor");
             let parent_cmd = field(row, "parent_cmdline");
+            let marked = row.get("window").and_then(|x| x.as_bool()).unwrap_or(false);
             let pid = row.get("pid").and_then(|x| x.as_i64()).unwrap_or(0);
             let via = if !ancestor.is_empty() && ancestor != parent && ancestor != exe {
                 format!("{parent} · {ancestor}")
@@ -494,7 +499,7 @@ fn window_lines(snap: Option<&serde_json::Value>) -> Vec<Line> {
                 key: format!("w:{pid}:{exe}:{cmd}"),
                 primary: format!("{exe}  {pid}  ← {via}  {cmd}"),
                 secondary: parent_cmd.to_string(),
-                mark: true,
+                mark: marked,
             });
         }
     }
