@@ -510,7 +510,13 @@ fn submit_vello_hybrid(
             .vello_hybrid_ctx
             .render(hybrid_renderer, device, queue, &mut encoder, &surface_view)
             .unwrap_or_else(|e| eprintln!("[render-hub] vello-hybrid render: {e:?}"));
-        queue.submit([encoder.finish()]);
+        let submission = queue.submit([encoder.finish()]);
+        // Non-blocking poll does not retire the submission. The redraw
+        // then keeps every frame's buffers until the process exits.
+        let _ = device.poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: None,
+        });
     }
 
     surface_texture.present();
@@ -796,6 +802,17 @@ pub(crate) fn blit_and_present_urx(
     blit_and_present(surface, device, queue)
 }
 
+/// Drop staging copies from `write_texture`. They sit in the queue until
+/// some submit, and a skipped present used to leave every frame there.
+#[cfg(feature = "gpu")]
+fn reclaim_pending(device: &wgpu::Device, queue: &wgpu::Queue) {
+    let submission = queue.submit([]);
+    let _ = device.poll(wgpu::PollType::Wait {
+        submission_index: Some(submission),
+        timeout: None,
+    });
+}
+
 #[cfg(feature = "gpu")]
 fn blit_and_present(
     surface: &mut vello::util::RenderSurface<'static>,
@@ -805,14 +822,19 @@ fn blit_and_present(
     // wgpu 29: get_current_texture returns CurrentSurfaceTexture enum, not Result.
     let surface_texture = match surface.surface.get_current_texture() {
         wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return false,
+        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+            reclaim_pending(device, queue);
+            return false;
+        }
         wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
             eprintln!("[render-hub] vello-gpu surface outdated/lost, reconfiguring");
             surface.surface.configure(device, &surface.config);
+            reclaim_pending(device, queue);
             return false;
         }
         wgpu::CurrentSurfaceTexture::Validation => {
             eprintln!("[render-hub] vello-gpu surface validation error");
+            reclaim_pending(device, queue);
             return true;
         }
     };
@@ -825,8 +847,15 @@ fn blit_and_present(
         label: Some("uzor-render-hub:blit"),
     });
     surface.blitter.copy(device, &mut encoder, &surface.target_view, &surface_view);
-    queue.submit([encoder.finish()]);
+    let submission = queue.submit([encoder.finish()]);
     surface_texture.present();
+    // TinySkia and VelloCpu upload a full-frame staging copy on this path
+    // every tick. Waiting is what makes wgpu drop that copy; Poll leaves
+    // it queued on Metal.
+    let _ = device.poll(wgpu::PollType::Wait {
+        submission_index: Some(submission),
+        timeout: None,
+    });
     false
 }
 
