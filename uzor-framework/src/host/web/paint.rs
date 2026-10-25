@@ -32,7 +32,11 @@ where
         1.0
     };
     let (css_w, css_h) = sync_backing_store(canvas, dpr);
-    let ctx = context_2d(canvas)?;
+    // An opaque background (alpha 0xff, or 0 = unset, painted opaque) gets an opaque
+    // context: only there does the browser draw LCD (subpixel) text, the crisp text every
+    // DOM page gets; on a transparent canvas text is greyscale-antialiased and looks soft.
+    let a = req.background & 0xff;
+    let ctx = context_2d(canvas, a == 0 || a == 0xff)?;
     let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
     // The 2D context keeps its state between frames: a leaked alpha, blend or
     // shadow from the last frame must not reach the background fill.
@@ -56,9 +60,13 @@ where
     Ok(())
 }
 
-fn context_2d(canvas: &HtmlCanvasElement) -> Result<CanvasRenderingContext2d, WebHostError> {
+/// The canvas' 2D context. Its attributes are fixed by the first `getContext` call on the
+/// element; later calls return that same context whatever they ask for.
+fn context_2d(canvas: &HtmlCanvasElement, opaque: bool) -> Result<CanvasRenderingContext2d, WebHostError> {
+    let opts = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&opts, &"alpha".into(), &(!opaque).into());
     let raw = canvas
-        .get_context("2d")
+        .get_context_with_context_options("2d", &opts)
         .map_err(|e| WebHostError::new(format!("getContext(\"2d\"): {e:?}")))?
         .ok_or_else(|| WebHostError::new("getContext(\"2d\") returned null"))?;
     raw.dyn_into::<CanvasRenderingContext2d>()
