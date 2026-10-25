@@ -2,6 +2,22 @@
 
 All crates in the workspace share one version.
 
+## 1.5.12
+
+### Terminal (uzor)
+
+- Block elements (U+2580-259F) and box drawing (U+2500-257F) are drawn as
+  cell-filling rectangles snapped to device pixels instead of font glyphs, so
+  adjacent cells join without gaps or dashed lines.
+- The cell grid, backgrounds, cursor and underline are snapped to device
+  pixels; `TermStyle::measured` sizes cells from the font actually resolved.
+- The web canvas is opaque, so terminal text renders sharply.
+
+### Widgets
+
+- `ring_mark` colours come from tokens (`RING_MARK_INK`, `RING_MARK_STAR`,
+  `RING_MARK_PAPER`); the `no_literal_colors_in_widgets` check passes.
+
 ## 1.5.11
 
 ### Inline rich text in the DOM (uzor)
