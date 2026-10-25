@@ -11,11 +11,13 @@
 //! - [`ring_mark_pose`]: the pose of a [`RingMarkMode`] at `t` seconds.
 //! - [`RingMarkPose::blend`]: cross-fade two poses (mode changes).
 //! - [`draw_ring_mark`]: paint a pose into any [`RenderContext`].
+//! - [`RING_MARK_INK`], [`RING_MARK_STAR`], [`RING_MARK_PAPER`]: the Hatchery mark palette.
 
 use std::f64::consts::PI;
 
 use crate::render::parse_color;
 use crate::render::RenderContext;
+use crate::tokens::Rgba;
 use crate::types::Rect;
 use crate::ui::animation::math::cycle::{back_in_out, breathe, slot_hash, smooth, turn_delta, TrickCycle};
 use crate::ui::animation::math::spatial::Rot3;
@@ -49,6 +51,15 @@ pub enum RingTrick {
 }
 
 use RingTrick::*;
+
+mod tokens;
+
+/// Hatchery mark ring colour (ink).
+pub const RING_MARK_INK: &str = tokens::INK;
+/// Hatchery mark star colour (amber).
+pub const RING_MARK_STAR: &str = tokens::STAR;
+/// Hatchery mark light background (paper).
+pub const RING_MARK_PAPER: &str = tokens::PAPER;
 
 impl RingMarkMode {
     /// Slot timing of the mode.
@@ -189,15 +200,10 @@ pub fn ring_mark_pose(mode: RingMarkMode, t: f64, seed: u32, style: &RingMarkSty
 }
 
 /// `#rrggbb` of `a` moved toward `b` by `k`.
-fn mix(a: &str, b: &str, k: f64) -> [u8; 7] {
+fn mix(a: &str, b: &str, k: f64) -> String {
     let (a, b) = (parse_color(a), parse_color(b));
-    let mut out = *b"#000000";
-    for (i, (x, y)) in [(a.0, b.0), (a.1, b.1), (a.2, b.2)].into_iter().enumerate() {
-        let v = (x as f64 + (y as f64 - x as f64) * k + 0.5) as u8;
-        out[1 + 2 * i] = b"0123456789abcdef"[(v >> 4) as usize];
-        out[2 + 2 * i] = b"0123456789abcdef"[(v & 15) as usize];
-    }
-    out
+    let ch = |x: u8, y: u8| (x as f64 + (y as f64 - x as f64) * k + 0.5) as u8;
+    Rgba::new(ch(a.0, b.0), ch(a.1, b.1), ch(a.2, b.2), u8::MAX).to_css_hex()
 }
 
 /// Paint `pose` into the square centred in `rect`.
@@ -210,7 +216,7 @@ pub fn draw_ring_mark(ctx: &mut dyn RenderContext, rect: Rect, style: &RingMarkS
     // depth cue: the ring fades a little toward the background as it turns edge-on,
     // the same for both faces (a flip lands looking exactly like the rest pose)
     let ring = mix(style.ring_color, style.background, 0.22 * (1.0 - pose.turn.facing().abs()));
-    let ring = core::str::from_utf8(&ring).unwrap_or(style.ring_color);
+    let ring = ring.as_str();
     let path = |ctx: &mut dyn RenderContext, r: f64, rev: bool| {
         for i in 0..=n {
             let j = if rev { n - i % n } else { i } % n;
@@ -255,7 +261,7 @@ mod tests {
 
     const HEX: RingMarkStyle = RingMarkStyle {
         sides: 6, radius: 27.0, width: 7.5, points: 4, star_outer: 16.5, star_inner: 5.94,
-        ring_color: "#15171c", star_color: "#f5a524", background: "#f4f2ee", camera: 150.0,
+        ring_color: RING_MARK_INK, star_color: RING_MARK_STAR, background: RING_MARK_PAPER, camera: 150.0,
     };
 
     fn corners(p: &RingMarkPose) -> Vec<(f64, f64)> {
@@ -308,5 +314,16 @@ mod tests {
                 assert!(steps[i] < 6.0 && steps[i] <= 2.0 * near + 0.2, "{mode:?} at {}: {} vs {near}", i as f64 / 120.0, steps[i]);
             }
         }
+    }
+
+    #[test]
+    fn mix_matches_the_old_byte_math() {
+        assert_eq!(mix(RING_MARK_INK, RING_MARK_PAPER, 0.0), RING_MARK_INK);
+        assert_eq!(mix(RING_MARK_INK, RING_MARK_PAPER, 1.0), RING_MARK_PAPER);
+        // same round-half-up per channel as the old byte-array version
+        let (a, b) = (parse_color(RING_MARK_INK), parse_color(RING_MARK_PAPER));
+        let m = parse_color(&mix(RING_MARK_INK, RING_MARK_PAPER, 0.22));
+        let ch = |x: u8, y: u8| (x as f64 + (y as f64 - x as f64) * 0.22 + 0.5) as u8;
+        assert_eq!(m, (ch(a.0, b.0), ch(a.1, b.1), ch(a.2, b.2), u8::MAX));
     }
 }
