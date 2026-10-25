@@ -179,14 +179,23 @@ fn fill_box(ctx: &mut dyn RenderContext, x0: f64, y0: f64, x1: f64, y1: f64) {
     }
 }
 
-/// Arms of a box-drawing character U+2500..U+257F as `[left, up, right,
-/// down]`: 0 none, 1 light, 2 heavy, 3 double. Dashed lines, rounded corners
-/// and diagonals are not in it (all zero).
-const BOX_ARMS: [[u8; 4]; 128] = {
-    const fn a(l: u8, u: u8, r: u8, d: u8) -> [u8; 4] {
-        [l, u, r, d]
-    }
-    const N: [u8; 4] = [0, 0, 0, 0];
+/// The four arms of a box-drawing character: 0 none, 1 light, 2 heavy, 3 double.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Arms {
+    l: u8,
+    u: u8,
+    r: u8,
+    d: u8,
+}
+
+const fn a(l: u8, u: u8, r: u8, d: u8) -> Arms {
+    Arms { l, u, r, d }
+}
+
+/// Arms of each box-drawing character U+2500..U+257F. Dashed lines, rounded
+/// corners and diagonals are not in it (no arms).
+const BOX_ARMS: [Arms; 128] = {
+    const N: Arms = a(0, 0, 0, 0);
     [
         // 2500 ─ ━ │ ┃ ┄ ┅ ┆ ┇ ┈ ┉ ┊ ┋ ┌ ┍ ┎ ┏
         a(1, 0, 1, 0), a(2, 0, 2, 0), a(0, 1, 0, 1), a(0, 2, 0, 2), N, N, N, N, N, N, N, N,
@@ -347,7 +356,7 @@ fn draw_special(ctx: &mut dyn RenderContext, pen: &mut Pen, ch: char, b: &CellBo
             true
         }
         0x2500..=0x257F => {
-            let [l, u, r, d] = BOX_ARMS[(c - 0x2500) as usize];
+            let Arms { l, u, r, d } = BOX_ARMS[(c - 0x2500) as usize];
             if l | u | r | d == 0 {
                 return false;
             }
@@ -655,11 +664,11 @@ mod tests {
         draw_terminal(&mut ctx, Rect::new(0.0, 0.0, 8.0, 15.0), &view, &style(8.0));
         let r: Vec<_> = rects(&ctx).into_iter().skip(1).collect();
         assert_eq!(r, vec![(4.0, 7.0, 4.0, 1.0), (4.0, 7.0, 1.0, 8.0)]);
-        assert_eq!(BOX_ARMS[0x253C - 0x2500], [1, 1, 1, 1]);
-        assert_eq!(BOX_ARMS[0x254B - 0x2500], [2, 2, 2, 2]);
-        assert_eq!(BOX_ARMS[0x2550 - 0x2500], [3, 0, 3, 0]);
-        assert_eq!(BOX_ARMS[0x2518 - 0x2500], [1, 1, 0, 0]);
-        assert_eq!(BOX_ARMS[0x257F - 0x2500], [0, 2, 0, 1]);
+        assert_eq!(BOX_ARMS[0x253C - 0x2500], a(1, 1, 1, 1));
+        assert_eq!(BOX_ARMS[0x254B - 0x2500], a(2, 2, 2, 2));
+        assert_eq!(BOX_ARMS[0x2550 - 0x2500], a(3, 0, 3, 0));
+        assert_eq!(BOX_ARMS[0x2518 - 0x2500], a(1, 1, 0, 0));
+        assert_eq!(BOX_ARMS[0x257F - 0x2500], a(0, 2, 0, 1));
     }
 
     #[test]
