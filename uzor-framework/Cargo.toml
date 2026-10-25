@@ -80,6 +80,8 @@ web-sys = { version = "0.3", optional = true, features = [
 ] }
 uzor-render-canvas2d = { workspace = true, optional = true }
 uzor-window-web = { workspace = true, optional = true }
+# Observe monitor example only. The framework itself does not parse JSON.
+serde_json = { version = "1", optional = true }
 
 [target.'cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))'.dependencies]
 # XFlush after a software present (softbuffer queues the X11 PutImage and its
@@ -123,6 +125,8 @@ web = [
     "dep:uzor-window-web",
     "dep:log",
 ]
+# HQ observe monitor (`examples/monitor`). Not part of the framework surface.
+monitor = ["web", "dep:serde_json"]
 
 [dev-dependencies]
 # CPU context for goldens. F8 compares against the committed
@@ -149,6 +153,12 @@ required-features = ["native"]
 name = "demo_web"
 path = "examples/demo/main_web.rs"
 required-features = ["web"]
+crate-type = ["cdylib"]
+
+[[example]]
+name = "monitor_web"
+path = "examples/monitor/main_web.rs"
+required-features = ["monitor"]
 crate-type = ["cdylib"]
 
 [[example]]
