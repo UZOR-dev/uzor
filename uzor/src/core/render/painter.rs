@@ -29,6 +29,16 @@ pub trait Painter {
     /// Scale from the current origin by `(x, y)`.
     fn scale(&mut self, x: f64, y: f64);
 
+    /// Canvas `transform(a, b, c, d, e, f)`: `x' = a x + c y + e`, `y' = b x + d y + f`,
+    /// applied in the current local frame. Backends with a real affine override this.
+    /// The default only keeps a shear-free scale+translate so other impls still compile.
+    fn transform(&mut self, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) {
+        if b.abs() < 1.0e-4 && c.abs() < 1.0e-4 {
+            self.translate(e, f);
+            self.scale(a, d);
+        }
+    }
+
     // =========================================================================
     // Style setters
     // =========================================================================

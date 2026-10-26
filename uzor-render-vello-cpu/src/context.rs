@@ -698,6 +698,10 @@ impl Painter for VelloCpuRenderContext {
         self.transform = self.transform.pre_scale_non_uniform(x, y);
     }
 
+    fn transform(&mut self, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) {
+        self.transform = self.transform * Affine::new([a, b, c, d, e, f]);
+    }
+
     fn set_fill_color(&mut self, color: &str) {
         self.fill_color = parse_color(color);
     }

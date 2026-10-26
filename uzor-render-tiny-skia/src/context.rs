@@ -1099,6 +1099,12 @@ impl Painter for TinySkiaCpuRenderContext {
         self.transform = self.transform.pre_scale(x as f32, y as f32);
     }
 
+    fn transform(&mut self, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) {
+        self.transform = self.transform.pre_concat(tiny_skia::Transform::from_row(
+            a as f32, b as f32, c as f32, d as f32, e as f32, f as f32,
+        ));
+    }
+
     fn set_fill_color(&mut self, color: &str) {
         self.fill_color = parse_css_color(color);
     }

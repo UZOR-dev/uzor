@@ -1,6 +1,9 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 
-use rquickjs::{Context, Function, Module, Runtime, TypedArray};
+use rquickjs::{Context, Function, Module, Object, Runtime, TypedArray};
+
+use uzor::render::{replay_anim_ops_bitmaps, AnimBitmap, RenderContext};
 
 use crate::{AnimScriptError, PRELUDE_JS};
 
@@ -12,6 +15,7 @@ pub struct JsAnimHost(Rc<Inner>);
 struct Inner {
     _rt: Runtime,
     ctx: Context,
+    slots: RefCell<Vec<AnimBitmap>>,
 }
 
 fn err(e: rquickjs::Error, ctx: &rquickjs::Ctx<'_>) -> AnimScriptError {
@@ -30,8 +34,8 @@ fn err(e: rquickjs::Error, ctx: &rquickjs::Ctx<'_>) -> AnimScriptError {
 impl JsAnimHost {
     pub fn new() -> Result<Self, AnimScriptError> {
         let rt = Runtime::new().map_err(|e| AnimScriptError::Script(e.to_string()))?;
-        // Animations are tiny; cap the heap so a runaway script can't eat RAM.
-        rt.set_memory_limit(32 << 20);
+        // Rider + palm + a few offscreen copies of the rider. 32 MiB is short of that.
+        rt.set_memory_limit(96 << 20);
         let ctx = Context::full(&rt).map_err(|e| AnimScriptError::Script(e.to_string()))?;
         ctx.with(|c| -> Result<(), AnimScriptError> {
             let m = Module::declare(c.clone(), "uzor-anim-prelude", PRELUDE_JS).map_err(|e| err(e, &c))?;
@@ -39,12 +43,63 @@ impl JsAnimHost {
             p.finish::<()>().map_err(|e| err(e, &c))?;
             Ok(())
         })?;
-        Ok(Self(Rc::new(Inner { _rt: rt, ctx })))
+        Ok(Self(Rc::new(Inner {
+            _rt: rt,
+            ctx,
+            slots: RefCell::new(Vec::new()),
+        })))
     }
 
     /// Evaluate script source (classic script) that registers animations.
     pub fn load(&self, src: &str) -> Result<(), AnimScriptError> {
         self.0.ctx.with(|c| c.eval::<(), _>(src).map_err(|e| err(e, &c)))
+    }
+
+    /// Install `rgba` as `globalThis[name]` and as bitmap `slot`.
+    /// `_dirty: false` so the script does not copy the bytes back through JS.
+    pub fn bind_bitmap(
+        &self,
+        name: &str,
+        rgba: &[u8],
+        w: u32,
+        h: u32,
+        slot: u32,
+        toon: bool,
+    ) -> Result<(), AnimScriptError> {
+        let need = w as usize * h as usize * 4;
+        if w == 0 || h == 0 || rgba.len() != need {
+            return Err(AnimScriptError::Script(format!("bitmap {name} size")));
+        }
+        {
+            let mut slots = self.0.slots.borrow_mut();
+            let idx = slot as usize;
+            if slots.len() <= idx {
+                slots.resize_with(idx + 1, AnimBitmap::default);
+            }
+            slots[idx] = AnimBitmap {
+                w,
+                h,
+                rgba: rgba.to_vec(),
+                gen: 1,
+            };
+        }
+        self.0.ctx.with(|c| {
+            let bytes = TypedArray::<u8>::new(c.clone(), rgba.to_vec()).map_err(|e| err(e, &c))?;
+            let obj = Object::new(c.clone()).map_err(|e| err(e, &c))?;
+            obj.set("width", w).map_err(|e| err(e, &c))?;
+            obj.set("height", h).map_err(|e| err(e, &c))?;
+            obj.set("naturalWidth", w).map_err(|e| err(e, &c))?;
+            obj.set("naturalHeight", h).map_err(|e| err(e, &c))?;
+            obj.set("_w", w).map_err(|e| err(e, &c))?;
+            obj.set("_h", h).map_err(|e| err(e, &c))?;
+            obj.set("complete", true).map_err(|e| err(e, &c))?;
+            obj.set("_toon", toon).map_err(|e| err(e, &c))?;
+            obj.set("_slot", slot).map_err(|e| err(e, &c))?;
+            obj.set("_dirty", false).map_err(|e| err(e, &c))?;
+            obj.set("_rgba", bytes).map_err(|e| err(e, &c))?;
+            c.globals().set(name, obj).map_err(|e| err(e, &c))?;
+            Ok(())
+        })
     }
 
     /// A script registered `name` (`globalThis.uzorAnims[name]`).
@@ -65,4 +120,66 @@ impl JsAnimHost {
             Ok(())
         })
     }
+
+    fn drain_publish(&self) -> Result<(), AnimScriptError> {
+        self.0.ctx.with(|c| {
+            let arr: rquickjs::Array = match c.globals().get("__uzorPublish") {
+                Ok(a) => a,
+                Err(_) => return Ok(()),
+            };
+            let len = arr.len();
+            let mut slots = self.0.slots.borrow_mut();
+            for i in 0..len {
+                let item: Object = match arr.get(i) {
+                    Ok(o) => o,
+                    Err(_) => continue,
+                };
+                let Some(id) = js_f64(&item, "id") else { continue };
+                let Some(w) = js_f64(&item, "w") else { continue };
+                let Some(h) = js_f64(&item, "h") else { continue };
+                let Ok(px) = item.get::<_, TypedArray<u8>>("px") else { continue };
+                let Some(bytes) = px.as_bytes() else { continue };
+                if id < 0.0 || id.fract() != 0.0 {
+                    continue;
+                }
+                let id = id as usize;
+                let w = w as u32;
+                let h = h as u32;
+                let need = w as usize * h as usize * 4;
+                if w == 0 || h == 0 || bytes.len() < need {
+                    continue;
+                }
+                if slots.len() <= id {
+                    slots.resize_with(id + 1, AnimBitmap::default);
+                }
+                let gen = slots[id].gen.wrapping_add(1);
+                slots[id] = AnimBitmap {
+                    w,
+                    h,
+                    rgba: bytes[..need].to_vec(),
+                    gen,
+                };
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn run_and_replay(
+        &self,
+        name: &str,
+        t: f64,
+        q: &[f64; 14],
+        ctx: &mut dyn RenderContext,
+        scratch: &mut Vec<f64>,
+    ) -> Result<(), AnimScriptError> {
+        self.run(name, t, q, scratch)?;
+        self.drain_publish()?;
+        let slots = self.0.slots.borrow();
+        replay_anim_ops_bitmaps(ctx, scratch, &slots)
+    }
+}
+
+fn js_f64(obj: &Object<'_>, key: &str) -> Option<f64> {
+    let v: rquickjs::Value = obj.get(key).ok()?;
+    v.as_int().map(|i| i as f64).or_else(|| v.as_float())
 }

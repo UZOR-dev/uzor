@@ -20,7 +20,7 @@
 //! anim.paint(ctx, t, &AnimParams { w: 64.0, h: 64.0, seed: 7, ..Default::default() }, &mut buf)?;
 //! ```
 
-pub use uzor::render::{replay_anim_ops, AnimParams, AnimRegistry, AnimScript, AnimScriptError};
+pub use uzor::render::{replay_anim_ops, AnimParams, AnimRegistry, AnimScript, AnimScriptError, RenderContext};
 
 /// The recorder prelude (ES module source), for hosts that load it themselves.
 pub const PRELUDE_JS: &str = include_str!("../js/prelude.js");
@@ -70,5 +70,15 @@ impl JsAnimHost {
 impl AnimScript for JsAnim {
     fn frame(&mut self, t: f64, p: &AnimParams, out: &mut Vec<f64>) -> Result<(), AnimScriptError> {
         self.host.run(&self.name, t, &p.to_array(), out)
+    }
+
+    fn paint(
+        &mut self,
+        ctx: &mut dyn RenderContext,
+        t: f64,
+        p: &AnimParams,
+        scratch: &mut Vec<f64>,
+    ) -> Result<(), AnimScriptError> {
+        self.host.run_and_replay(&self.name, t, &p.to_array(), ctx, scratch)
     }
 }

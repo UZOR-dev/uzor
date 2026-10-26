@@ -1,6 +1,8 @@
 use js_sys::{Float64Array, Reflect};
 use wasm_bindgen::prelude::*;
 
+use uzor::render::{replay_anim_ops, RenderContext};
+
 use crate::AnimScriptError;
 
 // The prelude is a same-origin wasm-bindgen snippet: imported by the glue at
@@ -48,5 +50,17 @@ impl JsAnimHost {
         out.resize(a.length() as usize, 0.0);
         a.copy_to(out);
         Ok(())
+    }
+
+    pub(crate) fn run_and_replay(
+        &self,
+        name: &str,
+        t: f64,
+        q: &[f64; 14],
+        ctx: &mut dyn RenderContext,
+        scratch: &mut Vec<f64>,
+    ) -> Result<(), AnimScriptError> {
+        self.run(name, t, q, scratch)?;
+        replay_anim_ops(ctx, scratch)
     }
 }

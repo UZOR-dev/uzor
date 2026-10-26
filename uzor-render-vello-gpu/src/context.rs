@@ -793,6 +793,10 @@ impl<'a> Painter for VelloGpuRenderContext<'a> {
         self.transform = self.transform.pre_scale_non_uniform(x, y);
     }
 
+    fn transform(&mut self, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) {
+        self.transform = self.transform * Affine::new([a, b, c, d, e, f]);
+    }
+
     fn set_fill_color(&mut self, color: &str) {
         self.fill_color = parse_color(color);
     }
@@ -1569,7 +1573,16 @@ impl<'a> ImagePainter for VelloGpuRenderContext<'a> {
         if data.len() != (img_width * img_height * 4) as usize || img_width == 0 || img_height == 0 {
             return;
         }
-        let blob = Blob::new(Arc::new(data.to_vec()));
+        let mut owned = data.to_vec();
+        if self.global_alpha < 0.999 {
+            let scale = (self.global_alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
+            if scale < 255 {
+                for px in owned.chunks_exact_mut(4) {
+                    px[3] = ((px[3] as u32 * scale + 127) / 255) as u8;
+                }
+            }
+        }
+        let blob = Blob::new(Arc::new(owned));
         let image_data = vello::peniko::ImageData {
             data: blob,
             format: vello::peniko::ImageFormat::Rgba8,

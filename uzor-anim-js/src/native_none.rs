@@ -21,4 +21,14 @@ impl JsAnimHost {
     pub(crate) fn run(&self, _n: &str, _t: f64, _q: &[f64; 14], _o: &mut Vec<f64>) -> Result<(), AnimScriptError> {
         Err(AnimScriptError::Unavailable(WHY))
     }
+    pub(crate) fn run_and_replay(
+        &self,
+        name: &str,
+        t: f64,
+        q: &[f64; 14],
+        _ctx: &mut dyn uzor::render::RenderContext,
+        out: &mut Vec<f64>,
+    ) -> Result<(), AnimScriptError> {
+        self.run(name, t, q, out)
+    }
 }

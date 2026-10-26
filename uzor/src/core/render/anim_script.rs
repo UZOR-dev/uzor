@@ -121,22 +121,33 @@ pub mod op {
     pub const FILL_RECT: u8 = 19;
     pub const STROKE_RECT: u8 = 20;
     pub const CLIP: u8 = 21;
+    /// Canvas `transform(a, b, c, d, e, f)` — column `[a c e; b d f]`.
+    pub const TRANSFORM: u8 = 22;
+    /// `slot, sx, sy, sw, sh, dx, dy, dw, dh`. Negative dw/dh flips.
+    pub const DRAW_IMAGE: u8 = 23;
+    /// `slot` + source triangle (6) + dest triangle (6). One textured triangle.
+    pub const DRAW_TRI: u8 = 24;
+    /// Blur radius in px for the next image draw. `0` clears it.
+    pub const FILTER: u8 = 25;
 
     /// Number of f64 operands following each op code.
     pub const fn arity(code: u8) -> Option<usize> {
         Some(match code {
             SAVE | RESTORE | BEGIN_PATH | CLOSE_PATH | FILL | STROKE | CLIP => 0,
-            ROTATE | FILL_COLOR | STROKE_COLOR | LINE_WIDTH | GLOBAL_ALPHA => 1,
+            ROTATE | FILL_COLOR | STROKE_COLOR | LINE_WIDTH | GLOBAL_ALPHA | FILTER => 1,
             TRANSLATE | SCALE | MOVE_TO | LINE_TO => 2,
             QUAD_TO | FILL_RECT | STROKE_RECT => 4,
             ARC => 5,
-            BEZIER_TO => 6,
+            BEZIER_TO | TRANSFORM => 6,
             ELLIPSE => 7,
+            DRAW_IMAGE => 9,
+            DRAW_TRI => 13,
             _ => return None,
         })
     }
 }
 
+#[cfg(test)]
 fn rgba_hex(c: u32) -> [u8; 9] {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut s = [b'#'; 9];
@@ -148,66 +159,9 @@ fn rgba_hex(c: u32) -> [u8; 9] {
 
 /// Replay an anim op stream onto `ctx`. Unbalanced `save`s are closed at the
 /// end so a script can never leak transform/clip state into the caller.
+/// Image ops with no bound slot are skipped.
 pub fn replay_anim_ops(ctx: &mut dyn RenderContext, ops: &[f64]) -> Result<(), AnimScriptError> {
-    let mut i = 0;
-    let mut depth = 0usize;
-    let mut res = Ok(());
-    while i < ops.len() {
-        let code = ops[i];
-        let Some(n) = (code >= 0.0 && code < 256.0 && code.fract() == 0.0)
-            .then(|| code as u8)
-            .and_then(op::arity)
-        else {
-            res = Err(AnimScriptError::BadOp(i));
-            break;
-        };
-        if i + 1 + n > ops.len() {
-            res = Err(AnimScriptError::BadOp(i));
-            break;
-        }
-        let a = &ops[i + 1..i + 1 + n];
-        match code as u8 {
-            op::SAVE => {
-                depth += 1;
-                ctx.save()
-            }
-            op::RESTORE => {
-                if depth > 0 {
-                    depth -= 1;
-                    ctx.restore()
-                }
-            }
-            op::TRANSLATE => ctx.translate(a[0], a[1]),
-            op::ROTATE => ctx.rotate(a[0]),
-            op::SCALE => ctx.scale(a[0], a[1]),
-            op::BEGIN_PATH => ctx.begin_path(),
-            op::MOVE_TO => ctx.move_to(a[0], a[1]),
-            op::LINE_TO => ctx.line_to(a[0], a[1]),
-            op::QUAD_TO => ctx.quadratic_curve_to(a[0], a[1], a[2], a[3]),
-            op::BEZIER_TO => ctx.bezier_curve_to(a[0], a[1], a[2], a[3], a[4], a[5]),
-            op::ARC => ctx.arc(a[0], a[1], a[2], a[3], a[4]),
-            op::ELLIPSE => ctx.ellipse(a[0], a[1], a[2], a[3], a[4], a[5], a[6]),
-            op::CLOSE_PATH => ctx.close_path(),
-            op::FILL => ctx.fill(),
-            op::STROKE => ctx.stroke(),
-            op::FILL_COLOR | op::STROKE_COLOR => {
-                let hex = rgba_hex(a[0] as u32);
-                let s = core::str::from_utf8(&hex).unwrap_or("#000000ff");
-                if code as u8 == op::FILL_COLOR { ctx.set_fill_color(s) } else { ctx.set_stroke_color(s) }
-            }
-            op::LINE_WIDTH => ctx.set_stroke_width(a[0]),
-            op::GLOBAL_ALPHA => ctx.set_global_alpha(a[0]),
-            op::FILL_RECT => ctx.fill_rect(a[0], a[1], a[2], a[3]),
-            op::STROKE_RECT => ctx.stroke_rect(a[0], a[1], a[2], a[3]),
-            op::CLIP => ctx.clip(),
-            _ => unreachable!(),
-        }
-        i += 1 + n;
-    }
-    for _ in 0..depth {
-        ctx.restore();
-    }
-    res
+    super::anim_bitmap::replay_anim_ops_bitmaps(ctx, ops, &[])
 }
 
 /// Rust-side producer of the same op stream (for ported/baked animations
@@ -386,10 +340,10 @@ mod tests {
 
     #[test]
     fn arity_covers_all_codes() {
-        for c in 0..=21u8 {
+        for c in 0..=25u8 {
             assert!(op::arity(c).is_some(), "code {c}");
         }
-        assert!(op::arity(22).is_none());
+        assert!(op::arity(26).is_none());
     }
 
     #[test]
