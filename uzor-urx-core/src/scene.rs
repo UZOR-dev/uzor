@@ -5,7 +5,7 @@
 //! variants only when a real consumer needs them. New variants MUST be
 //! implementable across all 3 backends or the variant doesn't ship.
 
-use crate::math::{Affine, BezPath, BlendMode, Brush, Color, Rect, RoundedRect, Vec2};
+use crate::math::{Affine, BezPath, BlendMode, Brush, Color, Point, Rect, RoundedRect, Vec2};
 
 /// Stroke parameters for line/path stroking.
 ///
@@ -202,11 +202,28 @@ pub enum DrawCommand {
         text:      Option<String>,
     },
     /// Image (texture) into destination rect with optional source crop.
+    ///
+    /// `alpha` is straight (1.0 = opaque) and multiplies the image as a
+    /// white tint. The four dest corners are transformed by the full
+    /// affine, including shear and reflection.
     Image {
         src:       ImageId,
         src_rect:  Option<Rect>,
         dest:      Rect,
         transform: Affine,
+        alpha:     f32,
+    },
+    /// One textured triangle. Corners are already in screen space; UVs
+    /// are 0..1 of the full image (any source crop is baked in).
+    /// A 3-point clip plus `drawImage` becomes this instead of an
+    /// axis-aligned quad under an AABB clip.
+    ImageTri {
+        src:   ImageId,
+        /// Three screen-space corners, already transformed.
+        p:     [Point; 3],
+        /// UVs in 0..1 of the full image (src crop already baked into the UVs).
+        uv:    [(f64, f64); 3],
+        alpha: f32,
     },
     /// Push an axis-aligned clip onto the stack. POP via `PopClip`.
     /// (Rectangular clip via scissor on WGPU, fast and free.)

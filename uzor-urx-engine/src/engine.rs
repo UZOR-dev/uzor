@@ -797,6 +797,13 @@ fn shift_scene_origin(scene: &mut Scene, dx: f64, dy: f64) {
             DrawCommand::GlyphRun { transform, .. } | DrawCommand::Image { transform, .. } => {
                 *transform = shift * *transform;
             }
+            DrawCommand::ImageTri { p, .. } => {
+                // Already screen-space; the shift is a translation of the three corners.
+                for pt in p.iter_mut() {
+                    pt.x += dx;
+                    pt.y += dy;
+                }
+            }
             DrawCommand::PopClip => {}
             DrawCommand::PushBlendLayer { transform, .. } => {
                 *transform = shift * *transform;

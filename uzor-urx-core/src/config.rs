@@ -164,7 +164,8 @@ pub struct UrxConfig {
     /// `wgpu::Texture`, evicted whole via the same tick-based
     /// never-evict-this-frame LRU discipline as the glyph atlas/
     /// gradient LUT. Read at `NativeUrxRenderer` construction only —
-    /// not hot-swappable. Wave 4. Default `64`.
+    /// not hot-swappable. Wave 4. Default `512`. A cap of 64 evicts
+    /// unique crops mid-frame and skips those draws.
     pub wgpu_image_cache_cap: usize,
 
     // ── SIMD ───────────────────────────────────────────────────────
@@ -275,7 +276,7 @@ impl Default for UrxConfig {
             wgpu_glyph_atlas_h: 2048,
             blend_layer_max_depth: 8,
             wgpu_gradient_lut_rows: 64,
-            wgpu_image_cache_cap: 64,
+            wgpu_image_cache_cap: 512,
             simd_level: SimdLevel::Native,
             hybrid_atlas_w: 2048,
             hybrid_atlas_h: 2048,
@@ -467,7 +468,7 @@ mod tests {
         // Wave-4-introduced — GradientLutAtlas row count / image cache
         // cap, both `uzor-urx-wgpu`-only.
         assert_eq!(c.wgpu_gradient_lut_rows, 64);
-        assert_eq!(c.wgpu_image_cache_cap, 64);
+        assert_eq!(c.wgpu_image_cache_cap, 512);
         assert_eq!(c.simd_level, SimdLevel::Native);
         assert_eq!(c.hybrid_atlas_w, 2048);
         assert_eq!(c.hybrid_atlas_h, 2048);

@@ -192,12 +192,23 @@ pub fn validate_command(cmd: &DrawCommand) -> Result<(), ValidationIssue> {
             }
             Ok(())
         }
-        DrawCommand::Image { src: _, src_rect, dest, transform } => {
-            if !is_finite_rect(*dest) || !is_finite_affine(*transform) {
+        DrawCommand::Image { src: _, src_rect, dest, transform, alpha } => {
+            if !is_finite_rect(*dest) || !is_finite_affine(*transform) || !alpha.is_finite() {
                 return Err(ValidationIssue::NonFinite);
             }
             if let Some(sr) = src_rect {
                 if !is_finite_rect(*sr) {
+                    return Err(ValidationIssue::NonFinite);
+                }
+            }
+            Ok(())
+        }
+        DrawCommand::ImageTri { src: _, p, uv, alpha } => {
+            if !alpha.is_finite() || p.iter().any(|pt| !is_finite_point(*pt)) {
+                return Err(ValidationIssue::NonFinite);
+            }
+            for (u, v) in uv {
+                if !u.is_finite() || !v.is_finite() {
                     return Err(ValidationIssue::NonFinite);
                 }
             }

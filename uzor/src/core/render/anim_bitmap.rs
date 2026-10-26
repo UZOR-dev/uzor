@@ -373,10 +373,57 @@ fn blit_source(
         blit_rgba(ctx, src, iw, ih, dx, dy, dw, dh);
         return;
     }
+    // One shared texture plus a source rect. Extract stays for backends
+    // that return false, and for a triangle clip (the skin mesh).
+    if blit_src_rect(ctx, src, iw, ih, sx, sy, sw, sh, dx, dy, dw, dh) {
+        return;
+    }
     let Some((buf, rw, rh)) = extract(src, iw, ih, sx, sy, sw, sh) else {
         return;
     };
     blit_rgba(ctx, &buf, rw, rh, dx, dy, dw, dh);
+}
+
+fn blit_src_rect(
+    ctx: &mut dyn RenderContext,
+    src: &[u8],
+    iw: u32,
+    ih: u32,
+    sx: f64,
+    sy: f64,
+    sw: f64,
+    sh: f64,
+    dx: f64,
+    dy: f64,
+    dw: f64,
+    dh: f64,
+) -> bool {
+    let adw = dw.abs();
+    let adh = dh.abs();
+    if adw < 1.0e-6 || adh < 1.0e-6 {
+        return false;
+    }
+    let flip_x = dw < 0.0;
+    let flip_y = dh < 0.0;
+    if flip_x || flip_y {
+        ctx.save();
+        ctx.translate(dx, dy);
+        if flip_x {
+            ctx.scale(-1.0, 1.0);
+        }
+        if flip_y {
+            ctx.scale(1.0, -1.0);
+        }
+        let ok = ctx.image_painter().is_some_and(|painter| {
+            painter.draw_image_rgba_src(src, iw, ih, sx, sy, sw, sh, 0.0, 0.0, adw, adh)
+        });
+        ctx.restore();
+        ok
+    } else {
+        ctx.image_painter().is_some_and(|painter| {
+            painter.draw_image_rgba_src(src, iw, ih, sx, sy, sw, sh, dx, dy, adw, adh)
+        })
+    }
 }
 
 fn blit_rgba(

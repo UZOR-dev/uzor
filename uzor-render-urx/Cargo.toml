@@ -14,6 +14,7 @@ categories  = ["graphics", "rendering"]
 uzor          = { workspace = true, features = ["shaper"] }
 uzor-urx-core = { workspace = true }
 uzor-urx-glyph = { workspace = true }
+uzor-urx-image = { workspace = true }
 kurbo         = "0.13"
 peniko        = "0.6"
 metrics       = "0.24"

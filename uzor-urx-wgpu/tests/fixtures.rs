@@ -1093,6 +1093,7 @@ pub fn image_axis_aligned_and_rotated() -> Scene {
         src_rect: None,
         dest: Rect::new(20.0, 20.0, 84.0, 84.0),
         transform: Affine::IDENTITY,
+        alpha: 1.0,
     });
 
     // Rotated 45 degrees about its own center, no upscale (32x32 ->
@@ -1104,6 +1105,7 @@ pub fn image_axis_aligned_and_rotated() -> Scene {
         src_rect: None,
         dest: Rect::new(150.0, 150.0, 182.0, 182.0),
         transform: Affine::rotate_about(std::f64::consts::FRAC_PI_4, rotated_center),
+        alpha: 1.0,
     });
 
     scene

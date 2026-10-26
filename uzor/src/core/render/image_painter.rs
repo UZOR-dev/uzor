@@ -37,4 +37,28 @@ pub trait ImagePainter {
         width: f64,
         height: f64,
     );
+
+    /// Draw a source rectangle of `data` into the dest rectangle.
+    ///
+    /// `sx, sy, sw, sh` are pixels of the full image. Return `false` to
+    /// keep the caller's extract-and-blit path (the default). A backend
+    /// that can sample a crop from one shared texture returns `true`.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_image_rgba_src(
+        &mut self,
+        data: &[u8],
+        img_width: u32,
+        img_height: u32,
+        sx: f64,
+        sy: f64,
+        sw: f64,
+        sh: f64,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    ) -> bool {
+        let _ = (data, img_width, img_height, sx, sy, sw, sh, x, y, width, height);
+        false
+    }
 }

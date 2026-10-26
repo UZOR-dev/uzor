@@ -390,10 +390,16 @@ impl CpuBackend {
                         ).increment(1);
                     }
                 }
-                DrawCommand::Image { src, src_rect, dest, transform } => {
+                DrawCommand::Image { src, src_rect, dest, transform, alpha } => {
                     let target = layer_stack.current_target(pixmap);
                     let _ = crate::image_draw::draw_image_aa(
-                        target, &clip, *src, *src_rect, *dest, transform,
+                        target, &clip, *src, *src_rect, *dest, transform, *alpha,
+                    );
+                }
+                DrawCommand::ImageTri { src, p, uv, alpha } => {
+                    let target = layer_stack.current_target(pixmap);
+                    let _ = crate::image_draw::draw_image_tri(
+                        target, &clip, *src, *p, *uv, *alpha,
                     );
                 }
                 DrawCommand::PushClipRect { rect, transform } => {

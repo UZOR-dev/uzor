@@ -63,6 +63,7 @@ use crate::pipelines::blend_composite::BlendCompositePipeline;
 use crate::pipelines::glyph::GlyphPipeline;
 use crate::pipelines::gradient::GradientPipeline;
 use crate::pipelines::image::ImagePipeline;
+use crate::pipelines::image_tri::ImageTriPipeline;
 use crate::pipelines::line::LinePipeline;
 use crate::pipelines::path::{GeometryCapacityError, PathPipeline};
 use crate::pipelines::quad::QuadPipeline;
@@ -320,6 +321,7 @@ pub struct NativeUrxRenderer {
     blend_composite: BlendCompositePipeline,
     gradient: GradientPipeline,
     image: ImagePipeline,
+    image_tri: ImageTriPipeline,
 
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
@@ -501,6 +503,7 @@ impl NativeUrxRenderer {
         // design §4.2/§4.3) — same ordering precedent.
         let image_cache = NativeImageCache::new(&device, cfg.wgpu_image_cache_cap);
         let image = ImagePipeline::new(&device, format, sample_count, &uniform_bgl, image_cache.bind_group_layout());
+        let image_tri = ImageTriPipeline::new(&device, format, sample_count, &uniform_bgl, image_cache.bind_group_layout());
 
         let msaa = MsaaTarget::new(sample_count, format);
         // Sample count MUST match whichever color target this same
@@ -531,6 +534,7 @@ impl NativeUrxRenderer {
             blend_composite,
             gradient,
             image,
+            image_tri,
             uniform_buffer,
             uniform_bind_group,
             resolve_bgl,
@@ -799,6 +803,7 @@ impl NativeUrxRenderer {
         let upload_image_t0 = profile.then(std::time::Instant::now);
         profile_buffer_upload_begin("image", &frame.images);
         self.image.upload(&self.device, &self.queue, &frame.images);
+        self.image_tri.upload(&self.device, &self.queue, &frame.image_tris);
         let upload_image_us = upload_image_t0.map(|t| t.elapsed().as_micros());
         // Drain every glyph bitmap queued by this frame's `encode_scene`
         // call into the atlas texture — after encode returns (every
@@ -1069,34 +1074,25 @@ impl NativeUrxRenderer {
                             }
                             self.gradient.draw_range(&mut pass, batch.start, batch.count);
                         }
-                        BatchKind::Image(id) => {
+                        BatchKind::Image(id) | BatchKind::ImageTri(id) => {
                             // A DIFFERENT `ImageId` never coalesces with
                             // another (design §4.3 — bind group per
                             // image); `current`'s equality check already
                             // compares the WRAPPED id (`BatchKind`
                             // derives `PartialEq`), so it naturally
                             // re-binds on every id change with no extra
-                            // logic here. Resolved (and, on a genuine
-                            // miss, uploaded) HERE, at replay time — see
-                            // `image_cache.rs`'s own module doc for why
-                            // that's correct for images specifically
-                            // (unlike the atlas/LUT, an image slot is
-                            // written at most once in its whole resident
-                            // lifetime, so there's no encode-time
-                            // pending-queue to batch away).
+                            // logic here. `Image` and `ImageTri` are
+                            // different pipelines, so the kind in
+                            // `current` also splits them. Resolved (and,
+                            // on a genuine miss, uploaded) HERE, at
+                            // replay time.
                             let sr = effective_ref(batch.stencil_ref);
                             let Some(slot) = self.image_cache.get_or_upload(&self.device, &self.queue, id) else {
                                 // Honest miss (unregistered id) or
                                 // within-frame cache oversubscription
-                                // (never-evict-this-frame exhausted) —
-                                // this cache emits no metrics of its own
-                                // (same convention as the atlas/LUT);
-                                // THIS is the one call site that can
-                                // observe a replay-time miss (an
-                                // encode-time `image_id_unknown` miss
-                                // never reaches here at all — no
-                                // `BatchKind::Image` batch was ever
-                                // emitted for it), so it's counted here.
+                                // (never-evict-this-frame exhausted).
+                                // An encode-time `image_id_unknown` miss
+                                // never reaches here — no batch was emitted.
                                 metrics::counter!(
                                     uzor_urx_core::metrics_keys::KEY_RENDER_PRIMITIVES,
                                     "kind" => "native_image_cache_full_this_frame"
@@ -1105,11 +1101,20 @@ impl NativeUrxRenderer {
                                 current = None;
                                 continue;
                             };
+                            let tri = matches!(batch.kind, BatchKind::ImageTri(_));
                             if current != Some((batch.kind, sr)) {
-                                self.image.bind(&mut pass, sr, NativeImageCache::bind_group_of(slot));
+                                if tri {
+                                    self.image_tri.bind(&mut pass, sr, NativeImageCache::bind_group_of(slot));
+                                } else {
+                                    self.image.bind(&mut pass, sr, NativeImageCache::bind_group_of(slot));
+                                }
                                 current = Some((batch.kind, sr));
                             }
-                            self.image.draw_range(&mut pass, batch.start, batch.count);
+                            if tri {
+                                self.image_tri.draw_range(&mut pass, batch.start, batch.count);
+                            } else {
+                                self.image.draw_range(&mut pass, batch.start, batch.count);
+                            }
                         }
                     }
                 }

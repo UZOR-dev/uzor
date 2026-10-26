@@ -19,6 +19,7 @@ pub(crate) mod blend_composite;
 pub(crate) mod glyph;
 pub(crate) mod gradient;
 pub(crate) mod image;
+pub(crate) mod image_tri;
 pub(crate) mod line;
 pub(crate) mod path;
 pub(crate) mod quad;

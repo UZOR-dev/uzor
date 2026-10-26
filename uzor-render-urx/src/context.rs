@@ -10,7 +10,9 @@
 //! style + current transform. Backend reads the `Scene` once and
 //! rasterises in painter's order — no statefulness leaks across `Scene`.
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
 
 use kurbo::{
@@ -22,14 +24,14 @@ use peniko::{
 };
 
 use uzor_urx_core::scene::{
-    Dash as UrxDash, DrawCommand, FillRule, FontId, Glyph, LineCap as UrxLineCap,
+    Dash as UrxDash, DrawCommand, FillRule, FontId, Glyph, ImageId, LineCap as UrxLineCap,
     LineBatchSegment, LineJoin as UrxLineJoin, Scene, Stroke as UrxStroke,
 };
 
 use uzor::fonts::{self, FontFamily};
 use uzor::render::{
     BatchPainter, BlendMode as UzorBlendMode, CircleBatch, Effects, GlyphMetric, GradientPainter,
-    LineSegment, Masking, Painter, RenderContext as UzorRenderContext, RenderContextExt,
+    ImagePainter, LineSegment, Masking, Painter, RenderContext as UzorRenderContext, RenderContextExt,
     ShapeHelpers, TextAlign, TextBaseline, TextBounds, TextMetrics, TextRenderer,
     UiEffectHelpers,
 };
@@ -108,6 +110,53 @@ enum PathHint {
     Generic,
 }
 
+/// Parallel to each `clip()` / `clip_rect()` push. A 3-point path is a
+/// real triangle; everything else stays an AABB clip.
+#[derive(Clone, Copy)]
+enum ClipRec {
+    Triangle { transform: KAffine, p: [KPoint; 3] },
+    Other,
+}
+
+const IMAGE_INTERN_CAP: usize = 1024;
+
+fn path_triangle(path: &BezPath) -> Option<[KPoint; 3]> {
+    let els = path.elements();
+    if els.len() != 4 {
+        return None;
+    }
+    match (&els[0], &els[1], &els[2], &els[3]) {
+        (
+            kurbo::PathEl::MoveTo(a),
+            kurbo::PathEl::LineTo(b),
+            kurbo::PathEl::LineTo(c),
+            kurbo::PathEl::ClosePath,
+        ) => Some([*a, *b, *c]),
+        _ => None,
+    }
+}
+
+fn hash_straight(data: &[u8], w: u32, h: u32) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    data.hash(&mut hasher);
+    w.hash(&mut hasher);
+    h.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn stored_matches_straight(stored: &[u8], straight: &[u8]) -> bool {
+    if stored.len() != straight.len() {
+        return false;
+    }
+    straight.chunks_exact(4).zip(stored.chunks_exact(4)).all(|(s, p)| {
+        let a = u32::from(s[3]);
+        let r = ((u32::from(s[0]) * a + 127) / 255) as u8;
+        let g = ((u32::from(s[1]) * a + 127) / 255) as u8;
+        let b = ((u32::from(s[2]) * a + 127) / 255) as u8;
+        p[0] == r && p[1] == g && p[2] == b && p[3] == s[3]
+    })
+}
+
 // ── UrxRenderContext ────────────────────────────────────────────────────────
 
 /// `uzor::RenderContext` impl that buffers draw events into an
@@ -162,6 +211,16 @@ pub struct UrxRenderContext {
     /// Clip stack depth at each save level — `clip()` increments the top,
     /// `restore()` pops matching `PopClip` ops to balance.
     clip_pushes: u32,
+    /// One entry per clip pushed since the frame started. `restore`
+    /// pops `clip_pushes` of these, matching the `PopClip`s it emits.
+    clip_stack: Vec<ClipRec>,
+
+    /// `(ptr, len)` of RGBA slices drawn this frame. Cleared in
+    /// `begin_frame` — a freed `Vec` can reuse an address next frame.
+    frame_ptrs: HashMap<(usize, usize), ImageId>,
+    /// Straight-byte hash → id, kept across frames. Capped at
+    /// [`IMAGE_INTERN_CAP`].
+    by_hash: HashMap<u64, ImageId>,
 
     state_stack: Vec<SavedState>,
 }
@@ -190,6 +249,9 @@ impl UrxRenderContext {
             path_hint:     PathHint::Empty,
             shadow:        None,
             clip_pushes:   0,
+            clip_stack:    Vec::new(),
+            frame_ptrs:    HashMap::new(),
+            by_hash:       HashMap::new(),
             state_stack:   Vec::new(),
         }
     }
@@ -227,6 +289,8 @@ impl UrxRenderContext {
         self.path_hint = PathHint::Empty;
         self.shadow = None;
         self.clip_pushes = 0;
+        self.clip_stack.clear();
+        self.frame_ptrs.clear();
         self.state_stack.clear();
     }
 
@@ -251,6 +315,95 @@ impl UrxRenderContext {
     pub fn revision(&self) -> u64 { self.revision }
 
     pub fn size(&self) -> (u32, u32) { (self.width, self.height) }
+
+    fn intern_rgba(&mut self, data: &[u8], w: u32, h: u32) -> Option<ImageId> {
+        if w == 0 || h == 0 || data.len() != (w as usize) * (h as usize) * 4 {
+            return None;
+        }
+        let key = (data.as_ptr() as usize, data.len());
+        if let Some(id) = self.frame_ptrs.get(&key).copied() {
+            return Some(id);
+        }
+        let hash = hash_straight(data, w, h);
+        if let Some(id) = self.by_hash.get(&hash).copied() {
+            if let Some(existing) = uzor_urx_image::lookup_image(id) {
+                if existing.width == w
+                    && existing.height == h
+                    && stored_matches_straight(&existing.bytes, data)
+                {
+                    self.frame_ptrs.insert(key, id);
+                    return Some(id);
+                }
+            }
+        }
+        let grows = !self.by_hash.contains_key(&hash);
+        if grows && self.by_hash.len() >= IMAGE_INTERN_CAP {
+            // Drop the index only. Ids already in this scene stay registered.
+            self.by_hash.clear();
+            self.frame_ptrs.clear();
+        }
+        let image = uzor_urx_image::ImageData::from_raw_straight(w, h, data.to_vec()).ok()?;
+        let id = uzor_urx_image::register_image(image);
+        self.by_hash.insert(hash, id);
+        self.frame_ptrs.insert(key, id);
+        Some(id)
+    }
+
+    fn emit_rgba_image(&mut self, id: ImageId, x: f64, y: f64, width: f64, height: f64) {
+        let alpha = self.global_alpha as f32;
+        if let Some(cmd) = self.image_tri_command(id, x, y, width, height, alpha) {
+            self.scene.push(cmd);
+            return;
+        }
+        self.scene.push(DrawCommand::Image {
+            src: id,
+            src_rect: None,
+            dest: KRect::new(x, y, x + width, y + height),
+            transform: self.transform,
+            alpha,
+        });
+    }
+
+    /// Top clip is a triangle: one `ImageTri` in screen space. `None`
+    /// means fall through to the quad (not a triangle, singular
+    /// transform, or a zero dest).
+    fn image_tri_command(
+        &self,
+        id: ImageId,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        alpha: f32,
+    ) -> Option<DrawCommand> {
+        let ClipRec::Triangle { transform, p } = *self.clip_stack.last()? else {
+            return None;
+        };
+        if width.abs() < 1.0e-9 || height.abs() < 1.0e-9 {
+            return None;
+        }
+        let inv = self.transform.inverse();
+        if !inv.is_finite() {
+            return None;
+        }
+        let mut screen = [KPoint::ZERO; 3];
+        let mut uv = [(0.0_f64, 0.0_f64); 3];
+        for i in 0..3 {
+            let sp = transform * p[i];
+            let local = inv * sp;
+            if !sp.x.is_finite() || !sp.y.is_finite() || !local.x.is_finite() || !local.y.is_finite() {
+                return None;
+            }
+            let u = (local.x - x) / width;
+            let v = (local.y - y) / height;
+            if !u.is_finite() || !v.is_finite() {
+                return None;
+            }
+            screen[i] = sp;
+            uv[i] = (u, v);
+        }
+        Some(DrawCommand::ImageTri { src: id, p: screen, uv, alpha })
+    }
 
     // ── Internal helpers ───────────────────────────────────────────────────
 
@@ -415,6 +568,7 @@ impl Painter for UrxRenderContext {
         // Pop any clips pushed since the last save.
         for _ in 0..self.clip_pushes {
             self.scene.push(DrawCommand::PopClip);
+            self.clip_stack.pop();
         }
         if let Some(s) = self.state_stack.pop() {
             self.transform     = s.transform;
@@ -448,6 +602,12 @@ impl Painter for UrxRenderContext {
     }
     fn scale(&mut self, x: f64, y: f64) {
         self.transform = self.transform.pre_scale_non_uniform(x, y);
+    }
+    fn transform(&mut self, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) {
+        // Local frame, same order as translate/rotate/scale (`self * op`).
+        // The default Painter::transform drops shear; a camel shadow is
+        // `transform(1, 0, skew, -down, 0, 0)` and must survive intact.
+        self.transform = self.transform * KAffine::new([a, b, c, d, e, f]);
     }
 
     fn set_fill_color(&mut self, color: &str) { self.fill_color = parse_color(color); }
@@ -656,6 +816,12 @@ impl Masking for UrxRenderContext {
             rect:      bbox,
             transform: self.transform,
         });
+        let rec = if let Some(p) = path_triangle(&self.path) {
+            ClipRec::Triangle { transform: self.transform, p }
+        } else {
+            ClipRec::Other
+        };
+        self.clip_stack.push(rec);
         self.clip_pushes = self.clip_pushes.saturating_add(1);
     }
 
@@ -664,6 +830,7 @@ impl Masking for UrxRenderContext {
             rect:      KRect::new(x, y, x + width, y + height),
             transform: self.transform,
         });
+        self.clip_stack.push(ClipRec::Other);
         self.clip_pushes = self.clip_pushes.saturating_add(1);
     }
 }
@@ -1074,8 +1241,81 @@ impl UiEffectHelpers for UrxRenderContext {}
 
 // ── RenderContext supertrait ───────────────────────────────────────────────
 
+impl ImagePainter for UrxRenderContext {
+    fn draw_image(
+        &mut self,
+        _image_id: &str,
+        _x: f64,
+        _y: f64,
+        _width: f64,
+        _height: f64,
+    ) -> bool {
+        false
+    }
+
+    fn draw_image_rgba(
+        &mut self,
+        data: &[u8],
+        img_width: u32,
+        img_height: u32,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    ) {
+        let Some(id) = self.intern_rgba(data, img_width, img_height) else {
+            return;
+        };
+        self.emit_rgba_image(id, x, y, width, height);
+    }
+
+    fn draw_image_rgba_src(
+        &mut self,
+        data: &[u8],
+        img_width: u32,
+        img_height: u32,
+        sx: f64,
+        sy: f64,
+        sw: f64,
+        sh: f64,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    ) -> bool {
+        // Skin triangles are a full-image draw under a 3-point clip.
+        // A crop that does land inside one stays on extract + ImageTri.
+        if matches!(self.clip_stack.last(), Some(ClipRec::Triangle { .. })) {
+            return false;
+        }
+        if !(sx.is_finite() && sy.is_finite() && sw.is_finite() && sh.is_finite()
+            && x.is_finite() && y.is_finite() && width.is_finite() && height.is_finite())
+        {
+            return false;
+        }
+        if sw <= 0.0 || sh <= 0.0 || width <= 0.0 || height <= 0.0 {
+            return false;
+        }
+        let Some(id) = self.intern_rgba(data, img_width, img_height) else {
+            return false;
+        };
+        self.scene.push(DrawCommand::Image {
+            src: id,
+            src_rect: Some(KRect::new(sx, sy, sx + sw, sy + sh)),
+            dest: KRect::new(x, y, x + width, y + height),
+            transform: self.transform,
+            alpha: self.global_alpha as f32,
+        });
+        true
+    }
+}
+
 impl UzorRenderContext for UrxRenderContext {
     fn dpr(&self) -> f64 { self.dpr }
+
+    fn image_painter(&mut self) -> Option<&mut dyn ImagePainter> {
+        Some(self)
+    }
 }
 
 impl RenderContextExt for UrxRenderContext {
@@ -1709,5 +1949,140 @@ mod tests {
 
         let p = ctx.transform * KPoint::new(5.0, 5.0);
         assert!((p.x - 20.0).abs() < 1e-9 && (p.y - 35.0).abs() < 1e-9, "got {p:?}");
+    }
+
+    #[test]
+    fn draw_image_rgba_same_slice_reuses_image_id() {
+        let mut ctx = UrxRenderContext::new(1.0);
+        ctx.begin_frame(16, 16);
+        let px = [255u8, 0, 0, 255];
+        ImagePainter::draw_image_rgba(&mut ctx, &px, 1, 1, 2.0, 3.0, 4.0, 5.0);
+        ImagePainter::draw_image_rgba(&mut ctx, &px, 1, 1, 8.0, 9.0, 4.0, 5.0);
+        assert_eq!(ctx.scene().commands.len(), 2);
+        let (id_a, id_b) = match (&ctx.scene().commands[0], &ctx.scene().commands[1]) {
+            (
+                DrawCommand::Image { src: a, src_rect: None, dest: d0, transform: t0, alpha: al0 },
+                DrawCommand::Image { src: b, src_rect: None, dest: d1, transform: t1, alpha: al1 },
+            ) => {
+                assert_eq!(*t0, KAffine::IDENTITY);
+                assert_eq!(*t1, KAffine::IDENTITY);
+                assert_eq!(*al0, 1.0);
+                assert_eq!(*al1, 1.0);
+                assert_eq!(*d0, KRect::new(2.0, 3.0, 6.0, 8.0));
+                assert_eq!(*d1, KRect::new(8.0, 9.0, 12.0, 14.0));
+                (*a, *b)
+            }
+            other => panic!("expected two Image commands, got {other:?}"),
+        };
+        assert_eq!(id_a, id_b, "the same slice in one frame must not register a second id");
+        uzor_urx_image::unregister_image(id_a);
+    }
+
+    #[test]
+    fn draw_image_rgba_triangle_clip_emits_one_image_tri() {
+        let mut ctx = UrxRenderContext::new(1.0);
+        ctx.begin_frame(64, 64);
+        Painter::begin_path(&mut ctx);
+        Painter::move_to(&mut ctx, 0.0, 0.0);
+        Painter::line_to(&mut ctx, 10.0, 0.0);
+        Painter::line_to(&mut ctx, 0.0, 10.0);
+        Painter::close_path(&mut ctx);
+        Masking::clip(&mut ctx);
+        Painter::scale(&mut ctx, -1.0, 1.0);
+        let px = [0u8, 255, 0, 255];
+        ImagePainter::draw_image_rgba(&mut ctx, &px, 1, 1, 0.0, 0.0, 10.0, 10.0);
+        let images = ctx.scene().commands.iter().filter(|c| matches!(c, DrawCommand::Image { .. })).count();
+        let tris: Vec<_> = ctx.scene().commands.iter().filter_map(|c| match c {
+            DrawCommand::ImageTri { src, uv, .. } => Some((*src, *uv)),
+            _ => None,
+        }).collect();
+        assert_eq!(images, 0);
+        assert_eq!(tris.len(), 1);
+        // scale(-1, 1), image 1×1 drawn at (0,0) size 10×10, clip
+        // (0,0)-(10,0)-(0,10). Negative U is the reflection. Do not clamp.
+        let expect = [(0.0, 0.0), (-1.0, 0.0), (0.0, 1.0)];
+        for i in 0..3 {
+            let (u, v) = tris[0].1[i];
+            assert!((u - expect[i].0).abs() < 1e-9, "u{i} got {u}");
+            assert!((v - expect[i].1).abs() < 1e-9, "v{i} got {v}");
+        }
+        uzor_urx_image::unregister_image(tris[0].0);
+    }
+
+    fn assert_uvs(uv: [(f64, f64); 3], expect: [(f64, f64); 3]) {
+        for i in 0..3 {
+            assert!(
+                (uv[i].0 - expect[i].0).abs() < 1e-9 && (uv[i].1 - expect[i].1).abs() < 1e-9,
+                "uv{i} got {:?} want {:?}",
+                uv[i],
+                expect[i]
+            );
+        }
+    }
+
+    #[test]
+    fn draw_image_rgba_triangle_clip_parent_scale_cancels() {
+        let mut ctx = UrxRenderContext::new(1.0);
+        ctx.begin_frame(400, 400);
+        Painter::translate(&mut ctx, 100.0, 50.0);
+        Painter::scale(&mut ctx, 2.0, 2.0);
+        Painter::begin_path(&mut ctx);
+        Painter::move_to(&mut ctx, 10.0, 20.0);
+        Painter::line_to(&mut ctx, 30.0, 20.0);
+        Painter::line_to(&mut ctx, 10.0, 40.0);
+        Painter::close_path(&mut ctx);
+        Masking::clip(&mut ctx);
+        let px = vec![0u8; 100 * 100 * 4];
+        ImagePainter::draw_image_rgba(&mut ctx, &px, 100, 100, 0.0, 0.0, 100.0, 100.0);
+        let tris: Vec<_> = ctx.scene().commands.iter().filter_map(|c| match c {
+            DrawCommand::ImageTri { src, uv, .. } => Some((*src, *uv)),
+            _ => None,
+        }).collect();
+        assert_eq!(tris.len(), 1);
+        assert_uvs(tris[0].1, [(0.1, 0.2), (0.3, 0.2), (0.1, 0.4)]);
+        uzor_urx_image::unregister_image(tris[0].0);
+    }
+
+    #[test]
+    fn draw_image_rgba_src_one_id_two_crops() {
+        let mut ctx = UrxRenderContext::new(1.0);
+        ctx.begin_frame(32, 32);
+        let px = [
+            255u8, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ];
+        assert!(ImagePainter::draw_image_rgba_src(
+            &mut ctx, &px, 2, 2, 0.0, 0.0, 2.0, 1.0, 1.0, 2.0, 3.0, 4.0
+        ));
+        assert!(ImagePainter::draw_image_rgba_src(
+            &mut ctx, &px, 2, 2, 0.0, 1.0, 2.0, 1.0, 5.0, 6.0, 7.0, 8.0
+        ));
+        let images: Vec<_> = ctx.scene().commands.iter().filter_map(|c| match c {
+            DrawCommand::Image { src, src_rect, dest, .. } => Some((*src, *src_rect, *dest)),
+            _ => None,
+        }).collect();
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].0, images[1].0);
+        assert_eq!(images[0].1, Some(KRect::new(0.0, 0.0, 2.0, 1.0)));
+        assert_eq!(images[1].1, Some(KRect::new(0.0, 1.0, 2.0, 2.0)));
+        assert_eq!(images[0].2, KRect::new(1.0, 2.0, 4.0, 6.0));
+        assert_eq!(images[1].2, KRect::new(5.0, 6.0, 12.0, 14.0));
+        uzor_urx_image::unregister_image(images[0].0);
+    }
+
+    #[test]
+    fn draw_image_rgba_src_refuses_triangle_clip() {
+        let mut ctx = UrxRenderContext::new(1.0);
+        ctx.begin_frame(32, 32);
+        Painter::begin_path(&mut ctx);
+        Painter::move_to(&mut ctx, 0.0, 0.0);
+        Painter::line_to(&mut ctx, 4.0, 0.0);
+        Painter::line_to(&mut ctx, 0.0, 4.0);
+        Painter::close_path(&mut ctx);
+        Masking::clip(&mut ctx);
+        let px = [255u8, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255];
+        assert!(!ImagePainter::draw_image_rgba_src(
+            &mut ctx, &px, 2, 2, 0.0, 0.0, 2.0, 1.0, 0.0, 0.0, 2.0, 1.0
+        ));
+        assert!(ctx.scene().commands.iter().all(|c| !matches!(c, DrawCommand::Image { .. } | DrawCommand::ImageTri { .. })));
     }
 }

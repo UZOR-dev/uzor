@@ -198,7 +198,8 @@ use crate::gradient_lut::GradientLutAtlas;
 use crate::pipelines::blend_composite::BlendCompositeInstance;
 use crate::pipelines::glyph::GlyphInstance;
 use crate::pipelines::gradient::GradientInstance;
-use crate::pipelines::image::ImageInstance;
+use crate::pipelines::image::{pack_white_alpha, ImageInstance};
+use crate::pipelines::image_tri::ImageTriInstance;
 use crate::pipelines::line::LineInstance;
 use crate::pipelines::path::{
     GeometryCapacityError, TriInstance, MAX_GEOMETRY_BUFFER_BYTES,
@@ -247,6 +248,9 @@ pub(crate) enum BatchKind {
     /// one binds a DIFFERENT layer's own resolve texture") for the
     /// cross-image case, while still batching same-image runs for free.
     Image(ImageId),
+    /// `DrawCommand::ImageTri`. Same coalescing rule as `Image`:
+    /// consecutive tris of the same `ImageId` share one batch.
+    ImageTri(ImageId),
 }
 
 /// A contiguous run of same-kind, same-`stencil_ref` instances in
@@ -337,6 +341,8 @@ pub(crate) struct EncodedFrame {
     /// `DrawCommand::Image` quads (Wave 4 Commit 3, design §4.3) —
     /// `BatchKind::Image(id)` batches index into this one.
     pub(crate) images: Vec<ImageInstance>,
+    /// `BatchKind::ImageTri(id)` batches index into this one.
+    pub(crate) image_tris: Vec<ImageTriInstance>,
     /// One entry per `FrameOp::PopLayer`, in the SAME order — the
     /// renderer's executor reads these via a running counter as it
     /// processes `PopLayer` ops (design §3.6), the same "upload once,
@@ -488,6 +494,7 @@ impl EncodedFrame {
         self.stencil_masks.clear();
         self.gradients.clear();
         self.images.clear();
+        self.image_tris.clear();
         self.composites.clear();
         self.ops.clear();
         self.has_rounded_clip = false;
@@ -564,6 +571,13 @@ impl EncodedFrame {
         self.images.push(instance);
         let stencil_ref = self.current_stencil_ref;
         self.bump_batch(BatchKind::Image(id), start, stencil_ref);
+    }
+
+    fn push_image_tri(&mut self, instance: ImageTriInstance, id: ImageId) {
+        let start = self.image_tris.len() as u32;
+        self.image_tris.push(instance);
+        let stencil_ref = self.current_stencil_ref;
+        self.bump_batch(BatchKind::ImageTri(id), start, stencil_ref);
     }
 
     /// Extend the current batch if BOTH `kind` and `stencil_ref` match,
@@ -1075,11 +1089,8 @@ fn affine_rotation_angle(t: &Affine) -> f64 {
 
 /// Unconditional `(sx, sy, angle, tx, ty)` via hypot/atan2 — no
 /// shear/reflection validity check. `decompose_similarity` (below)
-/// wraps this with a validity gate for the "is this a CLEAN rotation +
-/// scale, no shear" question; `encode_image`'s "shear degrades to a
-/// rotation-ONLY approximation" fallback (design §4.3) calls this
-/// directly instead, since it explicitly WANTS the (honestly counted)
-/// approximation even when the gate below would reject the transform.
+/// wraps this with a validity gate. Rect SDF routing still uses the
+/// gated form. Images do not: a quad carries four fully transformed corners.
 fn decompose_similarity_raw(t: &Affine) -> (f64, f64, f64, f64, f64) {
     let c = t.as_coeffs();
     let (a, b, cc, d, e, f) = (c[0], c[1], c[2], c[3], c[4], c[5]);
@@ -1443,9 +1454,13 @@ pub(crate) fn encode_scene_reusing(
                     text_gamma_enabled,
                 );
             }
-            DrawCommand::Image { src, src_rect, dest, transform } => {
+            DrawCommand::Image { src, src_rect, dest, transform, alpha } => {
                 let Some(clip_rect) = active_clip(&clip, &mut frame) else { continue };
-                encode_image(&mut frame, *src, *src_rect, *dest, transform, clip_rect);
+                encode_image(&mut frame, *src, *src_rect, *dest, transform, *alpha, clip_rect);
+            }
+            DrawCommand::ImageTri { src, p, uv, alpha } => {
+                let Some(clip_rect) = active_clip(&clip, &mut frame) else { continue };
+                encode_image_tri(&mut frame, *src, *p, *uv, *alpha, clip_rect);
             }
             DrawCommand::PushBlendLayer { mode, alpha, transform } => {
                 // `Affine` derives `PartialEq` in the pinned kurbo 0.13
@@ -2467,48 +2482,20 @@ fn encode_glyph_run(
     metrics::counter!(KEY_RENDER_GLYPH_INSTANCES).increment(glyphs.len() as u64);
 }
 
-/// `DrawCommand::Image` → `ImageInstance` (design §4.3). Resolves the
-/// registered image via the SHARED `uzor_urx_image` registry (no
-/// per-backend fork of `ImageId` allocation, design §0.4) — an
-/// unregistered (or since-unregistered) id is a clean, honest miss,
-/// mirroring `uzor-urx-cpu::image_draw`'s own policy: no `ImageInstance`
-/// is ever emitted for it, and the SAME UNPREFIXED `image_id_unknown`
-/// counter CPU already uses fires here too (design §4.4's naming-
-/// consistency recommendation, same precedent as
-/// `gradient_radial_focal_degraded`).
+/// `DrawCommand::Image` → `ImageInstance`. An unregistered id emits
+/// nothing and counts `image_id_unknown` (same counter as CPU).
 ///
-/// ## Placement math — why `pos`/`size` are NOT simply "scale each
-/// corner, drop rotation"
-///
-/// A naive port of `transform_rect`'s recipe (scale+translate each
-/// CORNER independently, attach `rotation` as an afterthought) is
-/// subtly WRONG for a non-trivial `dest` under a genuine rotation: it
-/// places the quad's CENTER at `S*dest_center + t` (scale+translate
-/// only) rather than at the TRUE, fully-transformed center
-/// `R*S*dest_center + t` — these differ by `(I - R) * S * dest_center`,
-/// zero only when there's no rotation or `dest` is centered at the
-/// local origin. The CORRECT construction (verified by direct
-/// substitution against the full affine `T(p) = R*S*p + t`):
-/// 1. `size = [dest.width()*sx, dest.height()*sy]` — scale-magnitude
-///    only, no rotation (matches `ImageInstance.size`'s own "pre-
-///    rotation local extents" contract).
-/// 2. `center = transform_point_full(transform, dest's own center)` —
-///    the TRUE center, via the FULL affine (this is where the
-///    rotation's effect on the CENTER'S POSITION is captured exactly).
-/// 3. `pos = center - size * 0.5`.
-/// 4. The shader then rotates `size`-scaled LOCAL offsets around
-///    `center` (this module's `IMAGE_SHADER_NATIVE`, same technique as
-///    Quad SDF's own extension, §5.3) — captures the rotation's effect
-///    on the shape's OWN extent exactly.
-/// Substituting confirms `pos + rotate(uv_local*size - size*0.5) ==
-/// R*S*corner + t` for every corner — an EXACT match to the full
-/// affine, not an approximation, for the genuine-similarity case.
+/// The four dest corners are transformed by the full affine. UV stays
+/// the normalized `src_rect`. Shear and reflection are exact — this
+/// path does not call `decompose_similarity` and does not count
+/// `native_image_shear_to_rotation_approx`.
 fn encode_image(
     frame: &mut EncodedFrame,
     src: ImageId,
     src_rect: Option<Rect>,
     dest: Rect,
     transform: &Affine,
+    alpha: f32,
     clip_rect: [f32; 4],
 ) {
     let Some(data) = uzor_urx_image::lookup_image(src) else {
@@ -2525,43 +2512,60 @@ fn encode_image(
     let uv_pos = [(src_box.x0 / img_w) as f32, (src_box.y0 / img_h) as f32];
     let uv_size = [(src_box.width() / img_w) as f32, (src_box.height() / img_h) as f32];
 
-    // Similarity-vs-shear routing (design §4.3/§5.2) — introduced here
-    // for Image's exclusive use this commit; `decompose_similarity`
-    // itself is pure geometry with no Image-specific assumption baked
-    // in, so Commit 4 can wire FillRect/StrokeRect's OWN routing
-    // through this SAME function rather than a duplicate.
-    let (sx, sy, angle) = match decompose_similarity(transform) {
-        Some((sx, sy, angle, _, _)) => (sx, sy, angle),
-        None => {
-            // Shear or reflection — approximate as rotation-only,
-            // dropping the shear component (design §4.3), rather than
-            // building a whole parallel textured-triangle pipeline for
-            // a shape with zero current producers (§0.4's grep).
-            degrade("native_image_shear_to_rotation_approx");
-            let (sx, sy, angle, _, _) = decompose_similarity_raw(transform);
-            (sx, sy, angle)
-        }
-    };
-
-    let w = dest.width() * sx;
-    let h = dest.height() * sy;
-    if w <= 0.0 || h <= 0.0 {
-        return;
-    }
-    let dest_center = Point::new(dest.x0 + dest.width() * 0.5, dest.y0 + dest.height() * 0.5);
-    let center = transform_point_full(transform, dest_center);
-    let pos = [(center.x - w * 0.5) as f32, (center.y - h * 0.5) as f32];
+    let p00 = *transform * Point::new(dest.x0, dest.y0);
+    let p10 = *transform * Point::new(dest.x1, dest.y0);
+    let p01 = *transform * Point::new(dest.x0, dest.y1);
+    let p11 = *transform * Point::new(dest.x1, dest.y1);
+    let corner = |p: Point| [p.x as f32, p.y as f32];
 
     frame.push_image(
         ImageInstance {
-            pos,
-            size: [w as f32, h as f32],
+            c0: corner(p00),
+            c1: corner(p10),
+            c2: corner(p01),
+            c3: corner(p11),
             uv_pos,
             uv_size,
-            rotation: angle as f32,
-            // Opaque white, straight — a no-op multiply (design §4.3:
-            // "reserved... no producer sets a tint yet").
-            tint: 0xFFFF_FFFF,
+            tint: pack_white_alpha(alpha),
+            _pad: 0,
+            clip_rect,
+        },
+        src,
+    );
+}
+
+/// `DrawCommand::ImageTri` → one `ImageTriInstance`. Misses count
+/// `image_id_unknown` and emit nothing, same as quads. No shear degrade.
+fn encode_image_tri(
+    frame: &mut EncodedFrame,
+    src: ImageId,
+    p: [Point; 3],
+    uv: [(f64, f64); 3],
+    alpha: f32,
+    clip_rect: [f32; 4],
+) {
+    if uzor_urx_image::lookup_image(src).is_none() {
+        degrade("image_id_unknown");
+        return;
+    }
+    let _stack_clip = clip_rect;
+    // The stack clip is the path AABB from transform_rect, which keeps
+    // only scale and translation. A rotated neck triangle is then
+    // discarded down to a sliver. The triangle edges are the mask.
+    // The viewport still clips. f32::MAX would overflow cr.x + cr.z.
+    let clip_rect = [-1.0e6_f32, -1.0e6, 2.0e6, 2.0e6];
+    let corner = |q: Point| [q.x as f32, q.y as f32];
+    let uv_of = |(u, v): (f64, f64)| [u as f32, v as f32];
+    frame.push_image_tri(
+        ImageTriInstance {
+            p0: corner(p[0]),
+            p1: corner(p[1]),
+            p2: corner(p[2]),
+            uv0: uv_of(uv[0]),
+            uv1: uv_of(uv[1]),
+            uv2: uv_of(uv[2]),
+            tint: pack_white_alpha(alpha),
+            _pad: 0,
             clip_rect,
         },
         src,
@@ -3606,18 +3610,21 @@ mod tests {
             src_rect: None,
             dest: Rect::new(0.0, 0.0, 10.0, 10.0),
             transform: Affine::IDENTITY,
+            alpha: 1.0,
         });
         scene.push(DrawCommand::Image {
             src: id_a,
             src_rect: None,
             dest: Rect::new(10.0, 0.0, 20.0, 10.0),
             transform: Affine::IDENTITY,
+            alpha: 1.0,
         });
         scene.push(DrawCommand::Image {
             src: id_b,
             src_rect: None,
             dest: Rect::new(20.0, 0.0, 30.0, 10.0),
             transform: Affine::IDENTITY,
+            alpha: 1.0,
         });
 
         let frame = encode_scene(&scene, viewport(), &mut cache(), None, None, max_depth(), false);
@@ -4434,6 +4441,7 @@ mod tests {
                     src_rect: None,
                     dest: Rect::new(0.0, 0.0, 20.0, 20.0),
                     transform: Affine::IDENTITY,
+                    alpha: 1.0,
                 });
                 encode_scene(&scene, viewport(), &mut cache(), None, None, max_depth(), false)
             });
@@ -4442,30 +4450,52 @@ mod tests {
             assert_eq!(value, 1);
         }
 
-        /// A sheared `DrawCommand::Image` degrades to a rotation-only
-        /// approximation (design §4.3) — still emits an `ImageInstance`
-        /// (never silently dropped), and counts
-        /// `native_image_shear_to_rotation_approx`.
+        /// Shear `Affine::new([1, 0, 0.5, 1, 0, 0])` on dest (0,0)-(10,10)
+        /// must land the four corners exactly. The old rotation-only
+        /// degrade counter stays at 0.
         #[test]
-        fn sheared_image_degrades_to_rotation_only_and_still_renders() {
+        fn sheared_image_keeps_exact_affine_corners() {
             let id = register_test_image(2, 2, [10, 20, 30, 255]);
             let recorder = TestRecorder::default();
             let frame = metrics::with_local_recorder(&recorder, || {
                 let mut scene = Scene::new();
-                // Non-uniform off-diagonal terms — genuine shear, not a
-                // pure rotation+scale.
                 let shear = Affine::new([1.0, 0.0, 0.5, 1.0, 0.0, 0.0]);
                 scene.push(DrawCommand::Image {
                     src: id,
                     src_rect: None,
                     dest: Rect::new(0.0, 0.0, 10.0, 10.0),
                     transform: shear,
+                    alpha: 1.0,
                 });
                 encode_scene(&scene, viewport(), &mut cache(), None, None, max_depth(), false)
             });
-            assert_eq!(frame.images.len(), 1, "a sheared image must still render, approximated");
+            assert_eq!(frame.images.len(), 1, "a sheared image must still render");
+            let img = &frame.images[0];
+            assert_eq!(img.c0, [0.0, 0.0]);
+            assert_eq!(img.c1, [10.0, 0.0]);
+            assert_eq!(img.c2, [5.0, 10.0], "p01 (0,10) -> (5,10)");
+            assert_eq!(img.c3, [15.0, 10.0], "p11 (10,10) -> (15,10)");
             let value = recorder.value_for(KEY_RENDER_PRIMITIVES, "native_image_shear_to_rotation_approx");
-            assert_eq!(value, 1);
+            assert_eq!(value, 0);
+            uzor_urx_image::unregister_image(id);
+        }
+
+        /// Reflection `Affine::new([-1, 0, 0, 1, 0, 0])` on dest
+        /// (0,0)-(10,10) puts p10 at (-10, 0).
+        #[test]
+        fn reflection_image_places_p10_at_negative_x() {
+            let id = register_test_image(2, 2, [10, 20, 30, 255]);
+            let mut scene = Scene::new();
+            scene.push(DrawCommand::Image {
+                src: id,
+                src_rect: None,
+                dest: Rect::new(0.0, 0.0, 10.0, 10.0),
+                transform: Affine::new([-1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+                alpha: 1.0,
+            });
+            let frame = encode_scene(&scene, viewport(), &mut cache(), None, None, max_depth(), false);
+            assert_eq!(frame.images.len(), 1);
+            assert_eq!(frame.images[0].c1, [-10.0, 0.0], "p10 must land at (-10, 0)");
             uzor_urx_image::unregister_image(id);
         }
 

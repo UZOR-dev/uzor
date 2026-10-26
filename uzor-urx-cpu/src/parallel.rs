@@ -56,6 +56,7 @@ pub fn render_parallel(
             | DrawCommand::StrokePath { .. }
             | DrawCommand::GlyphRun { .. }
             | DrawCommand::Image { .. }
+            | DrawCommand::ImageTri { .. }
             | DrawCommand::PushBlendLayer { .. }
             | DrawCommand::PopBlendLayer => {
                 return Err(RenderError::ParallelUnsupported(i));
@@ -142,7 +143,7 @@ pub fn render_parallel(
                     // Consumers using paths heavily should stay on the
                     // sequential render() entry point.
                 }
-                DrawCommand::GlyphRun { .. } | DrawCommand::Image { .. } => {}
+                DrawCommand::GlyphRun { .. } | DrawCommand::Image { .. } | DrawCommand::ImageTri { .. } => {}
                 DrawCommand::PushClipRect { rect, transform } => {
                     clip.push_rect(*rect, transform);
                 }

@@ -194,8 +194,8 @@ pub fn adapt_scene_into(scene: &Scene, ctx: &mut InstancedRenderContext) {
                     }
                 }
             }
-            DrawCommand::Image { .. } => {
-                // Stage 1b — image atlas wire.
+            DrawCommand::Image { .. } | DrawCommand::ImageTri { .. } => {
+                // Legacy adapter has no image atlas. Native encode owns images.
                 metrics::counter!(
                     uzor_urx_core::metrics_keys::KEY_RENDER_PRIMITIVES,
                     "kind" => "wgpu_image_dropped",

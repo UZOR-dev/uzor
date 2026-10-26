@@ -33,6 +33,7 @@ fn image_blit_1to1_preserves_pixels() {
         src_rect: None,
         dest: Rect::new(10.0, 15.0, 30.0, 25.0), // 20×10 at (10,15)
         transform: Affine::IDENTITY,
+        alpha: 1.0,
     });
     s().render(&scene, &mut p).unwrap();
     // Left half = red. Centre of left half: (15, 20).
@@ -56,6 +57,7 @@ fn image_scale_2x_bilinear_smooths_seam() {
         src_rect: None,
         dest: Rect::new(5.0, 5.0, 37.0, 37.0), // 4×4 stretched to 32×32
         transform: Affine::IDENTITY,
+        alpha: 1.0,
     });
     s().render(&scene, &mut p).unwrap();
     // Around the seam (centre of dest = x=21), bilinear should produce
@@ -83,6 +85,7 @@ fn image_src_rect_crops_correctly() {
         src_rect: Some(Rect::new(10.0, 0.0, 20.0, 10.0)),
         dest:     Rect::new(2.0,  5.0, 12.0, 15.0),
         transform: Affine::IDENTITY,
+        alpha: 1.0,
     });
     s().render(&scene, &mut p).unwrap();
     let c = p.get_pixel(7, 10);
@@ -100,6 +103,7 @@ fn image_unknown_id_does_not_panic() {
         src_rect: None,
         dest: Rect::new(0.0, 0.0, 10.0, 10.0),
         transform: Affine::IDENTITY,
+        alpha: 1.0,
     });
     s().render(&scene, &mut p).unwrap();
     assert_eq!(p.get_pixel(5, 5), [0, 0, 0, 0]);
@@ -129,6 +133,7 @@ fn image_premul_alpha_blend_on_existing_pixels() {
         src_rect: None,
         dest: Rect::new(4.0, 4.0, 16.0, 16.0),
         transform: Affine::IDENTITY,
+        alpha: 1.0,
     });
     s().render(&scene, &mut p).unwrap();
     let c = p.get_pixel(10, 10);

@@ -941,15 +941,16 @@ var<uniform> uniforms: Uniforms;
 @group(1) @binding(1) var image_sampler: sampler;
 
 // Instance data — must match ImageInstance in pipelines/image.rs
-// (56 bytes).
+// (72 bytes). Corners are screen-space p00, p10, p01, p11.
 struct ImageInstance {
-    @location(0) pos:         vec2<f32>,
-    @location(1) size:        vec2<f32>,
-    @location(2) uv_pos:      vec2<f32>,
-    @location(3) uv_size:     vec2<f32>,
-    @location(4) rotation:    f32,
-    @location(5) tint_packed: u32,
-    @location(6) clip_rect:   vec4<f32>,
+    @location(0) c0:          vec2<f32>,
+    @location(1) c1:          vec2<f32>,
+    @location(2) c2:          vec2<f32>,
+    @location(3) c3:          vec2<f32>,
+    @location(4) uv_pos:      vec2<f32>,
+    @location(5) uv_size:     vec2<f32>,
+    @location(6) tint_packed: u32,
+    @location(7) clip_rect:   vec4<f32>,
 };
 
 struct VertexOut {
@@ -970,21 +971,17 @@ fn vs_main(
     @builtin(vertex_index) vertex_index: u32,
     instance: ImageInstance,
 ) -> VertexOut {
-    // Same rotation technique as Quad SDF's own extension (design
-    // §5.3, a DIFFERENT pipeline/instance type — see this file's
-    // module doc): rotate the LOCAL centered half-extent around the
-    // quad's own center, computed from `pos`/`size` BEFORE rotation is
-    // applied.
-    let center       = instance.pos + instance.size * 0.5;
-    let uv_local     = quad_vert_pos(vertex_index);
-    let local_offset = uv_local * instance.size - instance.size * 0.5;
-    let cs = cos(instance.rotation);
-    let sn = sin(instance.rotation);
-    let rotated = vec2<f32>(
-        local_offset.x * cs - local_offset.y * sn,
-        local_offset.x * sn + local_offset.y * cs,
-    );
-    let px = center + rotated;
+    // quad_vert_pos is (0,0),(1,0),(0,1),(1,0),(1,1),(0,1).
+    // (0,0)->c0, (1,0)->c1, (0,1)->c2, (1,1)->c3. Bilinear on those
+    // four corners is exact for any affine image of the dest rect,
+    // including shear and reflection.
+    let uv_local = quad_vert_pos(vertex_index);
+    let u = uv_local.x;
+    let v = uv_local.y;
+    let px = (1.0 - u) * (1.0 - v) * instance.c0
+           + u * (1.0 - v) * instance.c1
+           + (1.0 - u) * v * instance.c2
+           + u * v * instance.c3;
 
     let ndc = vec2<f32>(
         px.x / uniforms.screen_size.x *  2.0 - 1.0,
@@ -1014,6 +1011,82 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     // Already premultiplied (uzor_urx_image::ImageData's own storage
     // contract) — do NOT re-premultiply, see this file's module doc.
+    let texel = textureSample(image_tex, image_sampler, in.uv);
+    let out_rgba = texel * in.tint;
+    if out_rgba.a <= 0.0 { discard; }
+    return out_rgba;
+}
+"#;
+
+/// Textured triangle. Same premul tint and clip discard as
+/// `IMAGE_SHADER_NATIVE`. One instance, three vertices.
+pub const IMAGE_TRI_SHADER_NATIVE: &str = r#"
+struct Uniforms {
+    screen_size: vec2<f32>,
+};
+@group(0) @binding(0)
+var<uniform> uniforms: Uniforms;
+
+@group(1) @binding(0) var image_tex:     texture_2d<f32>;
+@group(1) @binding(1) var image_sampler: sampler;
+
+// Must match ImageTriInstance in pipelines/image_tri.rs (72 bytes).
+struct ImageTriInstance {
+    @location(0) p0:          vec2<f32>,
+    @location(1) p1:          vec2<f32>,
+    @location(2) p2:          vec2<f32>,
+    @location(3) uv0:         vec2<f32>,
+    @location(4) uv1:         vec2<f32>,
+    @location(5) uv2:         vec2<f32>,
+    @location(6) tint_packed: u32,
+    @location(7) clip_rect:   vec4<f32>,
+};
+
+struct VertexOut {
+    @builtin(position) clip_pos: vec4<f32>,
+    @location(0) uv:        vec2<f32>,
+    @location(1) tint:      vec4<f32>,
+    @location(2) clip_rect: vec4<f32>,
+};
+
+@vertex
+fn vs_main(
+    @builtin(vertex_index) vertex_index: u32,
+    instance: ImageTriInstance,
+) -> VertexOut {
+    // Direct field reads. An array built from instance attributes and
+    // then indexed by vertex_index is lowered wrong on DX12: every
+    // triangle collapses into a line of texels (the neck / shawl comb).
+    var px = instance.p2;
+    var uv = instance.uv2;
+    if vertex_index == 0u {
+        px = instance.p0;
+        uv = instance.uv0;
+    } else if vertex_index == 1u {
+        px = instance.p1;
+        uv = instance.uv1;
+    }
+    let ndc = vec2<f32>(
+        px.x / uniforms.screen_size.x *  2.0 - 1.0,
+        px.y / uniforms.screen_size.y * -2.0 + 1.0,
+    );
+    var out: VertexOut;
+    out.clip_pos  = vec4<f32>(ndc, 0.0, 1.0);
+    out.uv        = uv;
+    let tint_straight = unpack4x8unorm(instance.tint_packed);
+    out.tint      = vec4<f32>(tint_straight.rgb * tint_straight.a, tint_straight.a);
+    out.clip_rect = instance.clip_rect;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let px_abs = in.clip_pos.xy;
+    let cr = in.clip_rect;
+    if px_abs.x < cr.x || px_abs.y < cr.y
+       || px_abs.x > cr.x + cr.z || px_abs.y > cr.y + cr.w {
+        discard;
+    }
     let texel = textureSample(image_tex, image_sampler, in.uv);
     let out_rgba = texel * in.tint;
     if out_rgba.a <= 0.0 { discard; }
