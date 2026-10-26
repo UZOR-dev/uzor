@@ -3,7 +3,8 @@
 //! Wraps vello::Scene to implement the core RenderContext trait.
 //! This is the ONLY vello-specific code needed - everything else comes from core.
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
 
 use vello::kurbo::{self, Affine, BezPath, Cap, Join, Stroke, Shape};
@@ -1557,6 +1558,82 @@ impl<'a> BackdropBlur for VelloGpuRenderContext<'a> {
 // ImagePainter
 // ---------------------------------------------------------------------------
 
+struct InternedImage {
+    blob: Blob<u8>,
+    len: usize,
+}
+
+struct ImageIntern {
+    map: HashMap<u64, InternedImage>,
+    order: VecDeque<u64>,
+    total: usize,
+}
+
+const IMAGE_INTERN_CAP: usize = 64 << 20;
+
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    let mut h = 0xcbf29ce484222325u64;
+    let mut i = 0;
+    while i + 8 <= bytes.len() {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&bytes[i..i + 8]);
+        h ^= u64::from_le_bytes(buf);
+        h = h.wrapping_mul(0x100000001b3);
+        i += 8;
+    }
+    while i < bytes.len() {
+        h ^= bytes[i] as u64;
+        h = h.wrapping_mul(0x100000001b3);
+        i += 1;
+    }
+    h ^ (bytes.len() as u64).wrapping_mul(0x9e3779b97f4a7c15)
+}
+
+fn intern_image_blob(owned: Vec<u8>) -> Blob<u8> {
+    thread_local! {
+        static INTERN: RefCell<ImageIntern> = RefCell::new(ImageIntern {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            total: 0,
+        });
+    }
+    let key = hash_bytes(&owned);
+    INTERN.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        let cached = match cache.map.get(&key) {
+            Some(hit) if hit.blob.data() == owned.as_slice() => Some(hit.blob.clone()),
+            Some(_) => None,
+            None => None,
+        };
+        if cache.map.contains_key(&key) {
+            if let Some(blob) = cached {
+                if let Some(pos) = cache.order.iter().position(|k| *k == key) {
+                    cache.order.remove(pos);
+                }
+                cache.order.push_back(key);
+                return blob;
+            }
+            return Blob::new(Arc::new(owned));
+        }
+        let len = owned.len();
+        let blob = Blob::new(Arc::new(owned));
+        cache.total += len;
+        cache.map.insert(key, InternedImage { blob: blob.clone(), len });
+        cache.order.push_back(key);
+        while cache.total > IMAGE_INTERN_CAP && cache.order.len() > 1 {
+            let Some(old) = cache.order.pop_front() else { break };
+            if old == key {
+                cache.order.push_back(old);
+                break;
+            }
+            if let Some(removed) = cache.map.remove(&old) {
+                cache.total = cache.total.saturating_sub(removed.len);
+            }
+        }
+        blob
+    })
+}
+
 impl<'a> ImagePainter for VelloGpuRenderContext<'a> {
     fn draw_image(
         &mut self,
@@ -1582,7 +1659,10 @@ impl<'a> ImagePainter for VelloGpuRenderContext<'a> {
                 }
             }
         }
-        let blob = Blob::new(Arc::new(owned));
+        // Vello's atlas keys a resident image by Blob id. Blob::new mints a
+        // new id, so the same palm strip uploaded every frame stays resident
+        // until the 8192² atlas is full. Identical bytes keep one id.
+        let blob = intern_image_blob(owned);
         let image_data = vello::peniko::ImageData {
             data: blob,
             format: vello::peniko::ImageFormat::Rgba8,
