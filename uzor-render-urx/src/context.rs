@@ -107,18 +107,48 @@ struct ShadowState {
 enum PathHint {
     Empty,
     FullCircle { cx: f64, cy: f64, radius: f64 },
+    /// One full axis-aligned ellipse, and nothing else on the path.
+    /// `clip()` plus a covering `fillRect` is how the oasis eye slit is
+    /// drawn. The rect is larger than the slit; the clip is the slit.
+    FullEllipse { cx: f64, cy: f64, rx: f64, ry: f64 },
     Generic,
 }
 
 /// Parallel to each `clip()` / `clip_rect()` push. A 3-point path is a
-/// real triangle; everything else stays an AABB clip.
+/// real triangle. A lone full ellipse stays an ellipse. Everything else
+/// stays an AABB clip.
 #[derive(Clone, Copy)]
 enum ClipRec {
     Triangle { transform: KAffine, p: [KPoint; 3] },
+    Ellipse { transform: KAffine, cx: f64, cy: f64, rx: f64, ry: f64 },
     Other,
 }
 
 const IMAGE_INTERN_CAP: usize = 1024;
+
+fn ellipse_point(cx: f64, cy: f64, rx: f64, ry: f64, rot: f64, ang: f64) -> (f64, f64) {
+    let lx = rx * ang.cos();
+    let ly = ry * ang.sin();
+    let (s, c) = rot.sin_cos();
+    (cx + c * lx - s * ly, cy + s * lx + c * ly)
+}
+
+fn ellipse_path(cx: f64, cy: f64, rx: f64, ry: f64) -> BezPath {
+    let arc = kurbo::Arc::new(
+        KPoint::new(cx, cy),
+        Vec2::new(rx, ry),
+        0.0,
+        std::f64::consts::TAU,
+        0.0,
+    );
+    let mut path = BezPath::new();
+    path.move_to(KPoint::new(cx + rx, cy));
+    for el in arc.append_iter(0.1) {
+        path.push(el);
+    }
+    path.close_path();
+    path
+}
 
 fn path_triangle(path: &BezPath) -> Option<[KPoint; 3]> {
     let els = path.elements();
@@ -491,6 +521,14 @@ impl UrxRenderContext {
     /// directly (Canvas2D's `rect()` + `fill_linear_gradient()` idiom,
     /// see that method's own doc comment), not this rect-shorthand path.
     fn emit_fill_rect(&mut self, x: f64, y: f64, w: f64, h: f64, radii: Option<[f32; 4]>) {
+        // A fillRect that covers a lone ellipse clip is the ellipse.
+        // The oasis eye does save / ellipse / clip / fillRect / restore.
+        // An AABB clip paints the corners of that slit. A rect that does
+        // not cover the ellipse stays a rect under the AABB (a partial
+        // intersection is not "the ellipse").
+        if radii.is_none() && self.emit_covered_ellipse(x, y, w, h) {
+            return;
+        }
         let rect = KRect::new(x, y, x + w, y + h);
         if let Some(sh) = self.shadow.clone() {
             self.scene.push(DrawCommand::FillRect {
@@ -507,6 +545,36 @@ impl UrxRenderContext {
             brush,
             transform: self.transform,
         });
+    }
+
+    /// `true` when this rect was drawn as the ellipse it covers.
+    fn emit_covered_ellipse(&mut self, x: f64, y: f64, w: f64, h: f64) -> bool {
+        let Some(&ClipRec::Ellipse { transform, cx, cy, rx, ry }) = self.clip_stack.last() else {
+            return false;
+        };
+        if transform != self.transform {
+            return false;
+        }
+        const EPS: f64 = 1.0e-4;
+        if x > cx - rx + EPS || y > cy - ry + EPS || x + w < cx + rx - EPS || y + h < cy + ry - EPS {
+            return false;
+        }
+        let path = ellipse_path(cx, cy, rx, ry);
+        if let Some(sh) = self.shadow.clone() {
+            self.scene.push(DrawCommand::FillPath {
+                path: path.clone(),
+                rule: FillRule::NonZero,
+                brush: PenikoBrush::Solid(apply_alpha(sh.color, self.global_alpha)),
+                transform: self.transform.then_translate(Vec2::new(sh.dx, sh.dy)),
+            });
+        }
+        self.scene.push(DrawCommand::FillPath {
+            path,
+            rule: FillRule::NonZero,
+            brush: self.effective_fill_brush(),
+            transform: self.transform,
+        });
+        true
     }
 
     fn emit_stroke_rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
@@ -704,22 +772,35 @@ impl Painter for UrxRenderContext {
             PathHint::Generic
         };
     }
-    fn ellipse(&mut self, cx: f64, cy: f64, rx: f64, ry: f64, _rot: f64, start: f64, end: f64) {
-        self.path_hint = PathHint::Generic;
+    fn ellipse(&mut self, cx: f64, cy: f64, rx: f64, ry: f64, rot: f64, start: f64, end: f64) {
+        let path_was_empty = self.path.elements().is_empty();
+        let sweep = end - start;
         let arc = kurbo::Arc::new(
             KPoint::new(cx, cy),
             Vec2::new(rx, ry),
             start,
-            end - start,
-            0.0,
+            sweep,
+            rot,
         );
-        self.ensure_subpath_open(KPoint::new(
-            cx + rx * start.cos(),
-            cy + ry * start.sin(),
-        ));
+        let (sx, sy) = ellipse_point(cx, cy, rx, ry, rot, start);
+        self.ensure_subpath_open(KPoint::new(sx, sy));
         for el in arc.append_iter(0.1) {
             self.path.push(el);
         }
+        self.path_hint = if path_was_empty
+            && cx.is_finite()
+            && cy.is_finite()
+            && rx.is_finite()
+            && ry.is_finite()
+            && rx > 0.0
+            && ry > 0.0
+            && rot.abs() <= 1.0e-6
+            && (sweep.abs() - std::f64::consts::TAU).abs() <= 1.0e-6
+        {
+            PathHint::FullEllipse { cx, cy, rx, ry }
+        } else {
+            PathHint::Generic
+        };
     }
     fn quadratic_curve_to(&mut self, cpx: f64, cpy: f64, x: f64, y: f64) {
         self.path_hint = PathHint::Generic;
@@ -818,6 +899,8 @@ impl Masking for UrxRenderContext {
         });
         let rec = if let Some(p) = path_triangle(&self.path) {
             ClipRec::Triangle { transform: self.transform, p }
+        } else if let PathHint::FullEllipse { cx, cy, rx, ry } = self.path_hint {
+            ClipRec::Ellipse { transform: self.transform, cx, cy, rx, ry }
         } else {
             ClipRec::Other
         };
@@ -2084,5 +2167,64 @@ mod tests {
             &mut ctx, &px, 2, 2, 0.0, 0.0, 2.0, 1.0, 0.0, 0.0, 2.0, 1.0
         ));
         assert!(ctx.scene().commands.iter().all(|c| !matches!(c, DrawCommand::Image { .. } | DrawCommand::ImageTri { .. })));
+    }
+
+    /// Oasis eye: ellipse clip, then a fillRect larger than the slit.
+    /// The painted command is the ellipse, not the rectangle.
+    #[test]
+    fn ellipse_clip_covering_fill_rect_emits_ellipse() {
+        let mut ctx = UrxRenderContext::new(1.0);
+        ctx.begin_frame(200, 200);
+        Painter::begin_path(&mut ctx);
+        Painter::ellipse(&mut ctx, 50.0, 40.0, 5.0, 2.4, 0.0, 0.0, std::f64::consts::TAU);
+        Masking::clip(&mut ctx);
+        ShapeHelpers::fill_rect(&mut ctx, 50.0 - 7.0, 40.0 - 4.4, 14.0, 8.8);
+        let scene = ctx.take_scene();
+        let fills: Vec<_> = scene.commands.iter().filter(|c| {
+            matches!(c, DrawCommand::FillPath { .. } | DrawCommand::FillRect { .. })
+        }).collect();
+        assert_eq!(fills.len(), 1);
+        match fills[0] {
+            DrawCommand::FillPath { path, .. } => {
+                use kurbo::Shape;
+                let b = path.bounding_box();
+                assert!(b.x0 >= 45.0 - 0.2 && b.x1 <= 55.0 + 0.2, "{b:?}");
+                assert!(b.y0 >= 37.6 - 0.2 && b.y1 <= 42.4 + 0.2, "{b:?}");
+            }
+            _ => panic!("covering fillRect under an ellipse clip must be the ellipse"),
+        }
+    }
+
+    /// A rect that only cuts the ellipse is not the ellipse. Leave it
+    /// as a rect under the AABB clip.
+    #[test]
+    fn partial_rect_under_ellipse_clip_stays_fill_rect() {
+        let mut ctx = UrxRenderContext::new(1.0);
+        ctx.begin_frame(200, 200);
+        Painter::begin_path(&mut ctx);
+        Painter::ellipse(&mut ctx, 50.0, 40.0, 5.0, 2.4, 0.0, 0.0, std::f64::consts::TAU);
+        Masking::clip(&mut ctx);
+        ShapeHelpers::fill_rect(&mut ctx, 50.0, 40.0, 1.0, 1.0);
+        let scene = ctx.take_scene();
+        assert!(scene.commands.iter().any(|c| matches!(c, DrawCommand::FillRect { .. })));
+        assert!(scene.commands.iter().all(|c| !matches!(c, DrawCommand::FillPath { .. })));
+    }
+
+    /// The pool is a closed curve, then wide fillRects. Those stay rects.
+    #[test]
+    fn closed_curve_clip_does_not_become_ellipse() {
+        let mut ctx = UrxRenderContext::new(1.0);
+        ctx.begin_frame(400, 400);
+        Painter::begin_path(&mut ctx);
+        Painter::move_to(&mut ctx, 10.0, 10.0);
+        Painter::line_to(&mut ctx, 300.0, 20.0);
+        Painter::line_to(&mut ctx, 280.0, 200.0);
+        Painter::line_to(&mut ctx, 20.0, 180.0);
+        Painter::close_path(&mut ctx);
+        Masking::clip(&mut ctx);
+        ShapeHelpers::fill_rect(&mut ctx, 0.0, 0.0, 400.0, 40.0);
+        let scene = ctx.take_scene();
+        assert!(scene.commands.iter().any(|c| matches!(c, DrawCommand::FillRect { .. })));
+        assert!(scene.commands.iter().all(|c| !matches!(c, DrawCommand::FillPath { .. })));
     }
 }
