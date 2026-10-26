@@ -138,6 +138,15 @@ pub enum ClosePolicy {
     AskApp,
 }
 
+/// Which OS caption buttons a decorated window shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptionButtons {
+    /// Minimize, maximize, close.
+    All,
+    /// Minimize and close.
+    MinClose,
+}
+
 /// How to create one window.
 ///
 /// Produced by the app (`WindowCmd::Open`, runtime config) or the LayoutEngine
@@ -158,6 +167,8 @@ pub struct WindowSpec {
     pub position: Option<(i32, i32)>,
     /// OS decorations (title bar, borders). `false` = uzor chrome.
     pub decorations: bool,
+    /// Caption buttons when `decorations` is set.
+    pub caption_buttons: CaptionButtons,
     /// Whether the user may resize the window.
     pub resizable: bool,
     /// Whether the window starts visible.
@@ -187,6 +198,7 @@ impl WindowSpec {
             min_inner_size: None,
             position: None,
             decorations: true,
+            caption_buttons: CaptionButtons::All,
             resizable: true,
             visible: true,
             transparent: false,

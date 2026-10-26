@@ -199,6 +199,12 @@ impl WindowProvider for WinitWindowProvider {
         let icon = rgba.and_then(|i| {
             winit::window::Icon::from_rgba(i.pixels, i.width, i.height).ok()
         });
+        // winit writes ICON_SMALL only. The taskbar and Alt-Tab read ICON_BIG.
+        #[cfg(target_os = "windows")]
+        {
+            use winit::platform::windows::WindowExtWindows;
+            self.window.set_taskbar_icon(icon.clone());
+        }
         self.window.set_window_icon(icon);
     }
 

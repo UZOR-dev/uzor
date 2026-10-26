@@ -100,6 +100,6 @@ pub use types::snapshot::{
 };
 pub use types::spec::{PanelHome, Spec};
 pub use types::window::{
-    Attention, ClosePolicy, CursorMode, FullscreenMode, ImePurpose, Point, RenderCmd, SizePx,
-    ThemeHint, WindowCommand, WindowGeometry, WindowSpec,
+    Attention, CaptionButtons, ClosePolicy, CursorMode, FullscreenMode, ImePurpose, Point,
+    RenderCmd, SizePx, ThemeHint, WindowCommand, WindowGeometry, WindowSpec,
 };

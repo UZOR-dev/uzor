@@ -7,14 +7,14 @@ use uzor::RgbaIcon;
 use uzor_render_hub::{RenderBackend, RenderFamily, RenderHub, SurfaceSize};
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event_loop::ActiveEventLoop;
-use winit::window::{Icon, Window};
+use winit::window::{Icon, Window, WindowButtons};
 
 use super::mapper::WinitMapper;
 use super::window::{apply_spawn_style, NativeWindow};
 use super::win32;
 use crate::types::error::FrameworkError;
 use crate::types::ids::WindowId;
-use crate::types::window::{SizePx, WindowSpec};
+use crate::types::window::{CaptionButtons, SizePx, WindowSpec};
 
 /// Resolve this platform's base cache directory (L-D4).
 ///
@@ -54,6 +54,10 @@ pub fn create_window(
             f64::from(spec.inner_size.height),
         ))
         .with_decorations(spec.decorations)
+        .with_enabled_buttons(match spec.caption_buttons {
+            CaptionButtons::All => WindowButtons::all(),
+            CaptionButtons::MinClose => WindowButtons::MINIMIZE | WindowButtons::CLOSE,
+        })
         .with_resizable(spec.resizable)
         .with_visible(false)
         .with_transparent(spec.transparent);
