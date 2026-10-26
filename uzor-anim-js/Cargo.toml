@@ -17,12 +17,16 @@ wasm-bindgen = "0.2"
 js-sys = "0.3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-rquickjs = { version = "0.10", default-features = false, optional = true }
+# Library name stays `rquickjs`. `compiler` is on the runtime crate; without
+# it the engine is still the interpreter. Pins are exact: the JIT ABI rejects
+# a mix of 0.14.x crates. Decision: docs/uzor/audits/quickjs-jit-0.14.1-2026-10-26.md
+rquickjs = { package = "quickjs-jit", version = "=0.14.1", default-features = false, features = ["std", "jit-abi", "loader"], optional = true }
+rquickjs-jit = { package = "quickjs-jit-runtime", version = "=0.14.1", features = ["compiler"], optional = true }
 
 [features]
-# Embedded QuickJS engine for native targets (~0.7 MB stripped). Without it
-# `JsAnimHost::new` returns `AnimScriptError::Unavailable` on native.
-quickjs = ["dep:rquickjs"]
+# Embedded QuickJS JIT for native targets. Without it `JsAnimHost::new`
+# returns `AnimScriptError::Unavailable` on native.
+quickjs = ["dep:rquickjs", "dep:rquickjs-jit"]
 
 [dev-dependencies]
 uzor-render-tiny-skia = { workspace = true }

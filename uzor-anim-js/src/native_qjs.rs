@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use rquickjs::{Context, Function, Module, Object, Runtime, TypedArray};
+use rquickjs_jit::{Jit, JitConfig};
 
 use uzor::render::{replay_anim_ops_bitmaps, AnimBitmap, RenderContext};
 
@@ -13,6 +14,8 @@ use crate::{AnimScriptError, PRELUDE_JS};
 pub struct JsAnimHost(Rc<Inner>);
 
 struct Inner {
+    // Fields drop in declaration order. Detach the JIT before the runtime.
+    _jit: Jit,
     _rt: Runtime,
     ctx: Context,
     slots: RefCell<Vec<AnimBitmap>>,
@@ -36,6 +39,10 @@ impl JsAnimHost {
         let rt = Runtime::new().map_err(|e| AnimScriptError::Script(e.to_string()))?;
         // Rider + palm + a few offscreen copies of the rider. 32 MiB is short of that.
         rt.set_memory_limit(96 << 20);
+        let jit = Jit::attach(&rt, JitConfig::default())
+            .map_err(|e| AnimScriptError::Script(format!("quickjs-jit attach: {e:?}")))?;
+        jit.require_native()
+            .map_err(|e| AnimScriptError::Script(format!("quickjs-jit native: {e:?}")))?;
         let ctx = Context::full(&rt).map_err(|e| AnimScriptError::Script(e.to_string()))?;
         ctx.with(|c| -> Result<(), AnimScriptError> {
             let m = Module::declare(c.clone(), "uzor-anim-prelude", PRELUDE_JS).map_err(|e| err(e, &c))?;
@@ -44,6 +51,7 @@ impl JsAnimHost {
             Ok(())
         })?;
         Ok(Self(Rc::new(Inner {
+            _jit: jit,
             _rt: rt,
             ctx,
             slots: RefCell::new(Vec::new()),
@@ -111,10 +119,13 @@ impl JsAnimHost {
     }
 
     pub(crate) fn run(&self, name: &str, t: f64, q: &[f64; 14], out: &mut Vec<f64>) -> Result<(), AnimScriptError> {
+        // Install code compiled on the previous frame. poll stays on this thread.
+        self.0._jit.poll();
         self.0.ctx.with(|c| {
             let f: Function = c.globals().get("__uzorAnimRun").map_err(|e| err(e, &c))?;
             let a: TypedArray<f64> = f.call((name, t, q.to_vec())).map_err(|e| err(e, &c))?;
-            let bytes = a.as_bytes().ok_or_else(|| AnimScriptError::Script("detached op buffer".into()))?;
+            // SAFETY: copied before the next call into the engine. JS is not run while the slice is live.
+            let bytes = unsafe { a.as_bytes() }.ok_or_else(|| AnimScriptError::Script("detached op buffer".into()))?;
             out.clear();
             out.extend(bytes.chunks_exact(8).map(|b| f64::from_le_bytes(b.try_into().unwrap())));
             Ok(())
@@ -138,7 +149,6 @@ impl JsAnimHost {
                 let Some(w) = js_f64(&item, "w") else { continue };
                 let Some(h) = js_f64(&item, "h") else { continue };
                 let Ok(px) = item.get::<_, TypedArray<u8>>("px") else { continue };
-                let Some(bytes) = px.as_bytes() else { continue };
                 if id < 0.0 || id.fract() != 0.0 {
                     continue;
                 }
@@ -146,9 +156,14 @@ impl JsAnimHost {
                 let w = w as u32;
                 let h = h as u32;
                 let need = w as usize * h as usize * 4;
-                if w == 0 || h == 0 || bytes.len() < need {
-                    continue;
-                }
+                // SAFETY: copied before the next call into the engine.
+                let rgba = {
+                    let Some(bytes) = (unsafe { px.as_bytes() }) else { continue };
+                    if w == 0 || h == 0 || bytes.len() < need {
+                        continue;
+                    }
+                    bytes[..need].to_vec()
+                };
                 if slots.len() <= id {
                     slots.resize_with(id + 1, AnimBitmap::default);
                 }
@@ -156,7 +171,7 @@ impl JsAnimHost {
                 slots[id] = AnimBitmap {
                     w,
                     h,
-                    rgba: bytes[..need].to_vec(),
+                    rgba,
                     gen,
                 };
             }
