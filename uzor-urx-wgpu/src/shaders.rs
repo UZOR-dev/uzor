@@ -189,9 +189,15 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let p    = in.frag_pos - half;
     let r    = clamp(in.corner_radius, 0.0, min(half.x, half.y));
     let dist = sdf_rounded_rect(p, half, r);
-    let aa   = fwidth(dist);
-
-    let fill_cov = 1.0 - smoothstep(-aa, aa, dist);
+    // 1px coverage band, same contract as uzor-urx-cpu
+    // (`coverage = 1 - smoothstep(-0.5, 0.5, d)`). Dividing by fwidth
+    // keeps the band one screen pixel when the gradient is not 1.
+    // `smoothstep(-fwidth, fwidth, dist)` was a 2px ramp: a 2px stroke
+    // never reached alpha 1. Do not widen this back to ±fwidth.
+    // fwidth stays outside the border branch — a per-instance
+    // border_width test is not uniform across the draw.
+    let fw = max(fwidth(dist), 1e-4);
+    let fill_cov = 1.0 - smoothstep(-0.5, 0.5, dist / fw);
 
     // Build the fragment's PREMULTIPLIED contribution directly (never
     // round-trip through a "straight" intermediate that then gets
@@ -209,7 +215,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         // outer/inner split, replacing legacy's inset-only border.
         let half_w     = in.border_width * 0.5;
         let band       = abs(dist) - half_w;
-        let border_cov = 1.0 - smoothstep(-aa, aa, band);
+        let border_cov = 1.0 - smoothstep(-0.5, 0.5, band / fw);
         let border_a   = in.border_color.a * border_cov;
 
         // Composite the border OVER the fill — standard premultiplied
@@ -328,8 +334,11 @@ fn fs_main(in: LineVsOut) -> @location(0) vec4<f32> {
     }
     let r = in.width * 0.5;
     let dist = sdf_capsule(in.frag_pos, in.seg_start, in.seg_end, r);
-    let aa = fwidth(dist);
-    let cov = 1.0 - smoothstep(-aa, aa, dist);
+    // Same 1px band as the quad shader and uzor-urx-cpu. The vertex
+    // quad is already padded by 1px, so the tighter ramp still fits.
+    // Do not widen this back to smoothstep(-fwidth, fwidth, dist).
+    let fw = max(fwidth(dist), 1e-4);
+    let cov = 1.0 - smoothstep(-0.5, 0.5, dist / fw);
     if cov <= 0.0 { discard; }
 
     // Butt caps via cap_flags (matches the legacy shader's behaviour).
@@ -1093,3 +1102,19 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     return out_rgba;
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::{LINE_SHADER_NATIVE, QUAD_SHADER_NATIVE};
+
+    fn parse(name: &str, source: &str) {
+        wgpu::naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|err| panic!("{name} shader failed to parse:\n{err:?}"));
+    }
+
+    #[test]
+    fn line_and_quad_coverage_shaders_parse() {
+        parse("line", LINE_SHADER_NATIVE);
+        parse("quad", QUAD_SHADER_NATIVE);
+    }
+}

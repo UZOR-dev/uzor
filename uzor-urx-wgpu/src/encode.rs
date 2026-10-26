@@ -188,7 +188,9 @@ use uzor_urx_core::math::{
     RoundedRect, RoundedRectRadii, Vec2,
 };
 use uzor_urx_core::metrics_keys::{KEY_RENDER_GLYPH_INSTANCES, KEY_RENDER_PRIMITIVES, KEY_RENDER_SKIPPED_NONFINITE};
-use uzor_urx_core::scene::{DrawCommand, FillRule, FontId, Glyph, ImageId, LineCap, Scene, Stroke};
+use uzor_urx_core::scene::{
+    DrawCommand, FillRule, FontId, Glyph, ImageId, LineCap, LineJoin, Scene, Stroke,
+};
 use uzor_urx_core::validate::{validate_command, ValidationIssue};
 
 use std::sync::Arc;
@@ -2280,17 +2282,17 @@ fn encode_stroke_path(
     emit_solid_mesh(frame, &mesh, transform, packed_color(color), clip_rect);
 }
 
-/// Fast path for the exact compound-path shape produced by
-/// `BatchPainter::draw_line_batch`: independent `MoveTo`/`LineTo`
-/// pairs sharing one solid brush and stroke. Keeping that producer
-/// representation as one `StrokePath` avoids hundreds of thousands of
-/// scene commands, while bulk-emitting native `LineInstance`s here
-/// avoids tessellating those independent segments into triangles.
+/// Fast path for solid strokes that the capsule line shader can draw.
 ///
-/// Any connected subpath, curve, close, dash, gradient/image brush,
-/// unsupported square cap, or non-uniform/sheared/reflected transform
-/// falls through to the normal path tessellator so joins, stroke shape,
-/// brush semantics, and degradation remain unchanged.
+/// Independent `MoveTo`/`LineTo` pairs (the shape
+/// `BatchPainter::draw_line_batch` records as one `StrokePath`) become
+/// one `LineInstance` each, for both round and butt caps. A connected
+/// polyline or polygon of only `MoveTo`/`LineTo`/`ClosePath` does too,
+/// but only with round caps and round joins: the capsule's round end
+/// is the join disc, so overlapping caps fill the corner. Butt caps
+/// would gap at a joint, and a miter or bevel corner is not a disc, so
+/// those stay on lyon. Curves, dashes, square caps, gradient/image
+/// brushes, and non-uniform transforms also stay on lyon.
 fn try_encode_independent_solid_line_path(
     frame: &mut EncodedFrame,
     path: &BezPath,
@@ -2317,16 +2319,96 @@ fn try_encode_independent_solid_line_path(
         return false;
     }
     let elements = path.elements();
-    if elements.len() % 2 != 0 {
-        return false;
-    }
-    if !elements.chunks_exact(2).all(|pair| {
-        matches!(pair, [PathEl::MoveTo(_), PathEl::LineTo(_)])
-    }) {
-        return false;
+    let independent = elements.len() % 2 == 0
+        && elements
+            .chunks_exact(2)
+            .all(|pair| matches!(pair, [PathEl::MoveTo(_), PathEl::LineTo(_)]));
+    if independent {
+        let segment_count = elements.len() / 2;
+        if segment_count == 0 {
+            return true;
+        }
+        return emit_solid_line_segments(
+            frame,
+            segment_count,
+            stroke.width,
+            cap_flags,
+            packed_color(*color),
+            clip_rect,
+            elements.chunks_exact(2).map(|pair| {
+                let [PathEl::MoveTo(from), PathEl::LineTo(to)] = pair else {
+                    unreachable!("independent line path was validated above");
+                };
+                (*from, *to)
+            }),
+            transform,
+        );
     }
 
-    let segment_count = elements.len() / 2;
+    // Round caps overlap into round joins. Anything else needs lyon.
+    if stroke.cap != LineCap::Round || stroke.join != LineJoin::Round {
+        return false;
+    }
+    let Some(segments) = connected_line_segments(elements) else {
+        return false;
+    };
+    emit_solid_line_segments(
+        frame,
+        segments.len(),
+        stroke.width,
+        0.0,
+        packed_color(*color),
+        clip_rect,
+        segments.into_iter(),
+        transform,
+    )
+}
+
+/// `Move`/`Line`/`Close` only. A curve makes this `None` so the caller
+/// keeps the tessellated stroke. `ClosePath` adds the segment back to
+/// the current subpath start when it is not already there.
+fn connected_line_segments(elements: &[PathEl]) -> Option<Vec<(Point, Point)>> {
+    let mut segments = Vec::new();
+    let mut subpath_start: Option<Point> = None;
+    let mut cursor: Option<Point> = None;
+    for el in elements {
+        match *el {
+            PathEl::MoveTo(p) => {
+                subpath_start = Some(p);
+                cursor = Some(p);
+            }
+            PathEl::LineTo(p) => {
+                let from = cursor?;
+                segments.push((from, p));
+                cursor = Some(p);
+            }
+            PathEl::ClosePath => {
+                let from = cursor?;
+                let to = subpath_start?;
+                if from != to {
+                    segments.push((from, to));
+                }
+                cursor = subpath_start;
+            }
+            PathEl::QuadTo(_, _) | PathEl::CurveTo(_, _, _) => return None,
+        }
+    }
+    Some(segments)
+}
+
+fn emit_solid_line_segments<I>(
+    frame: &mut EncodedFrame,
+    segment_count: usize,
+    width: f32,
+    cap_flags: f32,
+    packed: u32,
+    clip_rect: [f32; 4],
+    segments: I,
+    transform: &Affine,
+) -> bool
+where
+    I: IntoIterator<Item = (Point, Point)>,
+{
     if segment_count == 0 {
         return true;
     }
@@ -2338,18 +2420,14 @@ fn try_encode_independent_solid_line_path(
             return true;
         }
     }
-    let packed = packed_color(*color);
-    for pair in elements.chunks_exact(2) {
-        let [PathEl::MoveTo(from), PathEl::LineTo(to)] = pair else {
-            unreachable!("independent line path was validated above");
-        };
-        let from = transform_point_full(transform, *from);
-        let to = transform_point_full(transform, *to);
+    for (from, to) in segments {
+        let from = transform_point_full(transform, from);
+        let to = transform_point_full(transform, to);
         frame.lines.push(LineInstance {
             start: [from.x as f32, from.y as f32],
             end: [to.x as f32, to.y as f32],
             color: packed,
-            width: stroke.width,
+            width,
             cap_flags,
             clip_rect,
         });
@@ -2897,6 +2975,81 @@ mod tests {
 
         let frame = encode_scene(&scene, viewport(), &mut cache(), None, None, max_depth(), false);
         assert!(frame.lines.is_empty(), "connected paths need join-aware tessellation");
+        assert!(!frame.triangles.is_empty());
+    }
+
+    #[test]
+    fn round_cap_polyline_encodes_as_line_capsules() {
+        let mut path = BezPath::new();
+        path.move_to(Point::new(0.0, 0.0));
+        path.line_to(Point::new(10.0, 0.0));
+        path.line_to(Point::new(10.0, 10.0));
+        path.close_path();
+        let mut scene = Scene::new();
+        scene.push(DrawCommand::StrokePath {
+            path,
+            stroke: SceneStroke {
+                width: 2.0,
+                cap: LineCap::Round,
+                join: LineJoin::Round,
+                ..SceneStroke::default()
+            },
+            brush: Brush::Solid(Color::from_rgba8(255, 255, 255, 255)),
+            transform: Affine::IDENTITY,
+        });
+
+        let frame = encode_scene(&scene, viewport(), &mut cache(), None, None, max_depth(), false);
+        assert!(frame.triangles.is_empty(), "a round polyline is capsules, not a hard mesh");
+        assert_eq!(frame.lines.len(), 3);
+        assert!(frame.lines.iter().all(|line| line.cap_flags == 0.0));
+        assert_eq!(frame.lines[2].start, [10.0, 10.0]);
+        assert_eq!(frame.lines[2].end, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn round_cap_miter_join_stays_tessellated() {
+        let mut path = BezPath::new();
+        path.move_to(Point::new(1.0, 2.0));
+        path.line_to(Point::new(3.0, 4.0));
+        path.line_to(Point::new(5.0, 6.0));
+        let mut scene = Scene::new();
+        scene.push(DrawCommand::StrokePath {
+            path,
+            stroke: SceneStroke {
+                width: 2.0,
+                cap: LineCap::Round,
+                join: LineJoin::Miter,
+                ..SceneStroke::default()
+            },
+            brush: Brush::Solid(Color::from_rgba8(255, 255, 255, 255)),
+            transform: Affine::IDENTITY,
+        });
+
+        let frame = encode_scene(&scene, viewport(), &mut cache(), None, None, max_depth(), false);
+        assert!(frame.lines.is_empty(), "a miter corner is not a capsule join");
+        assert!(!frame.triangles.is_empty());
+    }
+
+    #[test]
+    fn round_cap_curve_stays_tessellated() {
+        let mut path = BezPath::new();
+        path.move_to(Point::new(0.0, 0.0));
+        path.curve_to(Point::new(4.0, 8.0), Point::new(12.0, 8.0), Point::new(16.0, 0.0));
+        let mut scene = Scene::new();
+        scene.push(DrawCommand::StrokePath {
+            path,
+            stroke: SceneStroke {
+                width: 2.0,
+                cap: LineCap::Round,
+                join: LineJoin::Round,
+                ..SceneStroke::default()
+            },
+            brush: Brush::Solid(Color::from_rgba8(255, 255, 255, 255)),
+            transform: Affine::IDENTITY,
+        });
+
+        let frame = encode_scene(&scene, viewport(), &mut cache(), None, None, max_depth(), false);
+        assert!(frame.lines.is_empty(), "a real curve still needs the path tessellator");
         assert!(!frame.triangles.is_empty());
     }
 
