@@ -16,11 +16,16 @@ uzor = { workspace = true }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "ios")))'.dependencies]
 # Library name stays `rquickjs`. `compiler` is on the runtime crate; without
 # it the engine is still the interpreter. Pins are exact: the JIT ABI rejects
 # a mix of 0.14.x crates. Decision: docs/uzor/audits/quickjs-jit-0.14.1-2026-10-26.md
 rquickjs = { package = "quickjs-jit", version = "=0.14.1", default-features = false, features = ["std", "jit-abi", "loader"], optional = true }
+rquickjs-jit = { package = "quickjs-jit-runtime", version = "=0.14.1", features = ["compiler"], optional = true }
+
+# The crate ships no aarch64-apple-ios bindings. bindgen generates them with the iOS SDK.
+[target.'cfg(all(not(target_arch = "wasm32"), target_os = "ios"))'.dependencies]
+rquickjs = { package = "quickjs-jit", version = "=0.14.1", default-features = false, features = ["std", "jit-abi", "loader", "bindgen"], optional = true }
 rquickjs-jit = { package = "quickjs-jit-runtime", version = "=0.14.1", features = ["compiler"], optional = true }
 
 [features]
