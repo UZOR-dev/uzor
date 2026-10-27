@@ -5,28 +5,27 @@
 //! (URX-family decision tree) live side by side here — **not** a
 //! flip-in-progress with one destined to replace the other.
 //!
-//! Owner decision 2026-07-24: **no default flip, ever.** Which tree a
-//! given app/window walks is resolved from [`RenderFamily`] — a
-//! per-app/per-window flag, not a workspace migration. The two call
-//! sites (`uzor-render-hub::hub::RenderHub::autodetect`,
-//! `uzor-desktop::window::creation::create_window`) both take a
-//! [`RenderFamily`] parameter and dispatch through
+//! Both trees stay first-class. Which tree a given app/window walks is
+//! resolved from [`RenderFamily`]. The unset default is
+//! [`RenderFamily::Urx`] (owner order 2026-10-27). Vello stays selectable
+//! by env, builder family, or an explicit backend. The two call sites
+//! (`uzor-render-hub::hub::RenderHub::autodetect`, the native host's
+//! `build_hub`) take a [`RenderFamily`] and dispatch through
 //! [`detect_backend_for_family`] / [`no_adapter_backend_for_family`]
-//! rather than calling either named tree directly — this replaces the
-//! earlier Wave 6 "FLIP POINT" doc comments that described this as a
-//! one-line future call-site swap (that framing is now wrong: the flag
-//! stays, permanently, by owner decision).
+//! rather than naming either tree directly.
 //!
 //! # Family resolution precedence
 //!
 //! Four levels, highest first:
 //! 1. **Explicit backend** — `.backend(Scene2DBackend::X)` on the app
-//!    builder (or `WindowConfig::backend_hint`) skips family resolution
-//!    entirely; this module never even runs in that case.
+//!    builder skips family resolution entirely; this module never even
+//!    runs in that case. The native host's `build_hub` takes that arm
+//!    with `RenderHub::fixed`.
 //! 2. **`UZOR_RENDER_FAMILY` env var** (`vello` / `urx`, case-
 //!    insensitive) — [`resolve_render_family_from_process_env`].
-//! 3. **Builder's own `.render_family(...)`** setting.
-//! 4. **[`RenderFamily::default`]** (`Vello`).
+//! 3. **Builder's own family** when the caller passes one.
+//! 4. **[`RenderFamily::default`]** (`Urx`). The native host passes
+//!    `None` as the builder family, so an unset env lands here.
 //!
 //! [`resolve_render_family`] is the PURE core of that precedence chain
 //! (levels 2-4 only — level 1 is checked by the caller before this
@@ -64,9 +63,9 @@ pub fn detect_backend(info: &wgpu::AdapterInfo) -> RenderBackend {
 }
 
 /// URX-family autodetect decision tree — lives permanently ALONGSIDE
-/// [`detect_backend`] (owner decision 2026-07-24: no default flip,
-/// ever; both trees are first-class, selected per-app/per-window via
-/// [`RenderFamily`], never a migration where one replaces the other).
+/// [`detect_backend`]. Both trees stay first-class. The unset default
+/// family is [`RenderFamily::Urx`] (owner order 2026-10-27); Vello is
+/// still selected by name.
 /// Reached through [`detect_backend_for_family`] at both real call
 /// sites (`RenderHub::autodetect`, `uzor-desktop`'s `create_window`)
 /// rather than named directly by application code.
@@ -157,7 +156,7 @@ fn warn_invalid_render_family_env_once(value: &str) {
     WARNED.call_once(|| {
         eprintln!(
             "[uzor-render-hub] UZOR_RENDER_FAMILY={value:?} is not \"vello\" or \"urx\" (case-insensitive) — \
-             ignoring it and falling back to the app builder's own render_family (or RenderFamily::Vello if \
+             ignoring it and falling back to the app builder's own render_family (or RenderFamily::default if \
              that's unset too). This warning prints at most once per process."
         );
     });
@@ -165,7 +164,7 @@ fn warn_invalid_render_family_env_once(value: &str) {
 
 /// Resolve the effective [`RenderFamily`] from an env override value
 /// and the app builder's own `.render_family(...)` setting, in that
-/// precedence order, falling back to [`RenderFamily::default`] (`Vello`)
+/// precedence order, falling back to [`RenderFamily::default`] (`Urx`)
 /// when neither is set — precedence levels 2-4 of the four-level chain
 /// documented at the top of this module (level 1, an explicit
 /// `.backend(...)` selection, is checked by the CALLER before this
@@ -330,11 +329,12 @@ mod tests {
         }
     }
 
-    // ── RenderFamily resolution + dispatch (2026-07-24 no-default-flip) ──
+    // ── RenderFamily resolution + dispatch (default family is Urx) ──
 
     #[test]
-    fn env_none_and_builder_none_falls_back_to_default_vello() {
-        assert_eq!(resolve_render_family(None, None), RenderFamily::Vello);
+    fn env_none_and_builder_none_falls_back_to_default_urx() {
+        assert_eq!(RenderFamily::default(), RenderFamily::Urx);
+        assert_eq!(resolve_render_family(None, None), RenderFamily::Urx);
     }
 
     #[test]
@@ -361,9 +361,9 @@ mod tests {
     #[test]
     fn invalid_env_value_falls_back_to_builder_family_not_default() {
         // A typo'd env value must not silently win, nor silently reset
-        // to Vello when the builder explicitly asked for Urx.
+        // to the default when the builder explicitly asked for Urx.
         assert_eq!(resolve_render_family(Some("uwu"), Some(RenderFamily::Urx)), RenderFamily::Urx);
-        assert_eq!(resolve_render_family(Some("bogus"), None), RenderFamily::Vello);
+        assert_eq!(resolve_render_family(Some("bogus"), None), RenderFamily::Urx);
     }
 
     #[test]

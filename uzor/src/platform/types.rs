@@ -117,22 +117,20 @@ pub type RenderBackend = Scene2DBackend;
 
 // ── RenderFamily ────────────────────────────────────────────────────────────
 
-/// Coarse 2D render-family selector — **the doctrine, owner decision
-/// 2026-07-24: no default flip, ever.** Vello and URX both stay
-/// first-class 2D pipelines; which one a given app/window uses is a
-/// per-app/per-window flag (this enum), never a workspace-wide
-/// migration that eventually completes and deletes the other side.
+/// Coarse 2D render-family selector. Vello and URX both stay first-class
+/// 2D pipelines. The unset default is [`RenderFamily::Urx`] (owner order
+/// 2026-10-27). A window still selects Vello with `UZOR_RENDER_FAMILY`,
+/// a builder family, or an explicit backend. Neither family is a
+/// migration that deletes the other.
 ///
-/// This selects which autodetect DECISION TREE
-/// [`crate::layout::window`] / `uzor-render-hub`'s `RenderHub::autodetect`
-/// walks when no adapter probe result is available yet
+/// This selects which autodetect decision tree
+/// `uzor-render-hub`'s `RenderHub::autodetect` walks
 /// (`detect_backend` for [`RenderFamily::Vello`], `detect_backend_urx`
-/// for [`RenderFamily::Urx`]) — it is coarser than [`Scene2DBackend`]
-/// itself (which names a single concrete pipeline variant), and it
-/// never overrides an explicit [`Scene2DBackend`] selection (e.g. via
-/// the app builder's `.backend(...)`) — precedence is always
-/// explicit-backend > env override > this flag > [`RenderFamily::
-/// default`].
+/// for [`RenderFamily::Urx`]). It is coarser than [`Scene2DBackend`]
+/// (one concrete pipeline) and never overrides an explicit
+/// [`Scene2DBackend`] selection. Precedence is explicit-backend, then
+/// `UZOR_RENDER_FAMILY`, then the builder family, then
+/// [`RenderFamily::default`].
 ///
 /// **3D is always URX**, regardless of this flag — there is no
 /// vello-family 3D surface to select between, so nothing reads this
@@ -141,26 +139,25 @@ pub type RenderBackend = Scene2DBackend;
 /// [`Scene2DBackend::TinySkia`] is deliberately **not** a member of
 /// this enum — it is the explicit, minimal CPU debug/light-build
 /// engine, not a family. It stays reachable two ways: as
-/// [`RenderFamily::Vello`]'s own no-GPU-adapter fallback (unchanged
-/// from today's `RenderHub::autodetect` behavior), and by direct
+/// [`RenderFamily::Vello`]'s own no-GPU-adapter fallback, and by direct
 /// `.backend(Scene2DBackend::TinySkia)` selection — never by resolving
 /// a family alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RenderFamily {
-    /// vello / vello_cpu / vello_hybrid / instanced-wgpu 2D pipeline —
-    /// today's long-standing default and production path.
+    /// vello / vello_cpu / vello_hybrid / instanced-wgpu 2D pipeline.
+    /// Selected by `UZOR_RENDER_FAMILY=vello`, a builder family, or an
+    /// explicit backend.
     Vello,
     /// URX's own 2D pipeline (own math, own rasteriser/compositor, no
-    /// vello dependency) — a first-class alternative, never
-    /// auto-promoted over `Vello` by any autodetect logic.
+    /// vello dependency). [`Default`] since owner order 2026-10-27.
     Urx,
 }
 
 impl Default for RenderFamily {
-    /// `Vello` — no default flip, ever (owner doctrine 2026-07-24).
+    /// URX. Owner order 2026-10-27. Vello stays reachable by name.
     fn default() -> Self {
-        Self::Vello
+        Self::Urx
     }
 }
 

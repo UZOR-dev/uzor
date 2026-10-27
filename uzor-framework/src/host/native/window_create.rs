@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use uzor::RgbaIcon;
-use uzor_render_hub::{RenderBackend, RenderFamily, RenderHub, SurfaceSize};
+use uzor_render_hub::{resolve_render_family_from_process_env, RenderBackend, RenderHub, SurfaceSize};
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Icon, Window, WindowButtons};
@@ -167,11 +167,12 @@ fn raw_handle_for(window: &Arc<Window>) -> Option<uzor::layout::window::RawHandl
     Some(RawHandle::RawWindowHandle(pair))
 }
 
-/// Prefer an explicit backend, else autodetection.
+/// Explicit backend skips family resolution. Otherwise walk the default
+/// chain: `UZOR_RENDER_FAMILY`, then `RenderFamily::default` (URX).
 pub fn build_hub(preferred: Option<RenderBackend>) -> RenderHub {
     match preferred {
         Some(b) => RenderHub::fixed(b),
-        None => RenderHub::autodetect(RenderFamily::default()),
+        None => RenderHub::autodetect(resolve_render_family_from_process_env(None)),
     }
 }
 

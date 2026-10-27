@@ -12,8 +12,9 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! // Full autodetect — picks best backend for the Vello family,
-//! // enables live switching.
+//! // Autodetect inside one family. The production host passes the
+//! // resolved family; [`RenderFamily::default`] is URX. This example
+//! // asks for Vello on purpose.
 //! let hub = RenderHub::autodetect(RenderFamily::Vello);
 //!
 //! // Fixed backend — no adapter probe, no live switching.
@@ -216,10 +217,10 @@ impl RenderHub {
     // ── Constructors ──────────────────────────────────────────────────────────
 
     /// Probe a wgpu adapter and select the best available backend for
-    /// `family` (owner decision 2026-07-24: no default flip, ever —
-    /// `family` is the caller's own resolved choice, see
-    /// `crate::detect::resolve_render_family_from_process_env` for the
-    /// four-level precedence chain that usually produces it).
+    /// `family`. The caller resolves the family first
+    /// (`crate::detect::resolve_render_family_from_process_env`: env,
+    /// then builder family, then [`RenderFamily::default`], which is URX).
+    /// An explicit backend never reaches this constructor.
     ///
     /// The probe is synchronous (via `pollster`) and takes a few milliseconds.
     /// If no adapter is found the hub falls back to the family's own
