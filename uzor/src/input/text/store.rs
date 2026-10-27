@@ -582,6 +582,9 @@ impl TextFieldStore {
                 state.selection_start = None;
                 state.preedit.clear();
                 state.preedit_cursor = 0;
+                // The caret is drawn from engagement. A blurred field is not
+                // engaged, or the caret survives the focus loss.
+                state.engaged = false;
             }
         }
         self.drag_field = None;

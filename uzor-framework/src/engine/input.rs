@@ -416,7 +416,12 @@ impl PerWindowInput {
     /// also syncs widget focus; anything else blurs the store). No guard.
     fn focus_raw(&mut self, id: WidgetId) {
         let field = self.coord.text_fields().has_field(&id);
-        if field {
+        if field && self.coord.text_fields().is_focused(&id) {
+            // A click already focused the store (`begin_drag_at` runs
+            // before this record). `focus()` on that same field clears
+            // engagement, and the caret is drawn from the flag.
+            self.coord.set_focus(id.clone());
+        } else if field {
             self.coord.focus_text_field(&id);
         } else {
             self.coord.set_focus(id.clone());
@@ -757,7 +762,8 @@ impl PerWindowInput {
                 } else if self.coord.text_fields().drag_active() {
                     self.coord.text_fields_mut().on_drag_end();
                 }
-                (changed | sel_changed, target)
+                let blurred = self.blur_text_on_outside_press(target.as_ref());
+                (changed | sel_changed | blurred, target)
             }
             PointerInput::Up { pos, button, .. } => {
                 self.pointer.pos = Some((pos.x, pos.y));
@@ -811,6 +817,24 @@ impl PerWindowInput {
         if self.coord.text_fields().drag_active() {
             self.coord.text_fields_mut().on_drag_end();
         }
+    }
+
+    /// A press that misses every text field drops the caret. Paint reads
+    /// focus before `end_frame`, so the store and the engine record have to
+    /// be clear on the press itself.
+    fn blur_text_on_outside_press(&mut self, target: Option<&WidgetId>) -> bool {
+        let on_field = target.is_some_and(|id| {
+            self.coord.text_fields().has_field(id)
+                && self.coord.widget_sense(id).is_some_and(|s| s.text)
+        });
+        if on_field || self.coord.text_fields().focused().is_none() {
+            return false;
+        }
+        self.coord.clear_focus();
+        if self.focus.as_ref().is_some_and(|f| f.field) {
+            self.focus = None;
+        }
+        true
     }
 
     /// A release on the same selectable widget the press began on, and

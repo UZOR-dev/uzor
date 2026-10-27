@@ -1659,7 +1659,7 @@ fn selection_changes_are_revisioned() {
 }
 
 #[test]
-fn clicking_a_label_does_not_blur_a_focused_field() {
+fn clicking_outside_a_field_drops_the_caret() {
     // The label sits below the fields — no overlap with rect_a / rect_b.
     let label_r = Rect::new(10.0, 100.0, 200.0, 20.0);
     let scene = |e: &mut InputEngine| {
@@ -1670,18 +1670,26 @@ fn clicking_a_label_does_not_blur_a_focused_field() {
     frame_sel(&mut e, 0.5, scene);
     click(&mut e, 1.0, 20.0, 15.0); // field "a"
     frame_sel(&mut e, 1.05, scene);
-    assert!(e
-        .view()
-        .text_fields(W)
-        .is_some_and(|t| t.focused().is_some()));
-    // Click the label: focus stays in the field, the label gets a caret.
-    click(&mut e, 1.1, 13.0, 115.0);
+    assert!(e.view().text_fields(W).is_some_and(|t| {
+        t.is_focused(&id("a")) && t.is_engaged(&id("a"))
+    }));
+    // Empty space. The press itself drops the caret, before mouse-up.
+    to_content(&mut e, 1.1, down(500.0, 400.0));
+    assert!(e.view().focused(W).is_none());
+    assert!(e.view().text_fields(W).is_some_and(|t| {
+        t.focused().is_none() && !t.is_engaged(&id("a"))
+    }));
+    to_content(&mut e, 1.11, up(500.0, 400.0));
     frame_sel(&mut e, 1.15, scene);
-    assert!(e
-        .view()
-        .text_fields(W)
-        .is_some_and(|t| t.focused().is_some()));
+    assert!(e.view().text_fields(W).is_some_and(|t| t.focused().is_none()));
+    // A label is outside the field too. The label still gets its own caret.
+    click(&mut e, 1.2, 20.0, 15.0);
+    frame_sel(&mut e, 1.25, scene);
+    click(&mut e, 1.3, 13.0, 115.0);
+    assert!(e.view().text_fields(W).is_some_and(|t| !t.is_focused(&id("a"))));
+    frame_sel(&mut e, 1.35, scene);
     assert_eq!(sel(&e, "lbl"), Some(TextSelection::caret(0)));
+    assert!(e.view().text_fields(W).is_some_and(|t| t.focused().is_none()));
 }
 
 #[test]
