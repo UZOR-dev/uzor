@@ -392,7 +392,22 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
             self.push(id, InputEvent::Pointer(PointerInput::Moved { pos: crate::Point::new(p.0, p.1), mods: Default::default() }));
         }
         let out = self.runtime.tick(self.now());
+        // Windows already open had their Created delivered by this tick, so
+        // the icon command is in `out`. A spawn inside execute_all is not
+        // in this list: its button waits until the next tick.
+        let mut reveal = Vec::new();
+        for (wid, nw) in &mut self.windows {
+            if nw.defer_show {
+                nw.defer_show = false;
+                reveal.push(*wid);
+            }
+        }
         self.execute_all(el, out.window_commands);
+        for wid in reveal {
+            if let Some(nw) = self.windows.get(&wid) {
+                nw.window.set_visible(true);
+            }
+        }
         self.paint_due(out.frames);
 
         if self.exit || self.runtime.should_exit() {

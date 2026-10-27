@@ -38,6 +38,9 @@ pub struct NativeWindow {
     pub dnd_hover: Option<(f64, f64)>,
     /// Spawned transparent: frames clear to fully transparent.
     pub transparent: bool,
+    /// `WindowSpec::visible`. The host shows the window one tick later,
+    /// after the app's icon command. ShowWindow creates the taskbar button.
+    pub defer_show: bool,
 }
 
 impl NativeWindow {
@@ -68,6 +71,14 @@ impl OsWindow for WinitOsWindow<'_> {
 
     fn set_icon(&mut self, icon: Option<&RgbaIcon>) {
         let os = icon.and_then(|r| Icon::from_rgba(r.pixels.clone(), r.width, r.height).ok());
+        // winit writes ICON_SMALL only. The taskbar and Alt-Tab read ICON_BIG.
+        // A window class with no icon makes Explorer substitute the default
+        // Windows logo whenever it does not extract the exe icon in time.
+        #[cfg(target_os = "windows")]
+        {
+            use winit::platform::windows::WindowExtWindows;
+            self.window.set_taskbar_icon(os.clone());
+        }
         self.window.set_window_icon(os);
     }
 

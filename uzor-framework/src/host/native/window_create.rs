@@ -122,9 +122,10 @@ pub fn create_window(
         win32::install_borderless_resize(&window);
     }
 
-    if spec.visible {
-        window.set_visible(true);
-    }
+    // Stay hidden. The host shows a visible spec on the next tick, after
+    // the app's Opened handler has set the icon. The taskbar button is
+    // born at ShowWindow and reads that icon.
+    let defer_show = spec.visible;
     window.request_redraw();
 
     let key = spec.key.0.clone();
@@ -138,6 +139,7 @@ pub fn create_window(
         maximized: None,
         dnd_hover: None,
         transparent: spec.transparent,
+        defer_show,
     })
 }
 
