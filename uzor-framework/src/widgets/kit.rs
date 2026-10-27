@@ -257,6 +257,7 @@ impl<'a> InputBuilder<'a> {
 
     /// Register, sync the value, and draw.
     pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> Response {
+        let now_ms = cx.time_ms();
         let theme = theme_of(cx);
         let InputBuilder { id, rect, value, placeholder, label, kind, disabled, max_len } = self;
         let (r, ime) = cx.with_paint(|render, widgets, v, _| {
@@ -289,9 +290,14 @@ impl<'a> InputBuilder<'a> {
                     *synced = value.clone();
                 }
             }
-            let st = fields.field_state(&id);
-            let (shown, caret, preedit) = st.map(|s| s.display()).unwrap_or_else(|| (value.clone(), value.chars().count(), None));
-            let selection = st.filter(|_| preedit.is_none()).and_then(|s| s.selection_range());
+            let (shown, caret, preedit, engaged, selection) = match fields.field_state(&id) {
+                Some(s) => {
+                    let (text, caret, preedit) = s.display();
+                    let selection = preedit.is_none().then(|| s.selection_range()).flatten();
+                    (text, caret, preedit, s.engaged, selection)
+                }
+                None => (value.clone(), value.chars().count(), None, false, None),
+            };
             let shown = if kind == InputType::Password { "\u{2022}".repeat(shown.chars().count()) } else { shown };
             let focused = !disabled && (r.focused || fields.is_focused(&id));
             r.focused = focused;
@@ -309,8 +315,10 @@ impl<'a> InputBuilder<'a> {
             let tint = settings.theme.cursor();
             let mut ime = None;
             if focused {
-                draw_input_cursor(render, res.cursor_x, res.cursor_y, res.cursor_height, 1.0, tint);
                 ime = Some(Rect::new(res.cursor_x, res.cursor_y, 1.0, res.cursor_height));
+                if engaged && fields.cursor_visible(now_ms) {
+                    draw_input_cursor(render, res.cursor_x, res.cursor_y, res.cursor_height, 1.0, tint);
+                }
             }
             if let Some((a, b)) = preedit {
                 // Composition text is underlined, as the DOM draws it.
@@ -361,8 +369,8 @@ pub struct FieldResponse {
 }
 
 /// A text field whose box the app paints itself (a search pill, a dialog row, a sign-in
-/// input): the kit registers it at `rect`, names it, draws text, placeholder, caret and
-/// composition, and feeds caret geometry and the IME area back to the text store. The
+/// input): the kit registers it at `rect`, names it, draws text, placeholder, selection,
+/// a blinking caret and composition, and feeds caret geometry and the IME area back to the text store. The
 /// edit state lives in the store; seed or clear it there before `build`.
 pub fn field<'a>(id: impl Into<WidgetId>, rect: Rect) -> FieldBuilder<'a> {
     FieldBuilder {
@@ -385,6 +393,23 @@ pub fn field<'a>(id: impl Into<WidgetId>, rect: Rect) -> FieldBuilder<'a> {
 
 fn css_hex(c: [u8; 4]) -> String {
     format!("#{:02x}{:02x}{:02x}{:02x}", c[0], c[1], c[2], c[3])
+}
+
+/// Selection fill for a borderless field. `text` is what the painter shows
+/// (bullets when masked). Indices are chars of that string. Drawn before
+/// the glyphs so they sit on the highlight, same order as `draw_input`.
+fn paint_field_selection(render: &mut dyn RenderContext, origin_x: f64, y: f64, h: f64, text: &str, range: (usize, usize), color: &str) {
+    let lo = range.0.min(range.1);
+    let hi = range.0.max(range.1);
+    if lo == hi {
+        return;
+    }
+    let before: String = text.chars().take(lo).collect();
+    let mid: String = text.chars().skip(lo).take(hi - lo).collect();
+    let x = origin_x + render.measure_text(&before);
+    let w = render.measure_text(&mid);
+    render.set_fill_color(color);
+    render.fill_rect(x, y, w.max(0.0), h);
 }
 
 impl<'a> FieldBuilder<'a> {
@@ -447,9 +472,11 @@ impl<'a> FieldBuilder<'a> {
     pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> FieldResponse {
         use uzor::ui::widgets::atomic::text_input::TextInputTheme;
         use uzor::ui::widgets::composite::dialog::draw_field_text_ime;
+        let now_ms = cx.time_ms();
         let theme = theme_of(cx);
         let color = self.color.map_or_else(|| css_hex(theme.text_normal()), str::to_owned);
         let ph_color = self.placeholder_color.map_or_else(|| css_hex(theme.placeholder()), str::to_owned);
+        let sel_color = css_hex(theme.selection());
         let FieldBuilder { id, rect, text_rect, config, name, placeholder, masked, clip, px, family, set, parent, .. } = self;
         let fr = text_rect.unwrap_or(rect);
         let (out, ime) = cx.with_paint(|render, widgets, v, _| {
@@ -469,15 +496,30 @@ impl<'a> FieldBuilder<'a> {
                 }
             }
             let focused = v.is_focused(&id);
-            let (text, caret, preedit) = coord.text_fields().field_state(&id).map(|s| s.display()).unwrap_or_default();
+            let (text, caret, preedit, engaged, selection) = {
+                let fields = coord.text_fields();
+                match fields.field_state(&id) {
+                    Some(s) => {
+                        let (text, caret, preedit) = s.display();
+                        let selection = preedit.is_none().then(|| s.selection_range()).flatten();
+                        (text, caret, preedit, s.engaged, selection)
+                    }
+                    None => (String::new(), 0, None, false, None),
+                }
+            };
             let shown = if masked { "\u{2022}".repeat(text.chars().count()) } else { text.clone() };
+            let blink = focused && engaged && coord.text_fields().cursor_visible(now_ms);
             if clip {
                 render.save();
                 render.begin_path();
                 render.rect(fr.x, fr.y, fr.width, fr.height);
                 render.clip();
             }
-            let pos = draw_field_text_ime(render, fr, &shown, placeholder, focused.then_some(caret), preedit, px, &color, &ph_color, family);
+            if let Some(range) = selection {
+                render.set_font(&format!("400 {px}px {family}"));
+                paint_field_selection(render, fr.x, fr.y, fr.height, &shown, range, &sel_color);
+            }
+            let pos = draw_field_text_ime(render, fr, &shown, placeholder, blink.then_some(caret), preedit, px, &color, &ph_color, family);
             if clip {
                 render.restore();
             }

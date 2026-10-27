@@ -3,7 +3,7 @@
 use uzor::render::RenderContext;
 use uzor::tokens::Tokens;
 
-use crate::handle::{OverlayCx, PanelCx, VisualView, Widgets};
+use crate::handle::{FrameTime, OverlayCx, PanelCx, VisualView, Widgets};
 use crate::types::spec::Spec;
 
 /// A content hook context a widget convenience function can paint into.
@@ -24,6 +24,10 @@ pub trait ContentCx<'a> {
 
     /// Report the focused field's caret rect so the OS IME window opens there.
     fn ime_area(&mut self, _rect: uzor::Rect) {}
+
+    /// Host clock in whole milliseconds. Same unit as
+    /// `TextFieldStore::cursor_visible`.
+    fn time_ms(&self) -> u64;
 }
 
 impl<'a, S: Spec> ContentCx<'a> for PanelCx<'a, S> {
@@ -31,6 +35,10 @@ impl<'a, S: Spec> ContentCx<'a> for PanelCx<'a, S> {
 
     fn ime_area(&mut self, rect: uzor::Rect) {
         self.out.ime_area(rect);
+    }
+
+    fn time_ms(&self) -> u64 {
+        frame_ms(self.time)
     }
 
     fn with_paint<R>(
@@ -48,10 +56,18 @@ impl<'a, S: Spec> ContentCx<'a> for OverlayCx<'a, S> {
         self.out.ime_area(rect);
     }
 
+    fn time_ms(&self) -> u64 {
+        frame_ms(self.time)
+    }
+
     fn with_paint<R>(
         &mut self,
         f: impl FnOnce(&mut dyn RenderContext, &mut Widgets<'a>, &VisualView<S>, &Tokens) -> R,
     ) -> R {
         f(self.render, &mut self.widgets, self.view, self.tokens)
     }
+}
+
+fn frame_ms(time: FrameTime) -> u64 {
+    (time.now.get() * 1000.0).round().max(0.0) as u64
 }
