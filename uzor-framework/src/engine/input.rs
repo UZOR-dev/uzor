@@ -32,7 +32,10 @@
 //!   OS cancels the gesture); the release itself still goes to the owner.
 //! - [`InputOp::Deliver`] is step 5: an event nothing above claimed enters
 //!   the coordinator's next-frame input (press / release edges; positions
-//!   always follow the pointer). Claimed presses never reach content.
+//!   always follow the pointer). Claimed presses never reach content. A
+//!   text-field drag writes the store selection on the press and on each
+//!   armed move: paint reads that store before `end_frame`, which only
+//!   commits the range on release.
 //! - [`InputOp::BeginFrame`] feeds the accumulated input to the coordinator
 //!   with `InputState::time` stamped from the host clock, so the
 //!   coordinator's own cook (fed in `end_frame`) reports real
@@ -725,7 +728,17 @@ impl PerWindowInput {
                 // onto another widget (or off all of them), so hover paints without
                 // waiting for the next unrelated input.
                 let target = self.content_target(self.pointer.pos);
-                (self.pointer.button_down.is_some() || target != self.hover, target)
+                let mut changed = self.pointer.button_down.is_some() || target != self.hover;
+                // `cook` already armed this move. The highlight is the store
+                // range, and the frame paints it before `end_frame`.
+                if self.pointer.button_down == Some(MouseButton::Left)
+                    && self.cook.drag_armed
+                    && self.coord.text_fields().drag_active()
+                {
+                    self.coord.text_fields_mut().on_drag_move(pos.x);
+                    changed = true;
+                }
+                (changed, target)
             }
             PointerInput::Down { pos, button, .. } => {
                 self.pointer.pos = Some((pos.x, pos.y));
@@ -739,6 +752,11 @@ impl PerWindowInput {
                 self.pressed.clone_from(&target);
                 let t = target.as_ref().map(|t| self.sel_owner(t));
                 let sel_changed = self.press_down(win, t.as_ref(), pos.x, pos.y, fx);
+                if button == MouseButton::Left {
+                    self.arm_text_drag(target.as_ref(), pos.x);
+                } else if self.coord.text_fields().drag_active() {
+                    self.coord.text_fields_mut().on_drag_end();
+                }
                 (changed | sel_changed, target)
             }
             PointerInput::Up { pos, button, .. } => {
@@ -752,6 +770,12 @@ impl PerWindowInput {
                 let _ = self.pressed.take();
                 let t = target.as_ref().map(|t| self.sel_owner(t));
                 let _ = self.release_select(win, t.as_ref(), fx);
+                // A real drag keeps the range (`anchor != cursor`); a click
+                // drops the degenerate one. `end_frame` then commits either
+                // `select_drag` or `select_at_click_count`.
+                if button == MouseButton::Left && self.coord.text_fields().drag_active() {
+                    self.coord.text_fields_mut().on_drag_end();
+                }
                 // Always repaint on release: only a frame evaluates the click
                 // (`pointer.clicked`), on any cadence.
                 (true, target)
@@ -760,6 +784,32 @@ impl PerWindowInput {
             | PointerInput::Left
             | PointerInput::Cancelled
             | PointerInput::RawDelta { .. } => (false, None),
+        }
+    }
+
+    /// Press on a text field: place the caret and arm a drag so later moves
+    /// extend the selection while the button is held. A double or triple
+    /// click is left to `end_frame` (`select_at_click_count` selects the
+    /// word or the line). Any other press ends a stale text drag so it
+    /// cannot follow the pointer onto another control.
+    fn arm_text_drag(&mut self, target: Option<&WidgetId>, x: f64) {
+        let field = match target {
+            Some(id)
+                if self.coord.widget_sense(id).is_some_and(|s| s.text)
+                    && self.coord.text_fields().has_field(id) =>
+            {
+                Some(id.clone())
+            }
+            _ => None,
+        };
+        if let Some(id) = field {
+            if self.cook.click_count <= 1 {
+                self.coord.text_fields_mut().begin_drag_at(id, x);
+                return;
+            }
+        }
+        if self.coord.text_fields().drag_active() {
+            self.coord.text_fields_mut().on_drag_end();
         }
     }
 

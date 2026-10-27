@@ -1466,6 +1466,46 @@ fn double_click_selects_word_triple_selects_line() {
 }
 
 #[test]
+fn drag_selects_text_field_before_release() {
+    let mut e = engine();
+    frame(&mut e, 0.5, |c| {
+        field(c, "a", rect_a(), TextFieldConfig::text());
+        let fid = id("a");
+        c.text_fields_mut().set_text(&fid, "abcdef");
+        let positions: Vec<f64> = (0..=6).map(|i| rect_a().x + i as f64 * CHAR_W).collect();
+        c.text_fields_mut().update_field(
+            &fid,
+            (rect_a().x, rect_a().y, rect_a().width, rect_a().height),
+            positions,
+        );
+    });
+    let range = |e: &InputEngine| e.view().text_fields(W).and_then(|t| t.selection_range(&id("a")));
+    let scene = |c: &mut InputCoordinator| {
+        field(c, "a", rect_a(), TextFieldConfig::text());
+    };
+    // x=12 is before the midpoint of char 0 (14): caret at index 0, no range.
+    to_content(&mut e, 1.0, down(12.0, 15.0));
+    assert_eq!(range(&e), None);
+    // The press frame records the origin. A later release is a drag only
+    // once a frame has seen the button down.
+    frame(&mut e, 1.005, scene);
+    assert_eq!(range(&e), None);
+    // 2 px is under the drag threshold, so a wiggle stays a click.
+    to_content(&mut e, 1.01, moved(14.0, 15.0));
+    assert_eq!(range(&e), None);
+    // x=32 is index 3 (mid of char 2 is 30, mid of char 3 is 38).
+    // No frame and no mouse-up yet: the highlight has to be in the store.
+    to_content(&mut e, 1.02, moved(32.0, 15.0));
+    assert_eq!(range(&e), Some((0, 3)), "the highlight is live before mouse-up");
+    frame(&mut e, 1.025, scene);
+    assert_eq!(range(&e), Some((0, 3)), "a held frame keeps the live range");
+    to_content(&mut e, 1.03, up(32.0, 15.0));
+    assert_eq!(range(&e), Some((0, 3)));
+    frame(&mut e, 1.05, scene);
+    assert_eq!(range(&e), Some((0, 3)), "release commits the same range");
+}
+
+#[test]
 fn drag_selects_range_and_survives_release() {
     let mut e = engine();
     frame_sel(&mut e, 0.5, one_label);
