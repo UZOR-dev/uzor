@@ -188,14 +188,17 @@ fn ensure_urx_cpu_resources(state: &mut WindowRenderState, width: u32, height: u
 // `RenderBackend::InstancedWgpu`'s own (untouched, still-legacy,
 // still-manually-selectable) submit path.
 
-/// Resolve the framework AA request to the counts supported by the native URX
-/// path. `8` and `16` mean "MSAA enabled" and use the renderer's stable 4x
-/// pipeline; all other values mirror `submit::aa_for`'s area-AA fallback by
-/// disabling native MSAA.
+/// Resolve the framework AA request to the counts the native URX path
+/// actually has. `1` is the explicit off (`RenderCmd`: 1 = off). Every
+/// other count, including the autodetect default `0`, uses the stable 4x
+/// pipeline. Native URX has no area-AA pass; 4x MSAA is the Wave 1
+/// substitute, and `NativeUrxRenderer::new` already defaults to it.
+/// Mapping `0` to one sample made every autodetected `UrxWgpu` path
+/// hard-edged.
 fn native_urx_sample_count(msaa_samples: u8) -> u32 {
     match msaa_samples {
-        8 | 16 => 4,
-        _ => 1,
+        1 => 1,
+        _ => 4,
     }
 }
 
@@ -682,9 +685,9 @@ mod tests {
 
     #[test]
     fn native_urx_msaa_requests_resolve_to_supported_pipeline_counts() {
-        assert_eq!(super::native_urx_sample_count(0), 1);
+        assert_eq!(super::native_urx_sample_count(0), 4);
         assert_eq!(super::native_urx_sample_count(1), 1);
-        assert_eq!(super::native_urx_sample_count(4), 1);
+        assert_eq!(super::native_urx_sample_count(4), 4);
         assert_eq!(super::native_urx_sample_count(8), 4);
         assert_eq!(super::native_urx_sample_count(16), 4);
     }
