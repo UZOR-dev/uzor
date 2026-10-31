@@ -936,20 +936,22 @@ fn resolve<'e>(
         _ => {}
     }
     let node = Node::parse(&el.spec).state(st);
-    let mut s = match up.as_deref() {
-        Some(u) if !u.is_empty() => sheet.resolve_in(&node, u, parent),
-        _ => sheet.resolve(&node, parent),
+    // Inline declarations: custom properties take part in the element's own cascade (its
+    // sheet rules' `var()` see them, and they reach the subtree like sheet ones), then
+    // every other inline value is applied with `var()` resolved against them.
+    let decls: Vec<(&str, &str)> = el.css.as_deref().map_or_else(Vec::new, |css| {
+        css.split(';').filter_map(|d| d.split_once(':')).map(|(k, v)| (k.trim(), v.trim())).collect()
+    });
+    let inline_vars = decls.iter().any(|(k, _)| k.starts_with("--"));
+    let ups: &[Node<'_>] = up.as_deref().unwrap_or(&[]);
+    let mut s = if inline_vars {
+        sheet.resolve_with_inline(&node, ups, parent, &decls)
+    } else if !ups.is_empty() {
+        sheet.resolve_in(&node, ups, parent)
+    } else {
+        sheet.resolve(&node, parent)
     };
-    if let Some(css) = &el.css {
-        // Inline declarations: custom properties first (they reach the subtree like sheet
-        // ones), then every value with `var()` resolved against them.
-        let decls: Vec<(&str, &str)> = css.split(';').filter_map(|d| d.split_once(':')).map(|(k, v)| (k.trim(), v.trim())).collect();
-        for (k, v) in &decls {
-            if k.starts_with("--") {
-                let v = sheet.subst_with(v, &s.custom);
-                s.custom.insert(k.to_string(), v);
-            }
-        }
+    if !decls.is_empty() {
         for (k, v) in decls.iter().filter(|(k, _)| !k.starts_with("--")) {
             let v = sheet.subst_with(v, &s.custom);
             apply_decl(&mut s, k, &v);
@@ -1817,6 +1819,20 @@ mod tests {
         let plain = El::new("div.r").child(El::new("span.t").id("t").text("x"));
         let dom = lay_out(&mut ctx, &sh, &plain, 0.0, 0.0, 200.0, &|_| State::NONE);
         assert_eq!(dom.get("t").and_then(|p| p.style.color.as_deref()), Some("#111111"));
+    }
+
+    /// An element's own sheet rules see its inline custom properties (`<div class="root"
+    /// style="--fg: …">` with `.root { color: var(--fg) }`), and inline ones beat the
+    /// sheet's for the same element; text inheriting from it gets the inline value.
+    #[test]
+    fn inline_custom_properties_feed_the_elements_own_rules() {
+        let sh = Sheet::parse(":root { --fg: #eeeeee } div.root { color: var(--fg); --edge: #222222; border-color: var(--edge) }").unwrap();
+        let mut ctx = NullRenderContext::default();
+        let page = El::new("div.root").id("r").css("--fg: #1d1f24; --edge: #ff0000").child(El::new("div").id("t").text("x"));
+        let dom = lay_out(&mut ctx, &sh, &page, 0.0, 0.0, 200.0, &|_| State::NONE);
+        assert_eq!(dom.get("r").and_then(|p| p.style.color.as_deref()), Some("#1d1f24"));
+        assert_eq!(dom.get("t").and_then(|p| p.style.color.as_deref()), Some("#1d1f24"), "inherited text");
+        assert_eq!(dom.get("r").and_then(|p| p.style.border_color.as_deref()), Some("#ff0000"), "inline beats the sheet's custom property");
     }
 
     const CSS: &str = r#"

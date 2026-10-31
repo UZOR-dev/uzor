@@ -651,6 +651,17 @@ impl Sheet {
 
     /// [`Sheet::resolve_traced`] with ancestors (see [`Sheet::resolve_in`]).
     pub fn resolve_traced_in(&self, n: &Node<'_>, up: &[Node<'_>], parent: Option<&Style>) -> (Style, Vec<Applied>) {
+        self.resolve_full(n, up, parent, &[])
+    }
+
+    /// [`Sheet::resolve_in`] for an element with inline custom properties (`--name`,
+    /// from a `style` attribute): they override the sheet's for the element, so its own
+    /// sheet declarations (`color: var(--fg)`) already see them, like the browser.
+    pub fn resolve_with_inline(&self, n: &Node<'_>, up: &[Node<'_>], parent: Option<&Style>, inline: &[(&str, &str)]) -> Style {
+        self.resolve_full(n, up, parent, inline).0
+    }
+
+    fn resolve_full(&self, n: &Node<'_>, up: &[Node<'_>], parent: Option<&Style>, inline: &[(&str, &str)]) -> (Style, Vec<Applied>) {
         let mut trace = Vec::new();
         let mut s = Style::default();
         if let Some(p) = parent {
@@ -674,6 +685,11 @@ impl Sheet {
                 if k.starts_with("--") {
                     s.custom.insert(k.clone(), v.clone());
                 }
+            }
+        }
+        for (k, v) in inline {
+            if k.starts_with("--") {
+                s.custom.insert(k.to_string(), v.to_string());
             }
         }
         let local = std::mem::take(&mut s.custom);
