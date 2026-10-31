@@ -2,17 +2,21 @@
 //!
 //! The dock is assembled the same way as the framework demo: one panel at
 //! the root, then `Split` on `LayoutChanged`. The page pushes JSON; this
-//! module only paints it.
+//! module only paints it: each panel is a DOM toolbar plus a DOM row list
+//! (only the visible rows are built) inside the kit scroll view.
 
 use std::sync::Mutex;
 
-use uzor::input::{Sense, WidgetKind};
 use uzor::layout::docking::DockPanel;
-use uzor::render::{TextAlign, TextBaseline};
-use uzor::tokens::{BuiltinSet, TokenTheme, Tokens};
-use uzor::ui::widgets::atomic::text::{draw_text, TextOverflow, TextSettings, TextView};
-use uzor::{Rect, WidgetId};
-use uzor_framework::widgets::{scroll_begin, scroll_end};
+use uzor::tokens::{BuiltinSet, Tokens};
+use uzor::ui::dom::El;
+use uzor::ui::domkit as k;
+use uzor::ui::style::Sheet;
+use uzor::Rect;
+use uzor_framework::widgets::{kit, scroll_begin, scroll_end};
+
+#[path = "../common/look.rs"]
+mod look;
 use uzor_framework::{
     App, AppCommand, DockIntent, DockTarget, DragOutChrome, DragOutPolicy, Intent, LayoutCmd,
     LayoutPolicy, PanelCx, PanelHome, RuntimeConfig, ScrollStyle, ScrollView, SizePx, Spec,
@@ -22,13 +26,29 @@ use uzor_framework::{
 /// Canvas id the page provides.
 pub const CANVAS_ID: &str = "hq-monitor";
 
-const ROW_TWO: f64 = 34.0;
-const ROW_ONE: f64 = 22.0;
-const MARK: &str = "#c4a35a";
-const MARK_TEXT: &str = "#e4d2a8";
-const DIM: &str = "#8e97a8";
-const SELECTED: &str = "#243044";
-const HOVER: &str = "#1a2230";
+const ROW_TWO: f64 = 40.0;
+const ROW_ONE: f64 = 26.0;
+const BAR_H: f64 = 34.0;
+
+/// Rows and the per-panel toolbar on top of the shared look. A screen-marked row
+/// carries a gold bar and gold text.
+const CSS: &str = r#"
+div.m-bar { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0px 12px; background: var(--k-panel);
+            border-bottom: 1px solid var(--k-line) }
+div.m-title { font-weight: 600; font-size: 12px }
+div.m-hint { color: var(--k-muted); font-size: 11px }
+div.m-list { display: flex; flex-direction: column; padding: 4px 6px; background: var(--k-bg) }
+div.m-empty { color: var(--k-muted); padding: 8px 8px }
+button.m-row { display: flex; flex-direction: column; justify-content: center; height: 26px; padding: 0px 10px; border-radius: 6px;
+               border-left: 3px solid transparent; flex-shrink: 0 }
+button.m-row.two { height: 40px }
+button.m-row:hover { background: var(--k-hover) }
+button.m-row.on { background: var(--k-sel) }
+button.m-row.mark { border-left: 3px solid #c4a35a }
+div.m-p { font-size: 12px; height: 17px }
+button.m-row.mark div.m-p { color: #e4d2a8 }
+div.m-s { font-size: 11px; color: var(--k-muted); height: 15px }
+"#;
 
 static SNAP: Mutex<Option<serde_json::Value>> = Mutex::new(None);
 static WIN: Mutex<Option<WindowId>> = Mutex::new(None);
@@ -145,6 +165,7 @@ pub struct MonitorApp {
     win: Option<WindowId>,
     scrolls: [ScrollView; 4],
     selected: Option<String>,
+    sheet: Sheet,
 }
 
 impl MonitorApp {
@@ -155,6 +176,7 @@ impl MonitorApp {
             win: None,
             scrolls: Default::default(),
             selected: None,
+            sheet: look::sheet(CSS),
         }
     }
 
@@ -254,14 +276,14 @@ impl App for MonitorApp {
 
     fn panel(&mut self, cx: &mut PanelCx<'_, Self::Spec>) {
         let snap = take_snap();
-        let (slot, scroll_id, lines, empty, row_h, two) = match *cx.panel {
-            MonitorPanel::Shells => (0, "scroll-shells", shell_lines(snap.as_ref()), "пусто", ROW_TWO, true),
-            MonitorPanel::Windows => (1, "scroll-windows", window_lines(snap.as_ref()), "пусто", ROW_TWO, true),
-            MonitorPanel::Once => (2, "scroll-once", once_lines(snap.as_ref()), "пусто", ROW_TWO, true),
-            MonitorPanel::Burns => (3, "scroll-burns", burn_lines(snap.as_ref()), "пусто", ROW_ONE, false),
+        let (slot, scroll_id, title, lines, two) = match *cx.panel {
+            MonitorPanel::Shells => (0, "scroll-shells", "Shell cycles", shell_lines(snap.as_ref()), true),
+            MonitorPanel::Windows => (1, "scroll-windows", "Console windows", window_lines(snap.as_ref()), true),
+            MonitorPanel::Once => (2, "scroll-once", "One-shot starts", once_lines(snap.as_ref()), true),
+            MonitorPanel::Burns => (3, "scroll-burns", "SLO burns", burn_lines(snap.as_ref()), false),
         };
-        let empty = if snap.is_none() { "нет кадра" } else { empty };
-        self.paint_list(cx, slot, scroll_id, &lines, empty, row_h, two);
+        let empty = if snap.is_none() { "нет кадра" } else { "пусто" };
+        self.paint_list(cx, slot, scroll_id, title, &lines, empty, two);
     }
 
     fn overlay_body(&mut self, cx: &mut uzor_framework::OverlayCx<'_, Self::Spec>) {
@@ -296,111 +318,82 @@ impl App for MonitorApp {
 }
 
 impl MonitorApp {
+    #[allow(clippy::too_many_arguments)]
     fn paint_list(
         &mut self,
         cx: &mut PanelCx<'_, MonitorSpec>,
         slot: usize,
         scroll_id: &str,
+        title: &str,
         lines: &[Line],
         empty: &str,
-        row_h: f64,
         two: bool,
     ) {
-        // The leaf rect includes the tab the kernel paints. Same inset as the demo.
-        let viewport = Rect::new(
-            cx.rect.x + 6.0,
-            cx.rect.y + 28.0,
-            (cx.rect.width - 12.0).max(1.0),
-            (cx.rect.height - 34.0).max(1.0),
+        // The leaf rect includes the tab the kernel paints.
+        let body = Rect::new(cx.rect.x, cx.rect.y + 28.0, cx.rect.width.max(1.0), (cx.rect.height - 28.0).max(1.0));
+        // A toolbar: what the panel lists, how many, how many marked, which row is picked.
+        let bar = Rect::new(body.x, body.y, body.width, BAR_H.min(body.height));
+        let marked = lines.iter().filter(|l| l.mark).count();
+        let sel_here = lines.iter().position(|l| self.selected.as_deref() == Some(l.key.as_str()));
+        let bar_tree = look::root(true, BAR_H).child(
+            El::new("div.m-bar")
+                .child(El::new("div.m-title").text(title))
+                .child(k::badge(&lines.len().to_string(), "info"))
+                .child_if(marked > 0, || k::badge(&format!("{marked} marked"), "warn"))
+                .child(El::new("div.p-grow"))
+                .child_if(sel_here.is_some(), || El::new("div.m-hint").text(format!("row {}", sel_here.unwrap_or(0) + 1))),
         );
-        let count = lines.len().max(1);
-        let content_h = count as f64 * row_h;
+        kit::dom(bar, &self.sheet, bar_tree).build(cx);
+
+        let viewport = Rect::new(body.x, body.y + BAR_H, body.width, (body.height - BAR_H).max(1.0));
+        let row_h = if two { ROW_TWO } else { ROW_ONE };
+        let content_h = (lines.len().max(1) as f64 * row_h + 8.0).max(viewport.height);
         let style = ScrollStyle::default();
-        let off = scroll_begin(
-            cx,
-            scroll_id,
-            viewport,
-            &mut self.scrolls[slot],
-            content_h,
-            true,
-            &style,
-        );
-        cx.render.save();
-        cx.render.clip_rect(viewport.x, viewport.y, viewport.width, viewport.height);
-        let settings = text_settings(cx.tokens);
+        let off = scroll_begin(cx, scroll_id, viewport, &mut self.scrolls[slot], content_h, true, &style);
+        // Only the visible rows go into the tree; a spacer stands in for the ones above.
+        let first = (((off - 4.0) / row_h).floor().max(0.0) as usize).min(lines.len());
+        let last = ((((off + viewport.height) / row_h).ceil() as usize) + 1).min(lines.len()).max(first);
+        let mut list = El::new("div.m-list").css(format!("height: {content_h}px"));
         if lines.is_empty() {
-            let rect = Rect::new(viewport.x + 12.0, viewport.y + 8.0, (viewport.width - 20.0).max(1.0), 20.0);
-            label(cx, rect, empty, Some(DIM), &settings);
+            list = list.child(El::new("div.m-empty").text(empty));
         } else {
-            for (i, line) in lines.iter().enumerate() {
-                let y = viewport.y - off + i as f64 * row_h;
-                if y + row_h < viewport.y || y > viewport.y + viewport.height {
-                    continue;
-                }
-                let rect = Rect::new(viewport.x + 4.0, y, (viewport.width - 14.0).max(1.0), row_h);
-                let hit = WidgetId::from(format!("hit:{scroll_id}:{i}:{}", line.key));
-                let clicked = cx.view.clicked(&hit);
-                let hovered = cx.view.is_hovered(&hit);
-                if clicked {
-                    self.selected = Some(line.key.clone());
-                }
+            list = list.child(El::new("div").css(format!("height: {}px; flex-shrink: 0", first as f64 * row_h)));
+            for (i, line) in lines.iter().enumerate().take(last).skip(first) {
                 let on = self.selected.as_deref() == Some(line.key.as_str());
-                if on || hovered {
-                    cx.render.set_fill_color(if on { SELECTED } else { HOVER });
-                    cx.render.fill_rect(rect.x, rect.y, rect.width, rect.height);
+                let mut spec = String::from("button.m-row");
+                if two {
+                    spec.push_str(".two");
                 }
                 if line.mark {
-                    cx.render.set_fill_color(MARK);
-                    cx.render.fill_rect(rect.x + 2.0, rect.y + 4.0, 3.0, (rect.height - 8.0).max(1.0));
+                    spec.push_str(".mark");
                 }
-                let text_x = rect.x + 10.0;
-                let text_w = (rect.width - 16.0).max(1.0);
-                if two {
-                    label(
-                        cx,
-                        Rect::new(text_x, y + 1.0, text_w, 16.0),
-                        &line.primary,
-                        if line.mark { Some(MARK_TEXT) } else { None },
-                        &settings,
-                    );
-                    if !line.secondary.is_empty() {
-                        label(cx, Rect::new(text_x, y + 16.0, text_w, 16.0), &line.secondary, Some(DIM), &settings);
-                    }
-                } else {
-                    label(
-                        cx,
-                        Rect::new(text_x, y, text_w, row_h),
-                        &line.primary,
-                        if line.mark { Some(MARK_TEXT) } else { None },
-                        &settings,
-                    );
+                if on {
+                    spec.push_str(".on");
                 }
-                let layer = cx.widgets.layer.clone();
-                cx.widgets
-                    .coord
-                    .register_atomic(hit, WidgetKind::Custom, rect, Sense::CLICK, &layer);
+                let mut row = El::new(spec)
+                    .id(format!("{scroll_id}:{i}"))
+                    .name(line.primary.clone())
+                    .child(El::new("div.m-p").text(line.primary.clone()));
+                if two && !line.secondary.is_empty() {
+                    row = row.child(El::new("div.m-s").text(line.secondary.clone()));
+                }
+                list = list.child(row);
             }
         }
-        cx.render.restore();
+        let tree = look::root(true, content_h).child(list);
+        let resp = kit::dom(viewport, &self.sheet, tree).scroll(off).build(cx);
+        let picked = resp
+            .clicked
+            .as_deref()
+            .and_then(|c| c.strip_prefix(scroll_id))
+            .and_then(|c| c.strip_prefix(':'))
+            .and_then(|i| i.parse::<usize>().ok())
+            .and_then(|i| lines.get(i));
+        if let Some(line) = picked {
+            self.selected = Some(line.key.clone());
+        }
         scroll_end(cx, scroll_id, viewport, &self.scrolls[slot], &style);
     }
-}
-
-fn text_settings(tokens: &Tokens) -> TextSettings {
-    TextSettings::default().with_theme(Box::new(TokenTheme::from_tokens(tokens)))
-}
-
-fn label(cx: &mut PanelCx<'_, MonitorSpec>, rect: Rect, text: &str, color: Option<&str>, settings: &TextSettings) {
-    let view = TextView {
-        text,
-        align: TextAlign::Left,
-        baseline: TextBaseline::Middle,
-        color,
-        font: Some("12px Segoe UI, sans-serif"),
-        overflow: TextOverflow::Ellipsis,
-        hovered: false,
-    };
-    draw_text(cx.render, rect, &view, settings);
 }
 
 fn status_line(snap: Option<&serde_json::Value>) -> String {
