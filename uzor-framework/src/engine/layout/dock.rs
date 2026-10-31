@@ -875,8 +875,8 @@ fn clamp_floating<P: DockPanel>(w: &mut WindowLayout<P>, id: FloatingWindowId) {
     };
     let r = rects::from_panel(fw.rect());
     let a = w.solved.dock_area;
-    let x = r.x.clamp(a.x, (a.x + a.width - r.width).max(a.x));
-    let y = r.y.clamp(a.y, (a.y + a.height - r.height).max(a.y));
+    let x = r.x.max(a.x).min((a.x + a.width - r.width).max(a.x));
+    let y = r.y.max(a.y).min((a.y + a.height - r.height).max(a.y));
     w.dock
         .set_floating_rect(id, rects::to_panel(Rect::new(x, y, r.width, r.height)));
 }

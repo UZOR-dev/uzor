@@ -209,11 +209,11 @@ impl ScrollView {
         if self.follow_end && self.drag.is_none() && self.fling.is_none() && self.glide.is_none() {
             self.offset = self.max();
         }
-        self.offset = self.offset.clamp(0.0, self.max());
+        self.offset = self.offset.max(0.0).min(self.max());
     }
 
     fn moved(&mut self) {
-        self.offset = self.offset.clamp(0.0, self.max());
+        self.offset = self.offset.max(0.0).min(self.max());
         self.follow_end = self.at_bottom();
     }
 
@@ -319,7 +319,7 @@ impl ScrollView {
             ScrollAlign::Nearest if y + h > self.offset + self.view => y + h - self.view,
             ScrollAlign::Nearest => self.offset,
         }
-        .clamp(0.0, self.max());
+        .max(0.0).min(self.max());
         if !smooth || (target - self.offset).abs() < 0.5 {
             self.scroll_to(target);
             return;
@@ -344,7 +344,7 @@ impl ScrollView {
             ScrollKey::Home => 0.0,
             ScrollKey::End => self.max(),
         }
-        .clamp(0.0, self.max());
+        .max(0.0).min(self.max());
         if !self.scrollable() || (target - from).abs() < 0.5 {
             return false;
         }
@@ -380,7 +380,7 @@ impl ScrollView {
         if !self.scrollable() || track.height <= 0.0 {
             return None;
         }
-        let len = (track.height * self.view / self.content).clamp(st.min_thumb.min(track.height), track.height);
+        let len = (track.height * self.view / self.content).max(st.min_thumb.min(track.height)).min(track.height);
         let y = track.y + (track.height - len) * (self.offset / self.max().max(1e-9));
         Some(Rect::new(track.x, y, track.width, len))
     }

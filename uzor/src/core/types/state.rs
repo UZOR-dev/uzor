@@ -348,7 +348,7 @@ impl ScrollState {
         }
         let max_scroll = (content_height - viewport_height).max(0.0);
         let scroll_step = 30.0; // pixels per scroll tick
-        self.offset = (self.offset + delta_y * scroll_step).clamp(0.0, max_scroll);
+        self.offset = (self.offset + delta_y * scroll_step).max(0.0).min(max_scroll);
         true
     }
 
@@ -375,7 +375,7 @@ impl ScrollState {
         if available_height > 0.0 {
             let delta_y = y - start_y;
             let scroll_delta = (delta_y / available_height) * max_scroll;
-            self.offset = (start_offset + scroll_delta).clamp(0.0, max_scroll);
+            self.offset = (start_offset + scroll_delta).max(0.0).min(max_scroll);
         }
     }
 
@@ -386,13 +386,13 @@ impl ScrollState {
             return;
         }
         let relative_y = (click_y - track_y) / track_height;
-        self.offset = (relative_y * max_scroll).clamp(0.0, max_scroll);
+        self.offset = (relative_y * max_scroll).max(0.0).min(max_scroll);
     }
 
     /// Clamp offset to valid range
     pub fn clamp(&mut self, content_height: f64, viewport_height: f64) {
         let max_scroll = (content_height - viewport_height).max(0.0);
-        self.offset = self.offset.clamp(0.0, max_scroll);
+        self.offset = self.offset.max(0.0).min(max_scroll);
     }
 }
 

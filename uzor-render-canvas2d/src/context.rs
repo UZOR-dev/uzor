@@ -409,10 +409,10 @@ impl ShapeHelpers for Canvas2dRenderContext {
 
     fn rounded_rect_corners(&mut self, x: f64, y: f64, w: f64, h: f64, tl: f64, tr: f64, br: f64, bl: f64) {
         let max_r = (w / 2.0).min(h / 2.0).max(0.0);
-        let tl = tl.clamp(0.0, max_r);
-        let tr = tr.clamp(0.0, max_r);
-        let br = br.clamp(0.0, max_r);
-        let bl = bl.clamp(0.0, max_r);
+        let tl = tl.max(0.0).min(max_r);
+        let tr = tr.max(0.0).min(max_r);
+        let br = br.max(0.0).min(max_r);
+        let bl = bl.max(0.0).min(max_r);
         self.begin_path();
         self.move_to(x + tl, y);
         self.line_to(x + w - tr, y);

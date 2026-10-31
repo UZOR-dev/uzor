@@ -13,8 +13,8 @@ pub fn aspect_height(width: f64, vw: f64, vh: f64) -> f64 {
 /// Map a window point inside `r` to source pixel `(x, y)` of a `vw`×`vh`
 /// frame, rounded and clamped to `[0, vw-1]`×`[0, vh-1]`.
 pub fn to_source(r: Rect, vw: f64, vh: f64, p: (f64, f64)) -> (f64, f64) {
-    let x = ((p.0 - r.x) * vw / r.width.max(1.0)).round().clamp(0.0, (vw - 1.0).max(0.0));
-    let y = ((p.1 - r.y) * vh / r.height.max(1.0)).round().clamp(0.0, (vh - 1.0).max(0.0));
+    let x = ((p.0 - r.x) * vw / r.width.max(1.0)).round().max(0.0).min((vw - 1.0).max(0.0));
+    let y = ((p.1 - r.y) * vh / r.height.max(1.0)).round().max(0.0).min((vh - 1.0).max(0.0));
     (x, y)
 }
 

@@ -594,11 +594,11 @@ impl<P: DockPanel> DockState<P> {
                         let available_w = (full_w - gap).max(1.0);
                         let raw = cur_xr + delta as f64 / available_w as f64;
                         if reject && (raw < lo || raw > hi) {
-                            let overshoot = (raw - raw.clamp(lo, hi)) * available_w as f64;
+                            let overshoot = (raw - raw.max(lo).min(hi)) * available_w as f64;
                             self.snap_animations.push(SnapBackAnimation::new(sep_idx, overshoot as f32));
                             return false;
                         }
-                        new_xr = raw.clamp(lo, hi);
+                        new_xr = raw.max(lo).min(hi);
                         new_yr = cur_yr;
                     }
                     SeparatorOrientation::Horizontal => {
@@ -606,12 +606,12 @@ impl<P: DockPanel> DockState<P> {
                         let available_h = (full_h - gap).max(1.0);
                         let raw = cur_yr + delta as f64 / available_h as f64;
                         if reject && (raw < lo || raw > hi) {
-                            let overshoot = (raw - raw.clamp(lo, hi)) * available_h as f64;
+                            let overshoot = (raw - raw.max(lo).min(hi)) * available_h as f64;
                             self.snap_animations.push(SnapBackAnimation::new(sep_idx, overshoot as f32));
                             return false;
                         }
                         new_xr = cur_xr;
-                        new_yr = raw.clamp(lo, hi);
+                        new_yr = raw.max(lo).min(hi);
                     }
                 }
                 self.tree.set_branch_cross_ratio(parent_id, new_xr, new_yr);
@@ -1706,8 +1706,8 @@ impl<P: DockPanel> DockState<P> {
             id,
             panels: leaf.panels,
             active_tab: leaf.active_tab,
-            x: x.clamp(0.0, (area_width - 300.0).max(0.0)),
-            y: y.clamp(0.0, (area_height - 300.0).max(0.0)),
+            x: x.max(0.0).min((area_width - 300.0).max(0.0)),
+            y: y.max(0.0).min((area_height - 300.0).max(0.0)),
             width: 300.0,
             height: 300.0,
         };
@@ -1805,8 +1805,8 @@ impl<P: DockPanel> DockState<P> {
             let ox = drag.offset_x;
             let oy = drag.offset_y;
             if let Some(fw) = self.floating_windows.iter_mut().find(|fw| fw.id == fw_id) {
-                fw.x = (cursor_x - ox).clamp(0.0, (area_width - fw.width).max(0.0));
-                fw.y = (cursor_y - oy).clamp(0.0, (area_height - fw.height).max(0.0));
+                fw.x = (cursor_x - ox).max(0.0).min((area_width - fw.width).max(0.0));
+                fw.y = (cursor_y - oy).max(0.0).min((area_height - fw.height).max(0.0));
             }
         }
     }
@@ -2219,7 +2219,7 @@ fn clamp_pair(a: f64, b: f64, delta: f64, min_a: f64, min_b: f64) -> (f64, f64) 
     let total = a + b;
     let lo = min_a.min(a);
     let hi = (total - min_b).max(a);
-    let new_a = (a + delta).clamp(lo, hi);
+    let new_a = (a + delta).max(lo).min(hi);
     (new_a, total - new_a)
 }
 

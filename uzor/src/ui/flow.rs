@@ -53,7 +53,7 @@ pub fn flex_row(avail: f64, items: &[FlexItem], gap: f64, justify: Justify) -> V
     let gaps = gap * (items.len() - 1) as f64;
     let n = items.len();
     // CSS "resolve flexible lengths" (css-flexbox-1 §9.7).
-    let hyp: Vec<f64> = items.iter().map(|i| i.basis.clamp(i.min, i.max)).collect();
+    let hyp: Vec<f64> = items.iter().map(|i| i.basis.min(i.max).max(i.min)).collect();
     let grow = hyp.iter().sum::<f64>() + gaps < avail;
     let mut size: Vec<f64> = items.iter().map(|i| i.basis).collect();
     let mut frozen: Vec<bool> = (0..n)
@@ -79,7 +79,7 @@ pub fn flex_row(avail: f64, items: &[FlexItem], gap: f64, justify: Justify) -> V
         let mut viol = vec![0.0; n];
         for k in (0..n).filter(|&k| !frozen[k]) {
             let want = if total > 0.0 { items[k].basis + free * weight(k) / total } else { items[k].basis };
-            let got = want.clamp(items[k].min, items[k].max);
+            let got = want.min(items[k].max).max(items[k].min);
             viol[k] = got - want;
             size[k] = got;
         }
@@ -706,7 +706,7 @@ fn flex_rowbox(s: &Style, kids: &[&LBox<'_>], cx: f64, cy: f64, cw: f64, ch: Opt
     let mut lines: Vec<Vec<usize>> = vec![vec![]];
     let mut used = 0.0;
     for (i, it) in items.iter().enumerate() {
-        let hyp = it.basis.clamp(it.min, it.max);
+        let hyp = it.basis.min(it.max).max(it.min);
         let cur = lines.last_mut().unwrap();
         if wrap && !cur.is_empty() && used + col_gap(s) + hyp > cw + 1e-9 {
             lines.push(vec![i]);
@@ -785,7 +785,7 @@ fn flex_col(s: &Style, kids: &[&LBox<'_>], cx: f64, cy: f64, cw: f64, ch: Option
     let items: Vec<FlexItem> = kids.iter().zip(&widths).map(|(c, &w)| item(c, true, w)).collect();
     let main = match ch {
         Some(h) => flex_row(h, &items, row_gap(s), justify_of(s)),
-        None => flex_row(f64::NEG_INFINITY.max(items.iter().map(|i| i.basis.clamp(i.min, i.max)).sum::<f64>() + row_gap(s) * items.len().saturating_sub(1) as f64), &items, row_gap(s), Justify::Start),
+        None => flex_row(f64::NEG_INFINITY.max(items.iter().map(|i| i.basis.min(i.max).max(i.min)).sum::<f64>() + row_gap(s) * items.len().saturating_sub(1) as f64), &items, row_gap(s), Justify::Start),
     };
     let mut out = Vec::new();
     let mut end: f64 = 0.0;

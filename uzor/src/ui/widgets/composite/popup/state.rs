@@ -105,7 +105,7 @@ impl PopupState {
             | crate::layout::ChevronStepDirection::Left => -step,
             _ => step,
         };
-        self.scroll.offset = (self.scroll.offset + signed).clamp(0.0, max);
+        self.scroll.offset = (self.scroll.offset + signed).max(0.0).min(max);
     }
 
     pub fn end_body_scroll_drag(&mut self) {

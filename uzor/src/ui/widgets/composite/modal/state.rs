@@ -118,9 +118,9 @@ impl ModalState {
             return;
         }
         let x = (cursor_pos.0 - self.drag_offset.0)
-            .clamp(0.0, (screen_size.0 - modal_size.0).max(0.0));
+            .max(0.0).min((screen_size.0 - modal_size.0).max(0.0));
         let y = (cursor_pos.1 - self.drag_offset.1)
-            .clamp(0.0, (screen_size.1 - modal_size.1).max(0.0));
+            .max(0.0).min((screen_size.1 - modal_size.1).max(0.0));
         self.position = (x, y);
     }
 
@@ -210,13 +210,13 @@ impl ModalState {
                 let max = (self.body_content_h - self.body_viewport_h).max(0.0);
                 let step = self.body_viewport_h.max(40.0);
                 let signed = if matches!(direction, D::Up) { -step } else { step };
-                self.scroll.offset = (self.scroll.offset + signed).clamp(0.0, max);
+                self.scroll.offset = (self.scroll.offset + signed).max(0.0).min(max);
             }
             D::Left | D::Right => {
                 let max = (self.body_content_w - self.body_viewport_w).max(0.0);
                 let step = self.body_viewport_w.max(40.0);
                 let signed = if matches!(direction, D::Left) { -step } else { step };
-                self.body_scroll_x = (self.body_scroll_x + signed).clamp(0.0, max);
+                self.body_scroll_x = (self.body_scroll_x + signed).max(0.0).min(max);
             }
         }
     }
