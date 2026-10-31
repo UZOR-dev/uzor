@@ -1404,3 +1404,35 @@ fn platform_paste_without_a_field_reaches_the_app() {
         .collect();
     assert_eq!(got, vec!["clip text".to_string()]);
 }
+
+/// An intent that answers with a whole-window invalidate (a key the app handles
+/// itself, e.g. Left / Right in a lightbox) gets a frame in the same tick, also with
+/// on-demand painting (`TickRate::Dirty`): the host must not wait for more input.
+#[test]
+fn intent_invalidate_paints_in_the_same_tick() {
+    let (mut h, handle) = Host::new(
+        TestApp::default(),
+        RuntimeConfig { tick: uzor::render::TickRate::Dirty, ..RuntimeConfig::default() },
+    );
+    let win = open_with_panel(&mut h, &handle);
+    for _ in 0..10 {
+        h.advance(0.017);
+    }
+    assert!(h.advance(1.0).frames.is_empty(), "idle before the key");
+    h.runtime_mut().app_mut().answer = Some(AppCommand::Cadence(crate::CadenceCmd::Invalidate {
+        win,
+        region: None,
+        bits: uzor::render::InvalidateBits::ALL,
+    }));
+    h.input(
+        win,
+        InputEvent::Key(KeyInput {
+            code: KeyCode::F7,
+            text: None,
+            state: crate::types::bus::KeyState::Down,
+            mods: ModifierKeys::default(),
+        }),
+    );
+    let out = h.advance(0.5);
+    assert!(out.frames.iter().any(|f| f.window == win), "no frame after the intent's invalidate");
+}
