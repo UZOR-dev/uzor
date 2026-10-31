@@ -2,6 +2,33 @@
 
 All crates in the workspace share one version.
 
+## 1.5.22
+
+### Examples (uzor-examples, uzor-framework/examples)
+
+- Every example now builds its UI on the DOM engine and `ui::domkit`: framework `demo`
+  (native and web), `image_viewer`, `monitor`, `native_two_windows`, `dashboard`,
+  `kit_gallery`, plus a live `dom-gallery` page.
+- `uzor-launcher`: a DOM index of all examples (filter by Native / Web / Offscreen,
+  search, dark and light theme, details panel, Launch). A new example is one line in
+  `EXAMPLES` (`catalog.rs`). `PageApp<P: Page>` wraps single-page examples.
+
+### DOM engine and widget catalog (uzor)
+
+- domkit colours are `--k-*` custom properties; `LIGHT_VARS` gives a light theme.
+- Inline custom properties take part in the element's own cascade.
+- Overlays know the window viewport; `kit::dom` supports `:focus` and `:focus-visible`;
+  `HeadlessHost::paint_window`.
+- Without a GPU the window falls back to software rendering instead of failing to open.
+- A change made by an intent repaints in the same tick under on-demand redraw.
+
+### Notes
+
+- A kit widget registered over a DOM tree sits above DOM overlays; don't register it while
+  an overlay is open.
+- Apps need the `flow-flex` / `flow-grid` features; `TickRate::Dirty` is recommended for
+  static apps.
+
 ## 1.5.21
 
 ### DOM engine (uzor)
