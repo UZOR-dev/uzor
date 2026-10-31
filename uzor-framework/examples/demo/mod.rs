@@ -175,6 +175,7 @@ pub struct DemoHits {
 /// Hit rects for one leaf's content: the navigator rows and the editor field as the
 /// panel lays them out in `panel` (both trees are laid out; their row geometry is fixed
 /// CSS, so it does not depend on the font backend).
+#[allow(dead_code)] // used by tests/f11_demo.rs
 pub fn navigator_hits(panel: Rect) -> DemoHits {
     let mut ctx = look::Measure;
     let sheet = demo_sheet();

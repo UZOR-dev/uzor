@@ -3,7 +3,7 @@
 //! `dom_gallery` example of `uzor-examples`.
 //!
 //! [`KIT_CSS`]: uzor::ui::domkit::KIT_CSS
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 use uzor::ui::dom::El;
 use uzor::ui::domkit as k;
