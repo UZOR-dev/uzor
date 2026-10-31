@@ -10,25 +10,24 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use uzor::input::keyboard::KeyboardShortcut;
-use uzor::input::{KeyCode, ModifierKeys, TextFieldConfig};
+use uzor::input::{KeyCode, ModifierKeys};
 use uzor::layout::docking::{DockPanel, Pin};
 use uzor::layout::OverlayKind;
-use uzor::render::{TextAlign, TextBaseline};
-use uzor::tokens::{BuiltinSet, TokenTheme, Tokens};
-use uzor::ui::widgets::atomic::button::{ButtonSettings, ButtonView};
-use uzor::ui::widgets::atomic::text::{TextOverflow, TextSettings, TextView};
-use uzor::ui::widgets::atomic::text_input::render::{draw_input, InputView};
-use uzor::ui::widgets::atomic::text_input::settings::TextInputSettings;
-use uzor::ui::widgets::atomic::text_input::types::InputType;
-use uzor::{Rect, WidgetId, WidgetState};
-use uzor_framework::widgets::{button, text};
+use uzor::tokens::{BuiltinSet, Tokens};
+use uzor::ui::dom::{Dom, Edit, El};
+use uzor::ui::domkit::{self as k, icons, MenuItem};
+use uzor::ui::style::{Sheet, State};
+use uzor::{Rect, WidgetId};
+use uzor_framework::widgets::kit;
 use uzor_framework::{
-    App, AppCommand, Binding, ChromeModel, ChromeTab, ContextMenuEntry, ContextMenuModel,
-    DockTarget, DragOutChrome, DragOutPolicy, DropdownModel, FocusCmd, Intent, IntentCx, KeymapCmd,
-    KeymapScope, LayoutBlob, LayoutCmd, LayoutPolicy, ModalModel, OverlayCmd, OverlayCx,
-    OverlayModel, OverlaySize, PanelCx, PanelHome, RuntimeConfig, SizePx, Spec, SplitDir, ThemeCmd,
-    Ticket, TooltipModel, WindowId, WindowSpec,
+    App, AppCommand, Binding, ChromeModel, ChromeTab, DockTarget, DragOutChrome, DragOutPolicy,
+    FocusCmd, Intent, IntentCx, KeymapCmd, KeymapScope, LayoutBlob, LayoutCmd, LayoutPolicy,
+    ModalModel, OverlayCmd, OverlayCx, OverlayModel, OverlaySize, PanelCx, PanelHome,
+    RuntimeConfig, SizePx, Spec, SplitDir, ThemeCmd, Ticket, TooltipModel, WindowId, WindowSpec,
 };
+
+#[path = "../common/look.rs"]
+mod look;
 
 /// Canvas id the web entry binds.
 #[allow(dead_code)]
@@ -153,17 +152,9 @@ pub fn id_settings_note() -> WidgetId {
     WidgetId::from("demo-settings-note")
 }
 
-/// Content rect inside a leaf (below the header the kernel paints).
-pub fn content_body(panel: Rect) -> Rect {
-    Rect::new(
-        panel.x + 8.0,
-        panel.y + 32.0,
-        (panel.width - 16.0).max(1.0),
-        (panel.height - 40.0).max(1.0),
-    )
-}
-
-/// Navigator button rects in the same coordinates `panel` draws.
+/// Navigator button rects in the same coordinates `panel` draws (taken from the
+/// laid-out DOM trees, see [`navigator_hits`]).
+#[allow(dead_code)]
 pub struct DemoHits {
     /// Settings.
     pub settings: Rect,
@@ -177,35 +168,110 @@ pub struct DemoHits {
     pub restore: Rect,
     /// Tooltip anchor.
     pub tip: Rect,
-    /// Editor text field.
+    /// Editor text field (when `panel` is the editor's leaf).
     pub note: Rect,
 }
 
-/// Hit rects for one leaf's content.
+/// Hit rects for one leaf's content: the navigator rows and the editor field as the
+/// panel lays them out in `panel` (both trees are laid out; their row geometry is fixed
+/// CSS, so it does not depend on the font backend).
 pub fn navigator_hits(panel: Rect) -> DemoHits {
-    let b = content_body(panel);
-    let w = b.width.min(160.0).max(1.0);
-    let h = 22.0;
-    let g = 4.0;
-    let at = |row: f64| Rect::new(b.x, b.y + row * (h + g), w, h);
+    let mut ctx = look::Measure;
+    let sheet = demo_sheet();
+    let body = look::leaf_body(panel);
+    let nav = uzor::ui::dom::lay_out(&mut ctx, &sheet, &nav_tree(true, true, body.height), body.x, body.y, body.width, &|_| State::NONE);
+    let ed = uzor::ui::dom::lay_out(&mut ctx, &sheet, &editor_tree(true, "", body.height), body.x, body.y, body.width, &|_| State::NONE);
+    let r = |d: &Dom, id: WidgetId| d.rect(id.as_str()).unwrap_or_default();
     DemoHits {
-        settings: at(0.0),
-        menu: at(1.0),
-        theme: at(2.0),
-        save: at(3.0),
-        restore: at(4.0),
-        tip: at(5.0),
-        note: Rect::new(b.x, b.y, b.width.min(280.0), 28.0),
+        settings: r(&nav, id_settings()),
+        menu: r(&nav, id_menu()),
+        theme: r(&nav, id_theme()),
+        save: r(&nav, id_save()),
+        restore: r(&nav, id_restore()),
+        tip: r(&nav, id_tip()),
+        note: r(&ed, id_note()),
     }
 }
 
-/// Text field inside a settings modal body.
-pub fn settings_field(body: Rect) -> Rect {
-    Rect::new(
-        body.x + 12.0,
-        body.y + 12.0,
-        (body.width - 24.0).max(40.0),
-        32.0,
+const DEMO_CSS: &str = r#"
+button.d-item { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 10px; border-radius: 7px;
+                width: 100%; max-width: 240px; color: var(--k-fg); flex-shrink: 0 }
+button.d-item:hover { background: var(--k-hover) }
+button.d-item:focus-visible { border: 2px solid var(--k-accent) }
+div.d-nav { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0 }
+div.d-preview { padding: 12px; border-radius: 10px; background: var(--k-sunken); border: 1px dashed var(--k-line);
+                color: var(--k-body); min-height: 60px; flex-shrink: 0 }
+div.d-modal { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; background: var(--k-panel);
+              border: 1px solid var(--k-line); overflow: hidden }
+div.d-pop-title { padding: 6px 10px 4px 10px; color: var(--k-muted); font-size: 11px; font-weight: 600 }
+"#;
+
+fn demo_sheet() -> Sheet {
+    look::sheet(DEMO_CSS)
+}
+
+fn nav_item(id: WidgetId, icon: &'static str, label: &str, hint: Option<&str>) -> El {
+    let mut b = El::new("button.d-item").id(id.as_str()).tab().name(label).child(look::ico(icon)).child(El::new("div.p-grow").text(label));
+    if let Some(h) = hint {
+        b = b.child(k::kbd(h));
+    }
+    b
+}
+
+/// The navigator: the command rows and a shortcut card.
+fn nav_tree(dark: bool, shortcuts: bool, h: f64) -> El {
+    let rows = El::new("div.d-nav")
+        .child(nav_item(id_settings(), icons::SETTINGS, "Settings", None))
+        .child(nav_item(id_menu(), icons::MENU, "Menu", None))
+        .child(nav_item(id_theme(), if dark { icons::SUN } else { icons::MOON }, if dark { "Light" } else { "Dark" }, None))
+        .child(nav_item(id_save(), icons::SAVE, "Save", None))
+        .child(nav_item(id_restore(), icons::UNDO, "Restore", None))
+        .child(nav_item(id_tip(), icons::EXPAND, "Expand", None));
+    let keys = El::new("div.p-card")
+        .child(El::new("div.p-row").child(k::kbd("Ctrl+K")).child(El::new("div.p-muted").text("command palette")))
+        .child(El::new("div.p-row").child(k::kbd("Esc")).child(El::new("div.p-muted").text("close the top overlay")))
+        .child(El::new("div.p-row").child(k::kbd("Drag")).child(El::new("div.p-muted").text("a tab to tear it off")));
+    look::root(dark, h).child(
+        El::new("div.p-page")
+            .css(format!("height: {h}px"))
+            .child(El::new("div.p-sec").text("COMMANDS"))
+            .child(rows)
+            .child_if(shortcuts, || El::new("div.p-sec").text("SHORTCUTS"))
+            .child_if(shortcuts, || keys),
+    )
+}
+
+/// The editor: an IME text field and a live markdown preview of it.
+fn editor_tree(dark: bool, note: &str, h: f64) -> El {
+    let words = note.split_whitespace().count();
+    let preview = if note.trim().is_empty() {
+        El::new("div.d-preview").runs(k::inline_md("Type in the field: **bold**, _italic_, `code` render here."))
+    } else {
+        El::new("div.d-preview").runs(k::inline_md(note))
+    };
+    look::root(dark, h).child(
+        El::new("div.p-page")
+            .css(format!("height: {h}px"))
+            .child(k::field("NOTE", k::input(id_note().as_str(), Edit::new(note).placeholder("Note — IME, selection, clipboard"))))
+            .child(El::new("div.p-row").child(El::new("div.p-sec.p-grow").text("PREVIEW")).child(k::badge("markdown", "muted")))
+            .child(preview)
+            .child(El::new("div.p-muted").text(format!("{} chars · {words} words", note.chars().count()))),
+    )
+}
+
+/// The pinned inspector: stat tiles over the app state.
+fn inspector_tree(dark: bool, saved: usize, windows: usize, panels: usize, h: f64) -> El {
+    look::root(dark, h).child(
+        El::new("div.p-page")
+            .css(format!("height: {h}px"))
+            .child(El::new("div.p-row").child(look::ico(icons::PIN)).child(El::new("div.p-grow").text("Pinned panel")).child(k::badge("pinned", "ok")))
+            .child(
+                El::new("div.p-grid2")
+                    .child(k::stat("ins-theme", "THEME", if dark { "Dark" } else { "Light" }, "tokens + --k-* vars"))
+                    .child(k::stat("ins-saved", "LAYOUTS SAVED", &saved.to_string(), "in-memory office"))
+                    .child(k::stat("ins-windows", "WINDOWS", &windows.to_string(), "multi-window host"))
+                    .child(k::stat("ins-panels", "PANELS", &panels.to_string(), "in this window")),
+            ),
     )
 }
 
@@ -218,6 +284,13 @@ pub struct DemoApp {
     blob_asked: BTreeSet<WindowId>,
     office: BTreeMap<String, LayoutBlob>,
     dark: bool,
+    /// The editor text (mirrors the text store, for the preview).
+    note: String,
+    /// Settings: show the shortcut card under the navigator.
+    shortcuts: bool,
+    /// Panels per window (from the last layout change).
+    panels: BTreeMap<WindowId, usize>,
+    sheet: Sheet,
 }
 
 impl Default for DemoApp {
@@ -236,6 +309,10 @@ impl DemoApp {
             blob_asked: BTreeSet::new(),
             office: BTreeMap::new(),
             dark: true,
+            note: String::new(),
+            shortcuts: true,
+            panels: BTreeMap::new(),
+            sheet: demo_sheet(),
         }
     }
 
@@ -246,8 +323,8 @@ impl DemoApp {
     pub fn runtime_config() -> RuntimeConfig {
         RuntimeConfig {
             windows: vec![
-                WindowSpec::new("main", "Uzor demo", SizePx::new(480, 320)),
-                WindowSpec::new("side", "Uzor demo — side", SizePx::new(280, 200)),
+                WindowSpec::new("main", "Uzor demo", SizePx::new(960, 600)),
+                WindowSpec::new("side", "Uzor demo — side", SizePx::new(420, 300)),
             ],
             tokens: Tokens::builtin(BuiltinSet::Dark),
             dark: true,
@@ -339,6 +416,7 @@ impl DemoApp {
             .window(win)
             .map(|w| w.dock.leaves.clone())
             .unwrap_or_default();
+        self.panels.insert(win, leaves.iter().map(|l| l.panels.len()).sum());
         match phase {
             0 if leaves.len() == 1 => {
                 cx.command(AppCommand::Layout(LayoutCmd::Split {
@@ -409,28 +487,8 @@ impl App for DemoApp {
     fn overlay_model(&self, _win: WindowId, id: DemoOverlay) -> OverlayModel {
         match id {
             DemoOverlay::Settings => OverlayModel::Modal(ModalModel::titled("Settings")),
-            DemoOverlay::Menu => OverlayModel::ContextMenu(ContextMenuModel {
-                title: Some("Panel".into()),
-                items: vec![
-                    ContextMenuEntry::Item {
-                        label: "Inspector pinned".into(),
-                        disabled: true,
-                    },
-                    ContextMenuEntry::Separator,
-                    ContextMenuEntry::Item {
-                        label: "Close".into(),
-                        disabled: false,
-                    },
-                ],
-            }),
-            DemoOverlay::Palette => OverlayModel::Dropdown(DropdownModel {
-                items: vec![
-                    "Theme".into(),
-                    "Save layout".into(),
-                    "Restore layout".into(),
-                ],
-                selected: None,
-            }),
+            // The menu and the palette are DOM trees the app paints whole.
+            DemoOverlay::Menu | DemoOverlay::Palette => OverlayModel::Custom,
             DemoOverlay::Tooltip => OverlayModel::Tooltip(TooltipModel {
                 text: "Drag a header into the gutter to expand".into(),
             }),
@@ -441,26 +499,31 @@ impl App for DemoApp {
         match *cx.panel {
             DemoPanel::Navigator => self.paint_navigator(cx),
             DemoPanel::Editor => {
-                let hits = navigator_hits(cx.rect);
-                paint_field(cx, id_note(), hits.note, false);
+                let body = look::leaf_body(cx.rect);
+                let resp = kit::dom(body, &self.sheet, editor_tree(self.dark, &self.note, body.height)).build(cx);
+                for (id, v) in resp.edited {
+                    if id == id_note().as_str() {
+                        self.note = v;
+                    }
+                }
             }
             DemoPanel::Inspector => {
-                label(cx, content_body(cx.rect), "Pinned");
+                let body = look::leaf_body(cx.rect);
+                let panels = self.panels.get(&cx.window).copied().unwrap_or(0);
+                let windows = self.keys.len();
+                let tree = inspector_tree(self.dark, self.office.len(), windows, panels, body.height);
+                kit::dom(body, &self.sheet, tree).build(cx);
             }
         }
     }
 
     fn overlay_body(&mut self, cx: &mut OverlayCx<'_, Self::Spec>) {
         match cx.id {
-            DemoOverlay::Settings => {
-                let rect = settings_field(cx.rect);
-                paint_field(cx, id_settings_note(), rect, true);
-            }
-            DemoOverlay::Menu => label(cx, cx.rect, "Inspector is pinned"),
+            DemoOverlay::Settings => self.paint_settings(cx),
+            DemoOverlay::Menu => self.paint_menu(cx),
             DemoOverlay::Palette => self.paint_palette(cx),
-            DemoOverlay::Tooltip => {
-                label(cx, cx.rect, "Drag a header into the gutter to expand");
-            }
+            // The kernel draws the tooltip text.
+            DemoOverlay::Tooltip => {}
         }
     }
 
@@ -503,8 +566,8 @@ impl App for DemoApp {
                         DemoOverlay::Palette,
                         OverlayKind::Dropdown,
                         None,
-                        220.0,
-                        140.0,
+                        320.0,
+                        176.0,
                     ));
                 }
             }
@@ -532,27 +595,17 @@ impl App for DemoApp {
 
 impl DemoApp {
     fn paint_navigator(&mut self, cx: &mut PanelCx<'_, DemoSpec>) {
-        let hits = navigator_hits(cx.rect);
         let win = cx.window;
+        let body = look::leaf_body(cx.rect);
+        let tree = nav_tree(self.dark, self.shortcuts, body.height);
+        let resp = kit::dom(body, &self.sheet, tree).build(cx);
+        let rect = |id: WidgetId| resp.dom.rect(id.as_str()).unwrap_or_default();
+        let (menu_at, tip_at) = (rect(id_menu()), rect(id_tip()));
         if cx.view.clicked(&id_settings()) {
-            cx.out.command(open_overlay(
-                win,
-                DemoOverlay::Settings,
-                OverlayKind::Modal,
-                None,
-                300.0,
-                180.0,
-            ));
+            cx.out.command(open_overlay(win, DemoOverlay::Settings, OverlayKind::Modal, None, 400.0, 250.0));
         }
         if cx.view.clicked(&id_menu()) {
-            cx.out.command(open_overlay(
-                win,
-                DemoOverlay::Menu,
-                OverlayKind::ContextMenu,
-                Some(hits.menu),
-                180.0,
-                88.0,
-            ));
+            cx.out.command(open_overlay(win, DemoOverlay::Menu, OverlayKind::ContextMenu, Some(menu_at), 220.0, 150.0));
         }
         if cx.view.clicked(&id_theme()) {
             let mut sink = HookSink(cx.out);
@@ -568,75 +621,110 @@ impl DemoApp {
         }
         if cx.view.is_hovered(&id_tip()) {
             if !cx.view.overlay_open(DemoOverlay::Tooltip) {
-                cx.out.command(open_overlay(
-                    win,
-                    DemoOverlay::Tooltip,
-                    OverlayKind::Tooltip,
-                    Some(hits.tip),
-                    260.0,
-                    36.0,
-                ));
+                cx.out.command(open_overlay(win, DemoOverlay::Tooltip, OverlayKind::Tooltip, Some(tip_at), 260.0, 36.0));
             }
         } else if cx.view.overlay_open(DemoOverlay::Tooltip) {
             cx.out.command(close_overlay(win, DemoOverlay::Tooltip));
         }
-        paint_btn(cx, id_settings(), hits.settings, "Settings");
-        paint_btn(cx, id_menu(), hits.menu, "Menu");
-        paint_btn(
-            cx,
-            id_theme(),
-            hits.theme,
-            if self.dark { "Light" } else { "Dark" },
+    }
+
+    /// The settings modal body (the kernel draws the frame and title): a focused text
+    /// field, the theme as a segmented control and a switch.
+    fn paint_settings(&mut self, cx: &mut OverlayCx<'_, DemoSpec>) {
+        let win = cx.window;
+        if !cx.view.is_focused(&id_settings_note()) && !cx.view.is_focused(&WidgetId::from("demo-set-theme:0")) && !cx.view.is_focused(&WidgetId::from("demo-set-theme:1")) && !cx.view.is_focused(&WidgetId::from("demo-set-keys")) {
+            cx.out.command(AppCommand::Focus(FocusCmd::Focus { win, id: id_settings_note() }));
+        }
+        let r = cx.rect;
+        let tree = look::root(self.dark, r.height).child(
+            El::new("div.d-modal")
+                .css(format!("height: {}px", r.height))
+                .child(
+                    El::new("div.p-row")
+                        .child(look::ico(icons::SETTINGS))
+                        .child(El::new("div.p-h1.p-grow").text("Settings"))
+                        .child(El::new("button.k-act").id("demo-set-close").tab().name("Close").svg(k::icon(icons::CLOSE))),
+                )
+                .child(k::field("DISPLAY NAME", k::input(id_settings_note().as_str(), Edit::new("").placeholder("Your name"))))
+                .child(El::new("div.p-row").child(El::new("div.p-grow").text("Theme")).child(k::segmented("demo-set-theme", &["Dark", "Light"], usize::from(!self.dark))))
+                .child(El::new("div.p-row").child(El::new("div.p-grow").text("Shortcut card in the navigator")).child(k::switch("demo-set-keys", self.shortcuts, "Shortcut card"))),
         );
-        paint_btn(cx, id_save(), hits.save, "Save");
-        paint_btn(cx, id_restore(), hits.restore, "Restore");
-        paint_btn(cx, id_tip(), hits.tip, "Expand");
-        let cap = content_body(cx.rect);
-        label(
-            cx,
-            Rect::new(cap.x, cap.y + 160.0, cap.width, 20.0),
-            "Ctrl+K palette",
-        );
+        let resp = kit::dom(r, &self.sheet, tree).build(cx);
+        match resp.clicked.as_deref() {
+            Some("demo-set-keys") => self.shortcuts = !self.shortcuts,
+            Some("demo-set-close") => cx.out.command(close_overlay(win, DemoOverlay::Settings)),
+            Some(hit) => {
+                if let Some(i) = k::picked("demo-set-theme", "", hit) {
+                    if (i == 0) != self.dark {
+                        let mut sink = HookSink(cx.out);
+                        self.toggle_theme(&mut sink);
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// The panel context menu, a DOM menu painted into the overlay rect.
+    fn paint_menu(&mut self, cx: &mut OverlayCx<'_, DemoSpec>) {
+        let win = cx.window;
+        let items = [
+            MenuItem::new("Inspector is pinned").icon(icons::PIN).disabled(true),
+            MenuItem::separator(),
+            MenuItem::new(if self.dark { "Light theme" } else { "Dark theme" }).icon(if self.dark { icons::SUN } else { icons::MOON }),
+            MenuItem::new("Save layout").icon(icons::SAVE),
+            MenuItem::new("Close").icon(icons::CLOSE).danger(true),
+        ];
+        let resp = kit::dom(cx.rect, &self.sheet, pop_tree(self.dark, cx.rect, "demo-menu-list", Some("PANEL"), &items)).build(cx);
+        match resp.clicked.as_deref().and_then(|h| k::picked("demo-menu-list", "item", h)) {
+            Some(2) => {
+                let mut sink = HookSink(cx.out);
+                self.toggle_theme(&mut sink);
+                sink.cmd(close_overlay(win, DemoOverlay::Menu));
+            }
+            Some(3) => {
+                let mut sink = HookSink(cx.out);
+                self.save(&mut sink, win);
+                sink.cmd(close_overlay(win, DemoOverlay::Menu));
+            }
+            Some(4) => cx.out.command(close_overlay(win, DemoOverlay::Menu)),
+            _ => {}
+        }
     }
 
     fn paint_palette(&mut self, cx: &mut OverlayCx<'_, DemoSpec>) {
-        let (theme, save, restore) = palette_hits(cx.rect);
         let win = cx.window;
-        if cx.view.clicked(&id_palette_theme()) {
-            let mut sink = HookSink(cx.out);
-            self.toggle_theme(&mut sink);
-            sink.cmd(close_overlay(win, DemoOverlay::Palette));
+        let items = [
+            MenuItem::new("Toggle theme").icon(if self.dark { icons::SUN } else { icons::MOON }).kbd("T"),
+            MenuItem::new("Save layout").icon(icons::SAVE).kbd("Ctrl+S"),
+            MenuItem::new("Restore layout").icon(icons::UNDO).kbd("Ctrl+R"),
+        ];
+        let resp = kit::dom(cx.rect, &self.sheet, pop_tree(self.dark, cx.rect, "demo-palette", Some("COMMAND PALETTE"), &items)).build(cx);
+        let hit = resp.clicked.as_deref().and_then(|h| k::picked("demo-palette", "item", h));
+        let mut sink = HookSink(cx.out);
+        match hit {
+            Some(0) => self.toggle_theme(&mut sink),
+            Some(1) => self.save(&mut sink, win),
+            Some(2) => self.restore(&mut sink, win),
+            _ => return,
         }
-        if cx.view.clicked(&id_palette_save()) {
-            let mut sink = HookSink(cx.out);
-            self.save(&mut sink, win);
-            sink.cmd(close_overlay(win, DemoOverlay::Palette));
-        }
-        if cx.view.clicked(&id_palette_restore()) {
-            let mut sink = HookSink(cx.out);
-            self.restore(&mut sink, win);
-            sink.cmd(close_overlay(win, DemoOverlay::Palette));
-        }
-        paint_btn(cx, id_palette_theme(), theme, "Theme");
-        paint_btn(cx, id_palette_save(), save, "Save layout");
-        paint_btn(cx, id_palette_restore(), restore, "Restore");
+        sink.cmd(close_overlay(win, DemoOverlay::Palette));
     }
 }
 
-fn palette_hits(body: Rect) -> (Rect, Rect, Rect) {
-    let w = (body.width - 24.0).max(40.0);
-    let row = |i: f64| Rect::new(body.x + 12.0, body.y + 8.0 + i * 32.0, w, 28.0);
-    (row(0.0), row(1.0), row(2.0))
+/// A popup list (menu, palette) filling `r`: `div.p-pop` with catalog menu rows; the
+/// items are hits `{id}:item:{i}`.
+fn pop_tree(dark: bool, r: Rect, id: &str, title: Option<&str>, items: &[MenuItem]) -> El {
+    // Reuse the catalog rows; drop the fixed placement of `k::menu`.
+    let m = k::menu(id, title, items, r);
+    let rows = m.children;
+    look::root(dark, r.height).child(El::new("div.p-pop").css(format!("height: {}px", r.height)).children(rows))
 }
 
-fn id_palette_theme() -> WidgetId {
-    WidgetId::from("demo-palette-theme")
-}
-fn id_palette_save() -> WidgetId {
-    WidgetId::from("demo-palette-save")
-}
-fn id_palette_restore() -> WidgetId {
-    WidgetId::from("demo-palette-restore")
+/// Palette row ids (`demo-palette:item:{i}`): theme, save, restore.
+#[allow(dead_code)]
+pub fn id_palette_item(i: usize) -> WidgetId {
+    WidgetId::from(format!("demo-palette:item:{i}").as_str())
 }
 
 fn open_overlay(
@@ -659,223 +747,4 @@ fn open_overlay(
 
 fn close_overlay(win: WindowId, id: DemoOverlay) -> AppCommand<DemoSpec> {
     AppCommand::Overlay(OverlayCmd::Close { win, id })
-}
-
-trait PaintCx<'a> {
-    fn paint_btn(&mut self, id: WidgetId, rect: Rect, label_text: &str);
-    fn paint_label(&mut self, rect: Rect, label_text: &str);
-}
-
-fn button_settings(tokens: &Tokens) -> ButtonSettings {
-    ButtonSettings::default().with_theme(Box::new(TokenTheme::from_tokens(tokens)))
-}
-
-fn text_settings(tokens: &Tokens) -> TextSettings {
-    TextSettings::default().with_theme(Box::new(TokenTheme::from_tokens(tokens)))
-}
-
-impl<'a> PaintCx<'a> for PanelCx<'a, DemoSpec> {
-    fn paint_btn(&mut self, id: WidgetId, rect: Rect, label_text: &str) {
-        let settings = button_settings(self.tokens);
-        let view = ButtonView {
-            icon: None,
-            text: Some(label_text),
-            active: false,
-            disabled: false,
-            active_border: None,
-            hover_chevron: None,
-        };
-        button(self, id, rect, &view, &settings);
-    }
-    fn paint_label(&mut self, rect: Rect, label_text: &str) {
-        let settings = text_settings(self.tokens);
-        let view = TextView {
-            text: label_text,
-            align: TextAlign::Left,
-            baseline: TextBaseline::Middle,
-            color: None,
-            font: None,
-            overflow: TextOverflow::Clip,
-            hovered: false,
-        };
-        text(self, WidgetId::from("demo-caption"), rect, &view, &settings);
-    }
-}
-
-impl<'a> PaintCx<'a> for OverlayCx<'a, DemoSpec> {
-    fn paint_btn(&mut self, id: WidgetId, rect: Rect, label_text: &str) {
-        let settings = button_settings(self.tokens);
-        let view = ButtonView {
-            icon: None,
-            text: Some(label_text),
-            active: false,
-            disabled: false,
-            active_border: None,
-            hover_chevron: None,
-        };
-        button(self, id, rect, &view, &settings);
-    }
-    fn paint_label(&mut self, rect: Rect, label_text: &str) {
-        let settings = text_settings(self.tokens);
-        let view = TextView {
-            text: label_text,
-            align: TextAlign::Left,
-            baseline: TextBaseline::Middle,
-            color: None,
-            font: None,
-            overflow: TextOverflow::Clip,
-            hovered: false,
-        };
-        text(self, WidgetId::from("demo-caption"), rect, &view, &settings);
-    }
-}
-
-fn paint_btn<'a, C: PaintCx<'a>>(cx: &mut C, id: WidgetId, rect: Rect, label_text: &str) {
-    cx.paint_btn(id, rect, label_text);
-}
-
-fn label<'a, C: PaintCx<'a>>(cx: &mut C, rect: Rect, label_text: &str) {
-    cx.paint_label(rect, label_text);
-}
-
-trait FieldCx<'a> {
-    fn win(&self) -> WindowId;
-    fn tokens(&self) -> &Tokens;
-    fn focused(&self, id: &WidgetId) -> bool;
-    fn hovered(&self, id: &WidgetId) -> bool;
-    fn layer(&self) -> uzor::LayerId;
-    fn command(&mut self, cmd: AppCommand<DemoSpec>);
-    fn ime_area(&mut self, rect: Rect);
-    fn with_coord<R>(&mut self, f: impl FnOnce(&mut uzor::input::InputCoordinator) -> R) -> R;
-    fn with_render<R>(&mut self, f: impl FnOnce(&mut dyn uzor::render::RenderContext) -> R) -> R;
-}
-
-impl<'a> FieldCx<'a> for PanelCx<'a, DemoSpec> {
-    fn win(&self) -> WindowId {
-        self.window
-    }
-    fn tokens(&self) -> &Tokens {
-        self.tokens
-    }
-    fn focused(&self, id: &WidgetId) -> bool {
-        self.view.is_focused(id)
-    }
-    fn hovered(&self, id: &WidgetId) -> bool {
-        self.view.is_hovered(id)
-    }
-    fn layer(&self) -> uzor::LayerId {
-        self.widgets.layer.clone()
-    }
-    fn command(&mut self, cmd: AppCommand<DemoSpec>) {
-        self.out.command(cmd);
-    }
-    fn ime_area(&mut self, rect: Rect) {
-        self.out.ime_area(rect);
-    }
-    fn with_coord<R>(&mut self, f: impl FnOnce(&mut uzor::input::InputCoordinator) -> R) -> R {
-        f(self.widgets.coord)
-    }
-    fn with_render<R>(&mut self, f: impl FnOnce(&mut dyn uzor::render::RenderContext) -> R) -> R {
-        f(self.render)
-    }
-}
-
-impl<'a> FieldCx<'a> for OverlayCx<'a, DemoSpec> {
-    fn win(&self) -> WindowId {
-        self.window
-    }
-    fn tokens(&self) -> &Tokens {
-        self.tokens
-    }
-    fn focused(&self, id: &WidgetId) -> bool {
-        self.view.is_focused(id)
-    }
-    fn hovered(&self, id: &WidgetId) -> bool {
-        self.view.is_hovered(id)
-    }
-    fn layer(&self) -> uzor::LayerId {
-        self.widgets.layer.clone()
-    }
-    fn command(&mut self, cmd: AppCommand<DemoSpec>) {
-        self.out.command(cmd);
-    }
-    fn ime_area(&mut self, rect: Rect) {
-        self.out.ime_area(rect);
-    }
-    fn with_coord<R>(&mut self, f: impl FnOnce(&mut uzor::input::InputCoordinator) -> R) -> R {
-        f(self.widgets.coord)
-    }
-    fn with_render<R>(&mut self, f: impl FnOnce(&mut dyn uzor::render::RenderContext) -> R) -> R {
-        f(self.render)
-    }
-}
-
-fn paint_field<'a, C: FieldCx<'a>>(cx: &mut C, id: WidgetId, rect: Rect, focus_if_needed: bool) {
-    if focus_if_needed && !cx.focused(&id) {
-        let win = cx.win();
-        cx.command(AppCommand::Focus(FocusCmd::Focus { win, id: id.clone() }));
-    }
-    let layer = cx.layer();
-    cx.with_coord(|coord| {
-        coord.set_default_layer(Some(layer));
-        coord.register_text_field(id.clone(), rect, TextFieldConfig::text());
-        coord.set_default_layer(None);
-    });
-    let (text, preedit, cursor, selection) = cx.with_coord(|coord| match coord.text_fields().field_state(&id) {
-        Some(s) => (s.text.clone(), s.preedit.clone(), s.cursor, s.selection_range()),
-        None => (String::new(), String::new(), 0, None),
-    });
-    let shown = splice_preedit(&text, cursor, &preedit);
-    let draw_cursor = cursor + preedit.chars().count();
-    let focused = cx.focused(&id);
-    let hovered = cx.hovered(&id);
-    let settings = TextInputSettings::with_config(widget_field_config())
-        .with_theme(Box::new(TokenTheme::from_tokens(cx.tokens())));
-    let view = InputView {
-        text: &shown,
-        placeholder: "Note",
-        cursor: draw_cursor,
-        selection,
-        focused,
-        disabled: false,
-        input_type: InputType::Text,
-    };
-    let state = if hovered {
-        WidgetState::Hovered
-    } else {
-        WidgetState::Normal
-    };
-    let positions = cx.with_render(|render| {
-        draw_input(render, rect, state, &view, &settings).char_x_positions
-    });
-    cx.with_coord(|coord| {
-        coord.text_fields_mut().update_field(
-            &id,
-            (rect.x, rect.y, rect.width, rect.height),
-            positions,
-        );
-    });
-    if focused {
-        cx.ime_area(rect);
-    }
-}
-
-fn splice_preedit(text: &str, cursor: usize, preedit: &str) -> String {
-    if preedit.is_empty() {
-        return text.to_string();
-    }
-    let at = text
-        .char_indices()
-        .nth(cursor)
-        .map(|(b, _)| b)
-        .unwrap_or(text.len());
-    let mut shown = String::with_capacity(text.len() + preedit.len());
-    shown.push_str(&text[..at]);
-    shown.push_str(preedit);
-    shown.push_str(&text[at..]);
-    shown
-}
-
-fn widget_field_config() -> uzor::ui::widgets::atomic::text_input::state::TextFieldConfig {
-    uzor::ui::widgets::atomic::text_input::state::TextFieldConfig::text()
 }

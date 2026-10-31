@@ -265,6 +265,11 @@ fn golden_modal_focus_ring() {
         .overlays
         .iter()
         .any(|o| o.id == DemoOverlay::Settings && o.modal));
+    // Opened without an anchor, the modal centres in the viewport (the overlay
+    // stack knows it from the window's creation, before any resize).
+    let vp = host.snapshot().window(win).unwrap().geometry.viewport;
+    let m = host.snapshot().window(win).unwrap().overlays.iter().find(|o| o.modal).unwrap().rect;
+    assert!((m.x + m.width / 2.0 - vp.width / 2.0).abs() < 1.0 && (m.y + m.height / 2.0 - vp.height / 2.0).abs() < 1.0, "modal {m:?} in {vp:?}");
     assert_ctx("modal_focus_ring", &paint(&mut host, "main"));
 }
 
@@ -562,11 +567,23 @@ fn cursor_with_modal_over_buttons() {
         host.advance(0.016);
     }
     assert!(host.snapshot().window(win).unwrap().overlays.iter().any(|o| o.modal));
-    // Wiggle so the move is a real change, then land where the button was:
-    // the modal's own field sits there now (I-beam), never the stale hand.
+    // Where the button was the scrim is now: never the stale hand.
     move_to(&mut host, win, cx + 1.0, cy);
     move_to(&mut host, win, cx, cy);
-    assert_eq!(cur(&host), CursorIcon::Text, "the modal's text field is on top");
+    assert_ne!(cur(&host), CursorIcon::PointingHand, "the opener's hand does not stay over the modal");
+    // Somewhere down the modal's middle its own text field is on top (I-beam).
+    let m = host.snapshot().window(win).unwrap().overlays.iter().find(|o| o.modal).unwrap().rect;
+    let mut text_at = None;
+    let mut y = m.y + 2.0;
+    while y < m.y + m.height && text_at.is_none() {
+        move_to(&mut host, win, m.x + m.width / 2.0 + 1.0, y);
+        move_to(&mut host, win, m.x + m.width / 2.0, y);
+        if cur(&host) == CursorIcon::Text {
+            text_at = Some(y);
+        }
+        y += 6.0;
+    }
+    assert!(text_at.is_some(), "the modal's text field is on top");
     // The scrim (bottom-right corner, no modal widget there) is inert: arrow.
     let vp = host.snapshot().window(win).unwrap().geometry.viewport;
     move_to(&mut host, win, vp.x + vp.width - 4.0, vp.y + vp.height - 4.0);
