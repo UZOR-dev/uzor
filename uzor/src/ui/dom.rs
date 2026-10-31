@@ -62,7 +62,7 @@ use crate::render::{AnimParams, AnimRegistry, RenderContext, TextAlign};
 use crate::types::Rect;
 use crate::ui::css_box::ellipsize;
 use crate::ui::css_text::{fill_text_css, INTER};
-use crate::ui::flow::{layout, LBox, Laid};
+use crate::ui::flow::{layout_in, LBox, Laid};
 use crate::ui::style::{apply_decl, Node, Sheet, State, Style, StyleField};
 use crate::ui::widgets::composite::dialog::{fill_round_rect, path_round_rect, Shadow};
 
@@ -86,6 +86,134 @@ pub struct El {
     pub children: Vec<El>,
     /// Inline rich text ([`El::runs`]); when set it replaces `text`.
     pub runs: Vec<Run>,
+    /// Built-in control content ([`El::control`]): switch, checkbox, spinner, text input.
+    pub control: Option<Control>,
+    /// An embed slot ([`El::slot`]): the app paints something else (a kit widget, a
+    /// canvas) into the element's content box, found with [`Dom::slots`].
+    pub slot: Option<String>,
+}
+
+/// Built-in control content of an element, painted into its content box after the
+/// element's own CSS box (so the track, frame and colours stay in the style sheet).
+///
+/// | control | paints | CSS hooks |
+/// |---|---|---|
+/// | [`Control::Switch`] | a round knob in the content box, left (off) to right (on) | `--knob` (`#fff`), `:checked` on the element when on |
+/// | [`Control::Checkbox`] | a tick (or a dash when mixed) | `--check` (default `color`), `--check-width` (2px), `:checked` |
+/// | [`Control::Spinner`] | a rotating 270° arc | `color`, `--spin-track`, `--spin-width`, `--spin-speed` (turns/s, 1) |
+/// | [`Control::Input`] | value or placeholder, selection, caret, IME composition | `color`, `font-*`, `--placeholder`, `--selection`, `--caret`, `:focus` while it has a caret |
+#[derive(Clone, Debug, PartialEq)]
+pub enum Control {
+    /// A switch: `pos` 0 (off) … 1 (on) places the knob (animate it for a slide).
+    Switch { on: bool, pos: f64 },
+    /// A checkbox tick; `mixed` draws the indeterminate dash.
+    Checkbox { on: bool, mixed: bool },
+    /// A busy spinner at time `t` (seconds).
+    Spinner { t: f64 },
+    /// A single-line text input showing the edit state (the app or the framework's text
+    /// store owns editing; the DOM lays it out and paints it).
+    Input(Box<Edit>),
+}
+
+impl Control {
+    /// A switch at rest.
+    pub fn switch(on: bool) -> Self {
+        Control::Switch { on, pos: if on { 1.0 } else { 0.0 } }
+    }
+    pub fn checkbox(on: bool) -> Self {
+        Control::Checkbox { on, mixed: false }
+    }
+    pub fn spinner(t: f64) -> Self {
+        Control::Spinner { t }
+    }
+    pub fn input(e: Edit) -> Self {
+        Control::Input(Box::new(e))
+    }
+    /// The ARIA role an element with this control exposes.
+    pub fn role(&self) -> &'static str {
+        match self {
+            Control::Switch { .. } => "switch",
+            Control::Checkbox { .. } => "checkbox",
+            Control::Spinner { .. } => "progressbar",
+            Control::Input(_) => "textbox",
+        }
+    }
+    /// On (switch / checkbox).
+    pub fn checked(&self) -> Option<bool> {
+        match self {
+            Control::Switch { on, .. } | Control::Checkbox { on, .. } => Some(*on),
+            _ => None,
+        }
+    }
+}
+
+/// The edit state a DOM text input shows ([`Control::Input`]). Indices are chars.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Edit {
+    pub value: String,
+    /// Shown while `value` is empty and nothing is being composed.
+    pub placeholder: String,
+    /// The caret; `Some` = focused (the element gets `:focus`).
+    pub caret: Option<usize>,
+    /// The other end of a selection (a selection is `anchor..caret`).
+    pub anchor: Option<usize>,
+    /// IME composition shown at the caret, underlined.
+    pub preedit: Option<String>,
+    /// Bullets instead of the text (passwords).
+    pub masked: bool,
+    /// The caret is in the visible half of its blink (`false` hides it).
+    pub caret_on: bool,
+}
+
+impl Edit {
+    /// An unfocused input showing `value`.
+    pub fn new(value: impl Into<String>) -> Self {
+        Edit { value: value.into(), caret_on: true, ..Default::default() }
+    }
+    pub fn placeholder(mut self, p: impl Into<String>) -> Self {
+        self.placeholder = p.into();
+        self
+    }
+    /// Focused with the caret at char `at` (the value's length at most).
+    pub fn caret(mut self, at: usize) -> Self {
+        self.caret = Some(at.min(self.value.chars().count()));
+        self
+    }
+    /// Select `anchor..caret` (call after [`Edit::caret`]).
+    pub fn select_from(mut self, anchor: usize) -> Self {
+        self.anchor = Some(anchor.min(self.value.chars().count()));
+        self
+    }
+    pub fn preedit(mut self, p: impl Into<String>) -> Self {
+        self.preedit = Some(p.into());
+        self
+    }
+    pub fn masked(mut self, on: bool) -> Self {
+        self.masked = on;
+        self
+    }
+    pub fn caret_on(mut self, on: bool) -> Self {
+        self.caret_on = on;
+        self
+    }
+    /// What is painted: the value (bullets when masked) with the composition at the caret.
+    pub fn display(&self) -> String {
+        let v: String = if self.masked { "\u{2022}".repeat(self.value.chars().count()) } else { self.value.clone() };
+        match (&self.preedit, self.caret) {
+            (Some(p), Some(c)) => {
+                let at = v.char_indices().nth(c).map_or(v.len(), |(i, _)| i);
+                format!("{}{}{}", &v[..at], p, &v[at..])
+            }
+            _ => v,
+        }
+    }
+    /// The caret in [`Edit::display`] chars (after the composition).
+    pub fn display_caret(&self) -> Option<usize> {
+        self.caret.map(|c| c + self.preedit.as_ref().map_or(0, |p| p.chars().count()))
+    }
+    fn shows_placeholder(&self) -> bool {
+        self.value.is_empty() && self.preedit.as_deref().is_none_or(str::is_empty)
+    }
 }
 
 /// One styled run of inline text ([`El::runs`]).
@@ -271,6 +399,18 @@ impl El {
         self.children.extend(cs);
         self
     }
+    /// Built-in control content ([`Control`]).
+    pub fn control(mut self, c: Control) -> Self {
+        self.control = Some(c);
+        self
+    }
+    /// An embed slot named `key`: the element is laid out and painted as a box like any
+    /// other, and [`Dom::slots`] gives its content box so the app paints a kit widget
+    /// (or anything else) there.
+    pub fn slot(mut self, key: impl Into<String>) -> Self {
+        self.slot = Some(key.into());
+        self
+    }
     /// Append `c` when `cond` (conditional markup).
     pub fn child_if(self, cond: bool, c: impl FnOnce() -> El) -> Self {
         if cond {
@@ -295,15 +435,93 @@ pub struct Placed {
     pub anim: Option<AnimNode>,
     /// Laid-out inline runs ([`El::runs`]).
     pub inline: Option<Box<Inline>>,
+    /// Built-in control content ([`El::control`]).
+    pub control: Option<Control>,
+    /// Embed slot key ([`El::slot`]).
+    pub slot: Option<String>,
+    /// In a `position: fixed` subtree: placed against the viewport and not moved by
+    /// [`Dom::moved`] (an overlay that does not scroll with the page).
+    pub fixed: bool,
+    /// A text input's char boundaries: x of each boundary of [`Edit::display`] from the
+    /// text start (`chars + 1` values).
+    pub bounds: Vec<f64>,
 }
 
 impl Default for Placed {
     fn default() -> Self {
-        Self { id: None, kind: "div".into(), rect: Rect::default(), style: Style::default(), text: None, tab: false, name: None, svg: None, anim: None, inline: None }
+        Self {
+            id: None,
+            kind: "div".into(),
+            rect: Rect::default(),
+            style: Style::default(),
+            text: None,
+            tab: false,
+            name: None,
+            svg: None,
+            anim: None,
+            inline: None,
+            control: None,
+            slot: None,
+            fixed: false,
+            bounds: Vec::new(),
+        }
     }
 }
 
 impl Placed {
+    /// The ARIA role: a control's ([`Control::role`]), else from the kind (`button`,
+    /// `a` → `link`, `select` → `combobox`, `input` → `textbox`), else `generic`.
+    pub fn role(&self) -> &'static str {
+        if let Some(c) = &self.control {
+            return c.role();
+        }
+        match self.kind.as_str() {
+            "button" => "button",
+            "a" => "link",
+            "select" => "combobox",
+            "input" | "textarea" => "textbox",
+            "img" => "img",
+            "li" => "listitem",
+            "ul" | "ol" => "list",
+            "h1" | "h2" | "h3" | "h4" => "heading",
+            _ if self.tab => "button",
+            _ => "generic",
+        }
+    }
+    /// The accessible name: [`El::name`] when set, else the element's text (or inline
+    /// runs' text, or a text input's value / placeholder).
+    pub fn accessible_name(&self) -> Option<&str> {
+        self.name.as_deref().or(self.text.as_deref()).or(self.inline.as_ref().map(|i| i.text.as_str())).or(match &self.control {
+            Some(Control::Input(e)) if !e.masked && !e.value.is_empty() => Some(e.value.as_str()),
+            Some(Control::Input(e)) => Some(e.placeholder.as_str()).filter(|p| !p.is_empty()),
+            _ => None,
+        })
+    }
+    /// A text input's horizontal scroll: enough to keep the caret inside the content box.
+    pub fn input_scroll(&self) -> f64 {
+        let Some(Control::Input(e)) = &self.control else { return 0.0 };
+        let c = content_box(self);
+        let at = e.display_caret().and_then(|i| self.bounds.get(i)).copied().unwrap_or(0.0);
+        (at - c.width + 1.0).max(0.0)
+    }
+    /// A text input's char index (in [`Edit::display`]) nearest to window `x`: where a
+    /// click puts the caret.
+    pub fn input_index_at(&self, x: f64) -> Option<usize> {
+        let Some(Control::Input(_)) = &self.control else { return None };
+        let c = content_box(self);
+        let lx = x - c.x + self.input_scroll();
+        self.bounds.iter().enumerate().min_by(|a, b| (a.1 - lx).abs().total_cmp(&(b.1 - lx).abs())).map(|(i, _)| i)
+    }
+    /// A text input's caret rect (1px wide, the line height, window coordinates): for
+    /// painting and for the OS IME candidate window.
+    pub fn caret_rect(&self) -> Option<Rect> {
+        let Some(Control::Input(e)) = &self.control else { return None };
+        let i = e.display_caret()?;
+        let c = content_box(self);
+        let lh = font_of(&self.style).2;
+        let x = c.x + self.bounds.get(i).copied().unwrap_or(0.0) - self.input_scroll();
+        Some(Rect::new(x.round(), c.y + ((c.height - lh) / 2.0).max(0.0), 1.0, lh.min(c.height.max(lh))))
+    }
     /// Every inline run piece as `(run index, rect)` in window coordinates (the piece's
     /// box over its full line height), line by line.
     pub fn run_boxes(&self) -> Vec<(usize, Rect)> {
@@ -377,19 +595,69 @@ impl Dom {
         self.boxes.iter().filter(|b| b.tab).filter_map(|b| b.id.as_deref())
     }
     /// The tree shifted by `(dx, dy)`: lay out once to learn a size, then place it.
+    /// `position: fixed` boxes stay where they are (they are placed against the
+    /// viewport, not the page).
     pub fn moved(mut self, dx: f64, dy: f64) -> Self {
-        for b in &mut self.boxes {
+        for b in self.boxes.iter_mut().filter(|b| !b.fixed) {
             b.rect = Rect::new(b.rect.x + dx, b.rect.y + dy, b.rect.width, b.rect.height);
         }
         self.root = Rect::new(self.root.x + dx, self.root.y + dy, self.root.width, self.root.height);
         self
     }
-    /// `(id, accessible name)` for elements with an id and a name or text.
+    /// `(id, accessible name)` for elements with an id and a name or text
+    /// ([`Placed::accessible_name`]: [`El::name`] first).
     pub fn names(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.boxes.iter().filter_map(|b| Some((b.id.as_deref()?, b.accessible_name()?)))
+    }
+    /// The accessibility nodes of the tree: every element with an id, with its role,
+    /// accessible name ([`El::name`] wins over text), checked state and rect, in paint
+    /// order. What a host hands its platform accessibility tree.
+    pub fn a11y(&self) -> Vec<A11yNode> {
         self.boxes
             .iter()
-            .filter_map(|b| Some((b.id.as_deref()?, b.name.as_deref().or(b.text.as_deref()).or(b.inline.as_ref().map(|i| i.text.as_str()))?)))
+            .filter_map(|b| {
+                Some(A11yNode {
+                    id: b.id.clone()?,
+                    role: b.role(),
+                    name: b.accessible_name().unwrap_or_default().to_string(),
+                    checked: b.control.as_ref().and_then(Control::checked),
+                    disabled: b.kind == "button" && b.style.opacity.is_some_and(|o| o < 0.6),
+                    rect: b.rect,
+                    focusable: b.tab || matches!(b.control, Some(Control::Input(_))),
+                })
+            })
+            .collect()
     }
+    /// `(slot key, content box)` of every embed slot ([`El::slot`]), in paint order.
+    pub fn slots(&self) -> impl Iterator<Item = (&str, Rect)> {
+        self.boxes.iter().filter_map(|b| Some((b.slot.as_deref()?, content_box(b))))
+    }
+    /// The placed element `id`.
+    pub fn get(&self, id: &str) -> Option<&Placed> {
+        self.boxes.iter().find(|b| b.id.as_deref() == Some(id))
+    }
+    /// The topmost element with an id containing `(x, y)`.
+    pub fn hit(&self, x: f64, y: f64) -> Option<&str> {
+        let mut found = None;
+        for (id, r) in self.hits() {
+            if x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height {
+                found = Some(id);
+            }
+        }
+        found
+    }
+}
+
+/// One accessibility node of a DOM tree ([`Dom::a11y`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct A11yNode {
+    pub id: String,
+    pub role: &'static str,
+    pub name: String,
+    pub checked: Option<bool>,
+    pub disabled: bool,
+    pub rect: Rect,
+    pub focusable: bool,
 }
 
 struct Resolved {
@@ -407,6 +675,10 @@ struct Resolved {
     space: f64,
     /// Measured inline runs.
     runs: Option<std::rc::Rc<RunsMeasured>>,
+    control: Option<Control>,
+    slot: Option<String>,
+    /// A text input's display char boundaries.
+    bounds: Vec<f64>,
     children: Vec<Resolved>,
 }
 
@@ -445,13 +717,13 @@ struct RunsMeasured {
     text: String,
 }
 
-fn measure_runs(ctx: &mut dyn RenderContext, sheet: &Sheet, el: &El, s: &Style) -> RunsMeasured {
+fn measure_runs(ctx: &mut dyn RenderContext, sheet: &Sheet, el: &El, s: &Style, up: &[Node<'_>]) -> RunsMeasured {
     let mut toks = Vec::new();
     let mut runs = Vec::new();
     let mut text = String::new();
     let mut off = 0usize;
     for (ri, run) in el.runs.iter().enumerate() {
-        let mut rs = sheet.resolve(&Node::parse(&run.spec), Some(s));
+        let mut rs = if up.is_empty() { sheet.resolve(&Node::parse(&run.spec), Some(s)) } else { sheet.resolve_in(&Node::parse(&run.spec), up, Some(s)) };
         if let Some(css) = &run.css {
             for d in css.split(';') {
                 if let Some((k, v)) = d.split_once(':') {
@@ -636,9 +908,27 @@ fn font_str(s: &Style) -> String {
     }
 }
 
-fn resolve(ctx: &mut dyn RenderContext, sheet: &Sheet, el: &El, parent: Option<&Style>, state: &dyn Fn(&str) -> State) -> Option<Resolved> {
-    let st = el.id.as_deref().map_or(State::NONE, state);
-    let mut s = sheet.resolve(&Node::parse(&el.spec).state(st), parent);
+/// `up`: the ancestors' selector nodes (root first) when the sheet has descendant /
+/// child selectors (`None` otherwise, to skip the bookkeeping).
+fn resolve<'e>(
+    ctx: &mut dyn RenderContext,
+    sheet: &Sheet,
+    el: &'e El,
+    parent: Option<&Style>,
+    state: &dyn Fn(&str) -> State,
+    up: &mut Option<Vec<Node<'e>>>,
+) -> Option<Resolved> {
+    let mut st = el.id.as_deref().map_or(State::NONE, state);
+    match &el.control {
+        Some(c) if c.checked() == Some(true) => st = st | State::CHECKED,
+        Some(Control::Input(e)) if e.caret.is_some() => st = st | State::FOCUS,
+        _ => {}
+    }
+    let node = Node::parse(&el.spec).state(st);
+    let mut s = match up.as_deref() {
+        Some(u) if !u.is_empty() => sheet.resolve_in(&node, u, parent),
+        _ => sheet.resolve(&node, parent),
+    };
     if let Some(css) = &el.css {
         for d in css.split(';') {
             if let Some((k, v)) = d.split_once(':') {
@@ -649,16 +939,56 @@ fn resolve(ctx: &mut dyn RenderContext, sheet: &Sheet, el: &El, parent: Option<&
     if s.display.as_deref() == Some("none") {
         return None;
     }
-    let runs = (!el.runs.is_empty()).then(|| std::rc::Rc::new(measure_runs(ctx, sheet, el, &s)));
-    let text = if runs.is_some() { None } else { el.text.clone() };
-    let measured = text.as_ref().map(|t| {
+    let runs = (!el.runs.is_empty()).then(|| std::rc::Rc::new(measure_runs(ctx, sheet, el, &s, up.as_deref().unwrap_or(&[]))));
+    let text = if runs.is_some() || matches!(el.control, Some(Control::Input(_))) { None } else { el.text.clone() };
+    let mut measured = text.as_ref().map(|t| {
         ctx.set_font(&font_str(&s));
         (units(ctx, t, wraps(&s)), font_of(&s).2)
     });
+    let mut bounds = Vec::new();
+    if let Some(Control::Input(e)) = &el.control {
+        // One unwrapped line: the shown text (or the placeholder) sizes an auto width.
+        ctx.set_font(&font_str(&s));
+        let shown = e.display();
+        bounds.push(0.0);
+        let mut acc = String::new();
+        for ch in shown.chars() {
+            acc.push(ch);
+            bounds.push(ctx.measure_text(&acc));
+        }
+        let t = if e.shows_placeholder() { e.placeholder.clone() } else { shown };
+        let w = ctx.measure_text(&t).ceil();
+        measured = Some((vec![(t, w, false, false)], font_of(&s).2));
+    }
     let space = if text.is_some() && wraps(&s) { ctx.measure_text(" ") } else { 0.0 };
-    let children = el.children.iter().filter_map(|c| resolve(ctx, sheet, c, Some(&s), state)).collect();
+    let children = if let Some(u) = up.as_mut() {
+        u.push(node);
+        let kids: Vec<Resolved> = el.children.iter().filter_map(|c| resolve(ctx, sheet, c, Some(&s), state, up)).collect();
+        if let Some(u) = up.as_mut() {
+            u.pop();
+        }
+        kids
+    } else {
+        el.children.iter().filter_map(|c| resolve(ctx, sheet, c, Some(&s), state, up)).collect()
+    };
     let kind = el.spec.split(['.', '#', ':']).next().unwrap_or("div").to_string();
-    Some(Resolved { kind, id: el.id.clone(), style: s, text, tab: el.tab, name: el.name.clone(), svg: el.svg.clone(), anim: el.anim.clone(), measured, space, runs, children })
+    Some(Resolved {
+        kind,
+        id: el.id.clone(),
+        style: s,
+        text,
+        tab: el.tab,
+        name: el.name.clone(),
+        svg: el.svg.clone(),
+        anim: el.anim.clone(),
+        measured,
+        space,
+        runs,
+        control: el.control.clone(),
+        slot: el.slot.clone(),
+        bounds,
+        children,
+    })
 }
 
 /// The most lines wrapping text may take (`line-clamp`).
@@ -764,7 +1094,9 @@ fn collect_measures(r: &Resolved, out: &mut Vec<Box<dyn Fn(Option<f64>) -> (f64,
 /// `opacity` applies to the whole subtree).
 /// Positioned subtrees (absolute / relative) leave the flow's paint order: they are
 /// collected in `layers` with their `z-index` and painted after it.
-fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(i32, Vec<Placed>)>, alpha: f64) {
+/// `fixed`: inside a `position: fixed` subtree. Fixed subtrees form the top layers
+/// (above every non-fixed one, by `z-index` among themselves).
+fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(bool, i32, Vec<Placed>)>, alpha: f64, fixed: bool) {
     let mut style = r.style;
     let a = alpha * style.opacity.unwrap_or(1.0);
     style.opacity = (a < 1.0).then_some(a);
@@ -789,18 +1121,34 @@ fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(i32, Ve
         let (runs, text) = std::rc::Rc::try_unwrap(m).map(|m| (m.runs, m.text)).unwrap_or_else(|rc| (rc.runs.clone(), rc.text.clone()));
         Box::new(Inline { runs, lines, text })
     });
-    out.push(Placed { id: r.id, kind: r.kind, rect: l.rect, style, text: r.text, tab: r.tab, name: r.name, svg: r.svg, anim: r.anim, inline });
+    out.push(Placed {
+        id: r.id,
+        kind: r.kind,
+        rect: l.rect,
+        style,
+        text: r.text,
+        tab: r.tab,
+        name: r.name,
+        svg: r.svg,
+        anim: r.anim,
+        inline,
+        control: r.control,
+        slot: r.slot,
+        fixed,
+        bounds: r.bounds,
+    });
     for (c, cl) in r.children.into_iter().zip(&l.children) {
         if c.style.positioned() {
             let z = c.style.z_index.unwrap_or(0);
+            let f = fixed || c.style.fixed();
             // Reserve the slot first: positioned descendants inside it paint above it.
             let at = layers.len();
-            layers.push((z, Vec::new()));
+            layers.push((f, z, Vec::new()));
             let mut sub = Vec::new();
-            place(c, cl, &mut sub, layers, a);
-            layers[at].1 = sub;
+            place(c, cl, &mut sub, layers, a, f);
+            layers[at].2 = sub;
         } else {
-            place(c, cl, out, layers, a);
+            place(c, cl, out, layers, a, fixed);
         }
     }
 }
@@ -808,34 +1156,45 @@ fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(i32, Ve
 /// Lay out `root` at `(x, y)` in a containing block `w` wide, without painting.
 /// `state(id)` gives an element's interaction state (hover, focus-visible, ...).
 pub fn lay_out(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64, y: f64, w: f64, state: &dyn Fn(&str) -> State) -> Dom {
-    let Some(r) = resolve(ctx, sheet, root, None, state) else { return Dom::default() };
+    lay_out_in(ctx, sheet, root, x, y, w, None, state)
+}
+
+/// [`lay_out`] in a `viewport` (window coordinates; the root's box when `None`):
+/// `position: fixed` elements are placed against it and stay put when the tree
+/// scrolls ([`Dom::moved`]); they paint above everything else (a popover, a toast, a
+/// sticky composer over a scrolled page). `%` heights of the root resolve against it.
+#[allow(clippy::too_many_arguments)]
+pub fn lay_out_in(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64, y: f64, w: f64, viewport: Option<Rect>, state: &dyn Fn(&str) -> State) -> Dom {
+    let mut up = sheet.has_complex().then(Vec::new);
+    let Some(r) = resolve(ctx, sheet, root, None, state, &mut up) else { return Dom::default() };
     let mut measures = Vec::new();
     collect_measures(&r, &mut measures);
     let laid = {
         let mut next = 0;
         let b = lbox(&r, &measures, &mut next);
-        layout(&b, x, y, w)
+        layout_in(&b, x, y, w, viewport)
     };
     drop(measures);
     let mut flow = Vec::new();
     let mut layers = Vec::new();
-    place(r, &laid, &mut flow, &mut layers, 1.0);
+    let root_fixed = r.style.fixed();
+    place(r, &laid, &mut flow, &mut layers, 1.0, root_fixed);
     if layers.is_empty() {
         return Dom { boxes: flow, root: laid.rect };
     }
     // Paint order: the root, negative z-index layers, the flow, then the other layers by
     // z-index (ties in document order).
-    crate::sort::sort_by_key(&mut layers, |l| l.0);
-    let mut boxes = Vec::with_capacity(flow.len() + layers.iter().map(|l| l.1.len()).sum::<usize>());
+    crate::sort::sort_by_key(&mut layers, |l| (l.0, l.1));
+    let mut boxes = Vec::with_capacity(flow.len() + layers.iter().map(|l| l.2.len()).sum::<usize>());
     let mut flow = flow.into_iter();
     boxes.extend(flow.next());
-    let split = layers.iter().position(|l| l.0 >= 0).unwrap_or(layers.len());
+    let split = layers.iter().position(|l| l.0 || l.1 >= 0).unwrap_or(layers.len());
     let mut layers = layers.into_iter();
-    for (_, l) in layers.by_ref().take(split) {
+    for (_, _, l) in layers.by_ref().take(split) {
         boxes.extend(l);
     }
     boxes.extend(flow);
-    for (_, l) in layers {
+    for (_, _, l) in layers {
         boxes.extend(l);
     }
     Dom { boxes, root: laid.rect }
@@ -855,7 +1214,7 @@ pub fn paint_box(ctx: &mut dyn RenderContext, b: &Placed) {
     } else {
         let rad = s.border_radius.unwrap_or(0.0);
         let bw = s.border_width.unwrap_or(0.0);
-        let border = s.border_color.as_deref().filter(|_| bw > 0.0);
+        let border = s.border_color.as_deref().filter(|_| bw > 0.0 && s.border_drawn());
         if let Some(sh) = shadow {
             ctx.set_shadow(0.0, sh.dy, sh.blur, sh.color);
         }
@@ -869,8 +1228,15 @@ pub fn paint_box(ctx: &mut dyn RenderContext, b: &Placed) {
         if let Some(bc) = border {
             ctx.set_stroke_color(bc);
             ctx.set_stroke_width(bw);
+            let dash = s.border_dash(bw);
+            if let Some(d) = dash {
+                ctx.set_line_dash(&d);
+            }
             path_round_rect(ctx, Rect::new(r.x + bw / 2.0, r.y + bw / 2.0, r.width - bw, r.height - bw), (rad - bw / 2.0).max(0.0));
             ctx.stroke();
+            if dash.is_some() {
+                ctx.set_line_dash(&[]);
+            }
         }
     }
     let p = s.pad();
@@ -919,6 +1285,9 @@ pub fn paint_box(ctx: &mut dyn RenderContext, b: &Placed) {
             crate::render::draw_svg_icon(ctx, svg, content.x, content.y, content.width, content.height, color);
         }
     }
+    if let Some(ctl) = &b.control {
+        paint_control(ctx, b, ctl, content, color);
+    }
     if b.kind == "select" {
         let c = s.custom("--chevron").unwrap_or(color);
         let (ax, ay) = (r.x + r.width - be[1] - p[1].min(20.0).max(12.0) / 2.0 - 8.0, r.y + r.height / 2.0 - 2.0);
@@ -965,6 +1334,103 @@ fn paint_runs(ctx: &mut dyn RenderContext, inl: &Inline, c: Rect, fg: &str) {
             ctx.set_font(&font_str(rs));
             ctx.set_fill_color(rs.color.as_deref().unwrap_or(fg));
             fill_text_css(ctx, &p.text, c.x + p.x + p.pad, c.y + line.y, px, line.height, INTER, TextAlign::Left);
+        }
+    }
+}
+
+/// Paint a built-in control into content box `c` (`fg`: the element's text colour).
+fn paint_control(ctx: &mut dyn RenderContext, b: &Placed, ctl: &Control, c: Rect, fg: &str) {
+    let s = &b.style;
+    let num = |k: &str, d: f64| s.custom(k).and_then(|v| v.trim().trim_end_matches("px").parse::<f64>().ok()).unwrap_or(d);
+    match ctl {
+        Control::Switch { pos, .. } => {
+            let d = c.height.min(c.width);
+            let x = c.x + (c.width - d) * pos.clamp(0.0, 1.0);
+            ctx.set_fill_color(s.custom("--knob").unwrap_or("#ffffff"));
+            ctx.begin_path();
+            ctx.arc(x + d / 2.0, c.y + c.height / 2.0, d / 2.0, 0.0, std::f64::consts::TAU);
+            ctx.fill();
+        }
+        Control::Checkbox { on, mixed } => {
+            if !on && !mixed {
+                return;
+            }
+            let k = s.custom("--check").unwrap_or(fg);
+            let w = num("--check-width", 2.0);
+            let (x, y, sz) = (c.x, c.y, c.width.min(c.height));
+            ctx.set_stroke_color(k);
+            ctx.set_stroke_width(w);
+            ctx.set_line_cap("round");
+            ctx.begin_path();
+            if *mixed {
+                ctx.move_to(x + sz * 0.2, y + sz * 0.5);
+                ctx.line_to(x + sz * 0.8, y + sz * 0.5);
+            } else {
+                ctx.move_to(x + sz * 0.18, y + sz * 0.52);
+                ctx.line_to(x + sz * 0.42, y + sz * 0.76);
+                ctx.line_to(x + sz * 0.84, y + sz * 0.26);
+            }
+            ctx.stroke();
+            ctx.set_line_cap("butt");
+        }
+        Control::Spinner { t } => {
+            let r = c.width.min(c.height) / 2.0;
+            let w = num("--spin-width", (r / 4.0).clamp(1.5, 4.0));
+            let (cx, cy, rr) = (c.x + c.width / 2.0, c.y + c.height / 2.0, (r - w / 2.0).max(0.5));
+            ctx.set_stroke_width(w);
+            if let Some(tr) = s.custom("--spin-track") {
+                ctx.set_stroke_color(tr);
+                ctx.begin_path();
+                ctx.arc(cx, cy, rr, 0.0, std::f64::consts::TAU);
+                ctx.stroke();
+            }
+            let a = (t * num("--spin-speed", 1.0)).fract() * std::f64::consts::TAU;
+            ctx.set_stroke_color(fg);
+            ctx.set_line_cap("round");
+            ctx.begin_path();
+            ctx.arc(cx, cy, rr, a, a + std::f64::consts::PI * 1.5);
+            ctx.stroke();
+            ctx.set_line_cap("butt");
+        }
+        Control::Input(e) => {
+            let (_, px, lh, _) = font_of(s);
+            let top = c.y + ((c.height - lh) / 2.0).max(0.0);
+            let scroll = b.input_scroll();
+            ctx.save();
+            ctx.begin_path();
+            ctx.rect(c.x, c.y, c.width, c.height);
+            ctx.clip();
+            ctx.set_font(&font_str(s));
+            let x0 = c.x - scroll;
+            if e.shows_placeholder() {
+                ctx.set_fill_color(s.custom("--placeholder").unwrap_or("#8a8a8a"));
+                fill_text_css(ctx, &e.placeholder, x0, top, px, lh, INTER, TextAlign::Left);
+            } else {
+                let at = |i: usize| b.bounds.get(i).copied().unwrap_or(0.0);
+                if let (Some(a), Some(k)) = (e.anchor, e.caret) {
+                    let (lo, hi) = (a.min(k), a.max(k));
+                    if lo != hi && e.preedit.is_none() {
+                        ctx.set_fill_color(s.custom("--selection").unwrap_or("rgba(59,130,246,0.35)"));
+                        ctx.fill_rect(x0 + at(lo), top, at(hi) - at(lo), lh);
+                    }
+                }
+                ctx.set_fill_color(fg);
+                fill_text_css(ctx, &e.display(), x0, top, px, lh, INTER, TextAlign::Left);
+                if let (Some(p), Some(k)) = (&e.preedit, e.caret) {
+                    let (a, z) = (at(k), at(k + p.chars().count()));
+                    ctx.set_stroke_color(fg);
+                    ctx.set_stroke_width(1.0);
+                    ctx.begin_path();
+                    ctx.move_to(x0 + a, top + lh - 2.5);
+                    ctx.line_to(x0 + z, top + lh - 2.5);
+                    ctx.stroke();
+                }
+            }
+            if let (true, Some(cr)) = (e.caret_on, b.caret_rect()) {
+                ctx.set_fill_color(s.custom("--caret").unwrap_or(fg));
+                ctx.fill_rect(cr.x, cr.y + 2.0, 1.0, (cr.height - 4.0).max(1.0));
+            }
+            ctx.restore();
         }
     }
 }
@@ -1154,12 +1620,16 @@ fn paint_frame(ctx: &mut dyn RenderContext, r: Rect, s: &Style, bg: Option<&str>
         ctx.fill();
     }
     ctx.clear_shadow();
-    if e.iter().all(|w| *w <= 0.0) || colors.iter().all(Option::is_none) {
+    if e.iter().all(|w| *w <= 0.0) || colors.iter().all(Option::is_none) || !s.border_drawn() {
         return;
     }
     let uniform_w = e.iter().all(|w| *w == e[0]);
     let uniform_c = colors.iter().all(|c| *c == colors[0]);
+    let dash = s.border_dash(e[0]);
     if uniform_w && uniform_c {
+        if let Some(d) = dash {
+            ctx.set_line_dash(&d);
+        }
         // One stroke along the inset outline (radii shrunk by half the width).
         let w = e[0];
         let inner = Rect::new(r.x + w / 2.0, r.y + w / 2.0, r.width - w, r.height - w);
@@ -1169,6 +1639,9 @@ fn paint_frame(ctx: &mut dyn RenderContext, r: Rect, s: &Style, bg: Option<&str>
         ctx.begin_path();
         add_radii_path(ctx, inner, ir, false);
         ctx.stroke();
+        if dash.is_some() {
+            ctx.set_line_dash(&[]);
+        }
         return;
     }
     // The border ring: the outer outline minus the padding-box outline (CSS inner radii).

@@ -27,6 +27,10 @@ impl State {
     pub const ACTIVE: State = State(2);
     pub const FOCUS_VISIBLE: State = State(4);
     pub const DISABLED: State = State(8);
+    /// `:checked` (a switch, checkbox or radio that is on).
+    pub const CHECKED: State = State(16);
+    /// `:focus` (the element holds keyboard focus, however it got it).
+    pub const FOCUS: State = State(32);
     pub fn contains(self, o: State) -> bool {
         self.0 & o.0 == o.0
     }
@@ -71,6 +75,8 @@ impl<'a> Node<'a> {
                             "active" => State::ACTIVE,
                             "focus-visible" => State::FOCUS_VISIBLE,
                             "disabled" => State::DISABLED,
+                            "checked" => State::CHECKED,
+                            "focus" => State::FOCUS,
                             _ => State::NONE,
                         }
                 }
@@ -181,6 +187,22 @@ pub struct Style {
     /// [`crate::ui::dom::El::svg`] icon exactly (no pixel-grid snapping of its origin or
     /// strokes); unset / `auto` / `crispEdges` snap for crispness.
     pub shape_rendering: Option<String>,
+    /// `width: N%`: a fraction (0.5 for `50%`) of the containing block's width, used when
+    /// [`Style::width`] is unset. See [`crate::ui::flow`].
+    pub width_pct: Option<f64>,
+    /// `height: N%`: a fraction of the containing block's height when that height is
+    /// definite; otherwise the height is `auto`.
+    pub height_pct: Option<f64>,
+    /// `max-width: N%`: a fraction of the containing block's width.
+    pub max_width_pct: Option<f64>,
+    /// `min-width: N%`: a fraction of the containing block's width.
+    pub min_width_pct: Option<f64>,
+    /// `aspect-ratio` as width / height (`16 / 9` → 1.777…): a box with an auto height
+    /// takes `width / ratio`; with only a height, an auto width takes `height × ratio`.
+    pub aspect_ratio: Option<f64>,
+    /// `border-style` (`solid` when unset): `dashed` and `dotted` stroke the border with a
+    /// dash pattern, `none` / `hidden` draw no border.
+    pub border_style: Option<String>,
 }
 
 impl Style {
@@ -249,6 +271,26 @@ impl Style {
     pub fn out_of_flow(&self) -> bool {
         matches!(self.position.as_deref(), Some("absolute" | "fixed"))
     }
+    /// `position: fixed`: placed against the viewport and left where it is when the
+    /// tree scrolls ([`crate::ui::dom::Dom::moved`]).
+    pub fn fixed(&self) -> bool {
+        self.position.as_deref() == Some("fixed")
+    }
+    /// The border is drawn (`border-style` is not `none` / `hidden`).
+    pub fn border_drawn(&self) -> bool {
+        !matches!(self.border_style.as_deref(), Some("none" | "hidden"))
+    }
+    /// The dash pattern of the border for a stroke `w` wide: `dashed` 3w on 3w off (CSS
+    /// does not fix the ratio; this is what Chromium draws for thin borders), `dotted`
+    /// w on w off, otherwise solid (`None`).
+    pub fn border_dash(&self, w: f64) -> Option<[f64; 2]> {
+        let w = w.max(1.0);
+        match self.border_style.as_deref() {
+            Some("dashed") => Some([3.0 * w, 3.0 * w]),
+            Some("dotted") => Some([w, w]),
+            _ => None,
+        }
+    }
 }
 
 /// A string with `'static` lifetime for the `&'static str` fields of widget style
@@ -279,21 +321,85 @@ impl std::fmt::Display for StyleError {
 
 impl std::error::Error for StyleError {}
 
+/// A complex selector: compounds joined by descendant (` `) or child (`>`) combinators,
+/// the last compound is the subject.
 #[derive(Clone, Debug, PartialEq)]
 struct Selector {
+    parts: Vec<Compound>,
+    /// `child[i]`: the combinator between `parts[i]` and `parts[i + 1]` is `>`.
+    child: Vec<bool>,
+}
+
+impl Selector {
+    fn parse(s: &str) -> Result<Selector, StyleError> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Err(StyleError("empty selector".into()));
+        }
+        let spaced = s.replace('>', " > ");
+        let mut parts = Vec::new();
+        let mut child = Vec::new();
+        let mut pending_child = false;
+        for tok in spaced.split_whitespace() {
+            if tok == ">" {
+                if parts.is_empty() || pending_child {
+                    return Err(StyleError(format!("unsupported selector `{s}`")));
+                }
+                pending_child = true;
+                continue;
+            }
+            if !parts.is_empty() {
+                child.push(pending_child);
+            }
+            pending_child = false;
+            parts.push(Compound::parse(tok)?);
+        }
+        if pending_child || parts.is_empty() {
+            return Err(StyleError(format!("unsupported selector `{s}`")));
+        }
+        Ok(Selector { parts, child })
+    }
+    /// CSS specificity (ids, classes + pseudo-classes, kinds), summed over the compounds.
+    fn specificity(&self) -> (u32, u32, u32) {
+        self.parts.iter().map(Compound::specificity).fold((0, 0, 0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2))
+    }
+    /// A one-compound selector matching `n` (a complex one needs [`Selector::matches_in`]).
+    fn matches(&self, n: &Node<'_>) -> bool {
+        self.parts.len() == 1 && self.parts[0].matches(n)
+    }
+    /// Match `n` whose ancestors are `up` (root first, parent last).
+    fn matches_in(&self, n: &Node<'_>, up: &[Node<'_>]) -> bool {
+        let last = self.parts.len() - 1;
+        self.parts[last].matches(n) && Self::rest(&self.parts[..last], &self.child, up)
+    }
+    /// `parts` (the compounds left of a matched element) against the ancestors `up`;
+    /// `child[parts.len() - 1]` joins the last of `parts` to the element matched before.
+    fn rest(parts: &[Compound], child: &[bool], up: &[Node<'_>]) -> bool {
+        let Some((c, before)) = parts.split_last() else { return true };
+        if child[parts.len() - 1] {
+            // `>`: the parent must match.
+            match up.split_last() {
+                Some((p, above)) => c.matches(p) && Self::rest(before, child, above),
+                None => false,
+            }
+        } else {
+            // descendant: any ancestor, nearest first, with backtracking.
+            (0..up.len()).rev().any(|i| c.matches(&up[i]) && Self::rest(before, child, &up[..i]))
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Compound {
     kind: Option<String>,
     id: Option<String>,
     classes: Vec<String>,
     state: State,
 }
 
-impl Selector {
-    fn parse(s: &str) -> Result<Selector, StyleError> {
-        let s = s.trim();
-        if s.is_empty() || s.contains(char::is_whitespace) || s.contains('>') {
-            return Err(StyleError(format!("unsupported selector `{s}` (compound selectors only)")));
-        }
-        let mut sel = Selector { kind: None, id: None, classes: vec![], state: State::NONE };
+impl Compound {
+    fn parse(s: &str) -> Result<Compound, StyleError> {
+        let mut sel = Compound { kind: None, id: None, classes: vec![], state: State::NONE };
         let mut rest = s;
         let head_end = rest.find(['#', '.', ':']).unwrap_or(rest.len());
         let head = &rest[..head_end];
@@ -318,6 +424,8 @@ impl Selector {
                             "active" => State::ACTIVE,
                             "focus-visible" => State::FOCUS_VISIBLE,
                             "disabled" => State::DISABLED,
+                            "checked" => State::CHECKED,
+                            "focus" => State::FOCUS,
                             o => return Err(StyleError(format!("unsupported pseudo-class `:{o}`"))),
                         }
                 }
@@ -513,6 +621,24 @@ impl Sheet {
     /// [`Sheet::resolve`] plus, per applied declaration in cascade order, the property, its
     /// substituted value and the selector of the rule it came from (what an inspector shows).
     pub fn resolve_traced(&self, n: &Node<'_>, parent: Option<&Style>) -> (Style, Vec<Applied>) {
+        self.resolve_traced_in(n, &[], parent)
+    }
+
+    /// [`Sheet::resolve`] for an element whose ancestors are `up` (root first, parent last),
+    /// so descendant (`.a .b`) and child (`.a > .b`) selectors can match. Without
+    /// ancestors (`resolve`, `el`) only one-compound selectors apply.
+    pub fn resolve_in(&self, n: &Node<'_>, up: &[Node<'_>], parent: Option<&Style>) -> Style {
+        self.resolve_traced_in(n, up, parent).0
+    }
+
+    /// The sheet has a selector with a combinator (descendant / child), so callers that
+    /// do not track ancestors may want to.
+    pub fn has_complex(&self) -> bool {
+        self.rules.iter().any(|r| r.sel.parts.len() > 1)
+    }
+
+    /// [`Sheet::resolve_traced`] with ancestors (see [`Sheet::resolve_in`]).
+    pub fn resolve_traced_in(&self, n: &Node<'_>, up: &[Node<'_>], parent: Option<&Style>) -> (Style, Vec<Applied>) {
         let mut trace = Vec::new();
         let mut s = Style::default();
         if let Some(p) = parent {
@@ -528,7 +654,7 @@ impl Sheet {
             s.shape_rendering = p.shape_rendering.clone();
             s.custom = p.custom.clone();
         }
-        let mut hits: Vec<&Rule> = self.rules.iter().filter(|r| r.sel.matches(n)).collect();
+        let mut hits: Vec<&Rule> = self.rules.iter().filter(|r| if up.is_empty() { r.sel.matches(n) } else { r.sel.matches_in(n, up) }).collect();
         crate::sort::sort_by_key(&mut hits, |r| (r.sel.specificity(), r.order));
         // Custom properties first (they cascade, then every var() sees the element's values).
         for r in &hits {
@@ -566,6 +692,27 @@ impl Sheet {
         }
         (s, trace)
     }
+}
+
+/// The `border-style` keywords the `border` shorthands recognise.
+const BORDER_STYLES: [&str; 9] = ["solid", "dashed", "dotted", "none", "hidden", "double", "groove", "ridge", "inset"];
+
+/// A length that may be a percentage: `(px, fraction)`, at most one set (`auto` → neither).
+fn len(v: &str) -> (Option<f64>, Option<f64>) {
+    match v.trim().strip_suffix('%') {
+        Some(p) => (None, p.trim().parse::<f64>().ok().map(|p| p / 100.0)),
+        None => (px(v), None),
+    }
+}
+
+/// `aspect-ratio`: `w / h`, a single number, or `auto` (optionally with a ratio, which wins).
+fn ratio(v: &str) -> Option<f64> {
+    let v = v.trim().trim_start_matches("auto").trim();
+    let r = match v.split_once('/') {
+        Some((w, h)) => w.trim().parse::<f64>().ok()? / h.trim().parse::<f64>().ok()?,
+        None => v.parse().ok()?,
+    };
+    (r.is_finite() && r > 0.0).then_some(r)
 }
 
 fn px(v: &str) -> Option<f64> {
@@ -677,7 +824,9 @@ fn apply(s: &mut Style, k: &str, v: &str) {
                 if let Some(w) = px(&part).filter(|_| part.ends_with("px") || part == "0") {
                     s.border_width = Some(w);
                     s.border_widths = None;
-                } else if !matches!(part.as_str(), "solid" | "dashed" | "none") {
+                } else if BORDER_STYLES.contains(&part.as_str()) {
+                    s.border_style = Some(part);
+                } else {
                     s.border_color = Some(part);
                     s.border_colors = None;
                 }
@@ -711,13 +860,17 @@ fn apply(s: &mut Style, k: &str, v: &str) {
                             set_w(s, w);
                         } else if part == "none" {
                             set_w(s, 0.0);
-                        } else if part != "solid" && part != "dashed" {
+                        } else if BORDER_STYLES.contains(&part.as_str()) {
+                            s.border_style = Some(part);
+                        } else {
                             set_c(s, part);
                         }
                     }
                 }
             }
         }
+        "border-style" => s.border_style = Some(v.trim().into()),
+        "aspect-ratio" => s.aspect_ratio = ratio(v),
         "padding" => s.padding = edges(v),
         "margin" => s.margin = edges(v),
         _ if k.starts_with("padding-") || k.starts_with("margin-") => {
@@ -781,8 +934,8 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         "line-height" => s.line_height = if v.ends_with("px") { px(v) } else { None },
         "font-family" => s.font_family = Some(v.into()),
         "opacity" => s.opacity = v.parse().ok(),
-        "width" => s.width = px(v),
-        "height" => s.height = px(v),
+        "width" => (s.width, s.width_pct) = len(v),
+        "height" => (s.height, s.height_pct) = len(v),
         "gap" => {
             let parts: Vec<f64> = v.split_whitespace().filter_map(px).collect();
             match parts[..] {
@@ -799,8 +952,8 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         }
         "column-gap" => s.gap = px(v),
         "row-gap" => s.row_gap = px(v),
-        "min-width" => s.min_width = px(v),
-        "max-width" => s.max_width = px(v),
+        "min-width" => (s.min_width, s.min_width_pct) = len(v),
+        "max-width" => (s.max_width, s.max_width_pct) = len(v),
         "min-height" => s.min_height = px(v),
         "max-height" => s.max_height = px(v),
         "display" => s.display = Some(v.into()),

@@ -335,7 +335,7 @@ pub fn min_content(b: &LBox<'_>) -> f64 {
 
 fn intrinsic(b: &LBox<'_>, min: bool) -> f64 {
     let s = &b.style;
-    if let Some(w) = s.width {
+    if let Some(w) = s.width.or_else(|| s.height.zip(s.aspect_ratio).map(|(h, r)| h * r)) {
         return clamp_w(s, w);
     }
     let kids = b.children.iter().filter(|c| !c.style.out_of_flow()).map(|c| intrinsic(c, min) + mh(&c.style));
@@ -397,6 +397,32 @@ fn intrinsic(b: &LBox<'_>, min: bool) -> f64 {
 /// assert_eq!(l.children[0].rect.y, 10.0);
 /// ```
 pub fn layout(b: &LBox<'_>, x: f64, y: f64, avail: f64) -> Laid {
+    layout_in(b, x, y, avail, None)
+}
+
+/// [`layout`] with a viewport: `position: fixed` boxes are placed against `viewport`
+/// (the root's border box when `None`) whatever their ancestors, and a root
+/// `width` / `height` in `%` resolves against `avail` / the viewport height.
+///
+/// ```
+/// use uzor::ui::flow::{layout_in, LBox};
+/// use uzor::Rect;
+/// let root = LBox::css("position:relative;width:200px;height:2000px")
+///     .child(LBox::css("height:30px;width:50%"))
+///     .child(LBox::css("position:fixed;bottom:10px;right:10px;width:20px;height:20px"));
+/// let l = layout_in(&root, 0.0, -500.0, 800.0, Some(Rect::new(0.0, 0.0, 800.0, 600.0)));
+/// assert_eq!(l.children[0].rect.width, 100.0);
+/// // The fixed box sits in the viewport corner, not in the (scrolled) root.
+/// assert_eq!((l.children[1].rect.x, l.children[1].rect.y), (770.0, 570.0));
+/// ```
+pub fn layout_in(b: &LBox<'_>, x: f64, y: f64, avail: f64, viewport: Option<Rect>) -> Laid {
+    let own;
+    let b = if needs_norm(&b.style) {
+        own = normalized(b, avail, viewport.map(|v| v.height));
+        &own
+    } else {
+        b
+    };
     let w = clamp_w(&b.style, b.style.width.unwrap_or(avail - mh(&b.style)));
     let mut l = lay(b, x + b.style.mar()[3], y + b.style.mar()[0], w, None);
     if !b.style.positioned() {
@@ -404,7 +430,63 @@ pub fn layout(b: &LBox<'_>, x: f64, y: f64, avail: f64) -> Laid {
         let cb = l.rect;
         place_abs(b, &mut l, cb);
     }
+    let vp = viewport.unwrap_or(l.rect);
+    if b.style.fixed() {
+        l = lay_abs(b, vp, (l.rect.x, l.rect.y));
+    }
+    place_fixed(b, &mut l, vp);
     l
+}
+
+/// Re-place every `position: fixed` descendant against the viewport `vp`.
+fn place_fixed(b: &LBox<'_>, l: &mut Laid, vp: Rect) {
+    for (c, cl) in b.children.iter().zip(l.children.iter_mut()) {
+        if c.style.fixed() {
+            *cl = lay_abs(c, vp, (cl.rect.x, cl.rect.y));
+        }
+        place_fixed(c, cl, vp);
+    }
+}
+
+/// The style needs [`normalized`]: a `%` length, or an `aspect-ratio` that sizes an
+/// auto width from a fixed height.
+fn needs_norm(s: &Style) -> bool {
+    s.width_pct.is_some()
+        || s.height_pct.is_some()
+        || s.max_width_pct.is_some()
+        || s.min_width_pct.is_some()
+        || (s.aspect_ratio.is_some() && s.width.is_none() && s.height.is_some())
+}
+
+/// A copy of `b` with its `%` lengths resolved against a containing block `cw` wide
+/// and `ch` high (`None` = indefinite: `height: N%` behaves as `auto`), and an auto
+/// width with a fixed height and an `aspect-ratio` set to `height × ratio`.
+fn normalized<'a>(b: &LBox<'a>, cw: f64, ch: Option<f64>) -> LBox<'a> {
+    let mut s = b.style.clone();
+    if s.width.is_none() {
+        s.width = s.width_pct.map(|p| p * cw);
+    }
+    if s.height.is_none() {
+        s.height = s.height_pct.zip(ch).map(|(p, h)| p * h);
+    }
+    if s.max_width.is_none() {
+        s.max_width = s.max_width_pct.map(|p| p * cw);
+    }
+    if s.min_width.is_none() {
+        s.min_width = s.min_width_pct.map(|p| p * cw);
+    }
+    if s.width.is_none() {
+        s.width = s.height.zip(s.aspect_ratio).map(|(h, r)| h * r);
+    }
+    s.width_pct = None;
+    s.height_pct = None;
+    s.max_width_pct = None;
+    s.min_width_pct = None;
+    LBox { style: s, measure: b.measure, children: b.children.iter().map(copy_box).collect() }
+}
+
+fn copy_box<'a>(b: &LBox<'a>) -> LBox<'a> {
+    LBox { style: b.style.clone(), measure: b.measure, children: b.children.iter().map(copy_box).collect() }
 }
 
 /// Move a laid-out subtree by `(dx, dy)`.
@@ -438,6 +520,13 @@ fn place_abs(b: &LBox<'_>, l: &mut Laid, cb: Rect) {
 /// An absolutely positioned box in containing block `cb`; `stat` = its static position
 /// (border-box top-left).
 fn lay_abs(c: &LBox<'_>, cb: Rect, stat: (f64, f64)) -> Laid {
+    let own;
+    let c = if needs_norm(&c.style) {
+        own = normalized(c, cb.width, Some(cb.height));
+        &own
+    } else {
+        c
+    };
     let s = &c.style;
     let m = s.mar();
     let w = match (s.width, s.left, s.right) {
@@ -500,9 +589,20 @@ fn lay(b: &LBox<'_>, x: f64, y: f64, w: f64, forced_h: Option<f64>) -> Laid {
     let be = s.border_edges();
     let (cx, cy) = (x + p[3] + be[3], y + p[0] + be[0]);
     let cw = (w - hz(s)).max(0.0);
-    let def_h = forced_h.or(s.height.map(|h| clamp_h(s, h)));
+    let def_h = forced_h.or(s.height.map(|h| clamp_h(s, h))).or(s.aspect_ratio.map(|r| clamp_h(s, w / r)));
     #[cfg_attr(not(feature = "flow-flex"), allow(unused_variables))]
     let ch_def = def_h.map(|h| (h - vt(s)).max(0.0));
+    // `%` lengths of the children resolve against this content box.
+    // (Out-of-flow ones resolve against their containing block in `lay_abs`.)
+    let in_flow_pct = |c: &LBox<'_>| needs_norm(&c.style) && !c.style.out_of_flow();
+    let holder: LBox<'_>;
+    let b = if b.children.iter().any(in_flow_pct) {
+        let kids = b.children.iter().map(|c| if in_flow_pct(c) { normalized(c, cw, ch_def) } else { copy_box(c) }).collect();
+        holder = LBox { style: Style::default(), measure: b.measure, children: kids };
+        &holder
+    } else {
+        b
+    };
     // Out-of-flow children take no part in the container's layout: lay out the rest,
     // then give each absolute child a static-position placeholder (laid out for real
     // by its containing block, `place_abs`).
