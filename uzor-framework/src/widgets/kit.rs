@@ -91,6 +91,8 @@ pub use super::lm::{
     TooltipBuilder,
 };
 pub use super::splitter::Axis;
+/// The DOM widget catalog (CSS-styled controls, select popover, chat blocks).
+pub use uzor::ui::domkit;
 pub use uzor::ui::widgets::atomic::toast::{ToastSeverity, ToastType};
 
 /// What a piece reports after `.build(cx)`.
@@ -1358,3 +1360,169 @@ impl<'a> ToastsBuilder<'a> {
 #[cfg(test)]
 #[path = "kit_tests.rs"]
 mod tests;
+
+// -- DOM trees ----------------------------------------------------------------
+
+/// A DOM tree ([`uzor::ui::dom`]) inside a kit panel. Start with [`dom`].
+pub struct DomBuilder<'a> {
+    rect: Rect,
+    sheet: &'a uzor::ui::style::Sheet,
+    root: uzor::ui::dom::El,
+    scroll: f64,
+    viewport: Option<Rect>,
+}
+
+/// What a [`dom`] tree did this frame.
+#[derive(Clone, Debug, Default)]
+pub struct DomResponse {
+    /// The laid-out tree (rects by id, embed slots, a11y nodes).
+    pub dom: uzor::ui::dom::Dom,
+    /// The element id clicked this frame (topmost first).
+    pub clicked: Option<String>,
+    /// The element id under the pointer.
+    pub hovered: Option<String>,
+    /// The focused element id.
+    pub focused: Option<String>,
+    /// Text inputs whose value the user changed this frame: `(id, new value)`.
+    pub edited: Vec<(String, String)>,
+}
+
+/// Lay out `root` with `sheet` in `rect` (scrolled up by [`DomBuilder::scroll`]),
+/// paint it, and register every element with an id: buttons, switches, checkboxes and
+/// rows become focusable click targets named by their accessible name ([`El::name`]
+/// first, then text) with their checked state; DOM text inputs
+/// ([`uzor::ui::dom::Control::Input`]) become text-store fields, so caret, selection,
+/// drag, clipboard and IME work as in [`field`]. `position: fixed` elements (a select
+/// popover, a side panel) are placed against the panel and stay put while it scrolls.
+///
+/// Kit widgets go *inside* the tree through embed slots: call them at
+/// `resp.dom.slots()` after `build`.
+///
+/// [`El::name`]: uzor::ui::dom::El::name
+pub fn dom<'a>(rect: Rect, sheet: &'a uzor::ui::style::Sheet, root: uzor::ui::dom::El) -> DomBuilder<'a> {
+    DomBuilder { rect, sheet, root, scroll: 0.0, viewport: None }
+}
+
+impl<'a> DomBuilder<'a> {
+    /// Scroll the tree up by `y` (fixed elements do not move).
+    pub fn scroll(mut self, y: f64) -> Self {
+        self.scroll = y;
+        self
+    }
+    /// The viewport fixed elements are placed against (the panel rect by default).
+    pub fn viewport(mut self, r: Rect) -> Self {
+        self.viewport = Some(r);
+        self
+    }
+
+    /// Paint the tree and register its hit targets and fields.
+    pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> DomResponse {
+        use uzor::ui::dom::{Control, El};
+        use uzor::ui::style::State;
+        let now_ms = cx.time_ms();
+        let DomBuilder { rect, sheet, mut root, scroll, viewport } = self;
+        let (resp, ime) = cx.with_paint(|render, widgets, v, _| {
+            let (coord, _, layer) = parts(widgets);
+            let mut edited = Vec::new();
+            let mut seed: Vec<(WidgetId, String)> = Vec::new();
+            // Feed the text store's state into the tree's inputs (seeding new fields).
+            fn walk(e: &mut El, f: &mut dyn FnMut(&str, &mut uzor::ui::dom::Edit)) {
+                if let (Some(id), Some(Control::Input(ed))) = (e.id.as_deref(), e.control.as_mut()) {
+                    f(id, ed);
+                }
+                for c in &mut e.children {
+                    walk(c, f);
+                }
+            }
+            walk(&mut root, &mut |id, ed| {
+                let wid = WidgetId::from(id);
+                if coord.text_fields().field_state(&wid).is_none() {
+                    seed.push((wid.clone(), ed.value.clone()));
+                }
+                let focused = v.is_focused(&wid);
+                if let Some(s) = coord.text_fields().field_state(&wid) {
+                    let text = s.text.clone();
+                    if text != ed.value {
+                        edited.push((id.to_string(), text.clone()));
+                        ed.value = text;
+                    }
+                    let caret = s.cursor.min(ed.value.chars().count());
+                    let composing = !s.preedit.is_empty();
+                    let sel = (!composing).then(|| s.selection_range()).flatten();
+                    ed.caret = focused.then_some(caret);
+                    ed.anchor = sel.filter(|_| focused).map(|(a, b)| if b == caret { a } else { b });
+                    ed.preedit = (focused && composing).then(|| s.preedit.clone());
+                    ed.caret_on = focused && s.engaged && coord.text_fields().cursor_visible(now_ms);
+                } else {
+                    ed.caret = None;
+                }
+            });
+            let state = |id: &str| {
+                let w = WidgetId::from(id);
+                let mut s = State::NONE;
+                if v.is_hovered(&w) {
+                    s = s | State::HOVER;
+                }
+                if v.is_pressed(&w) {
+                    s = s | State::ACTIVE;
+                }
+                if v.is_focused(&w) {
+                    s = s | State::FOCUS_VISIBLE;
+                }
+                s
+            };
+            let vp = viewport.unwrap_or(rect);
+            let d = uzor::ui::dom::lay_out_in(render, sheet, &root, rect.x, rect.y, rect.width, Some(vp), &state);
+            let d = if scroll != 0.0 { d.moved(0.0, -scroll) } else { d };
+            render.save();
+            render.begin_path();
+            render.rect(rect.x, rect.y, rect.width, rect.height);
+            render.clip();
+            uzor::ui::dom::paint(render, &d);
+            render.restore();
+            coord.set_default_layer(Some(layer.clone()));
+            let mut ime = None;
+            for b in &d.boxes {
+                let Some(id) = b.id.as_deref() else { continue };
+                let wid = WidgetId::from(id);
+                let name = b.accessible_name().unwrap_or_default().to_string();
+                if let Some(Control::Input(e)) = &b.control {
+                    let cfg = if e.masked { uzor::TextFieldConfig::password() } else { uzor::TextFieldConfig::text() };
+                    coord.register_text_field(wid.clone(), b.rect, cfg);
+                    if let Some((_, v)) = seed.iter().find(|(s, _)| *s == wid) {
+                        coord.text_fields_mut().set_text(&wid, v);
+                    }
+                    coord.set_a11y(&wid, &name, None);
+                    let c = uzor::ui::dom::content_box(b);
+                    let sx = c.x - b.input_scroll();
+                    // Boundaries of the shown text (value + composition), mapped back to the buffer.
+                    let pos: Vec<f64> = b.bounds.iter().map(|x| sx + x).collect();
+                    let _ = e;
+                    let fields = coord.text_fields_mut();
+                    let pos = match fields.field_state(&wid) {
+                        Some(s) => s.buffer_positions(pos),
+                        None => pos,
+                    };
+                    fields.update_field(&wid, (c.x, c.y, c.width, c.height), pos);
+                    if e.caret.is_some() {
+                        ime = b.caret_rect();
+                    }
+                } else if b.tab || b.id.is_some() {
+                    let sense = if b.tab { focusable() } else { Sense::CLICK | Sense::HOVER };
+                    coord.register_atomic(wid.clone(), WidgetKind::Button, b.rect, sense, layer);
+                    coord.set_a11y(&wid, &name, b.control.as_ref().and_then(Control::checked));
+                }
+            }
+            coord.set_default_layer(None);
+            let ids: Vec<&str> = d.boxes.iter().rev().filter_map(|b| b.id.as_deref()).collect();
+            let clicked = ids.iter().find(|i| v.clicked(&WidgetId::from(**i))).map(|s| s.to_string());
+            let hovered = ids.iter().find(|i| v.is_hovered(&WidgetId::from(**i))).map(|s| s.to_string());
+            let focused = ids.iter().find(|i| v.is_focused(&WidgetId::from(**i))).map(|s| s.to_string());
+            (DomResponse { dom: d, clicked, hovered, focused, edited }, ime)
+        });
+        if let Some(at) = ime {
+            cx.ime_area(at);
+        }
+        resp
+    }
+}

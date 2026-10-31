@@ -394,3 +394,34 @@ fn press_origin_is_reported_only_for_a_held_press() {
     assert_eq!(v.pressed_at(&WidgetId::from("bar")), Some((12.0, 3.0)));
     assert_eq!(v.pressed_at(&WidgetId::from("other")), None);
 }
+
+#[test]
+fn dom_tree_registers_controls_inputs_and_reports_clicks() {
+    use domkit::{self, SelectOpt};
+    let sheet = domkit::sheet();
+    let tree = |open: bool| {
+        let opts = [SelectOpt::new("Low"), SelectOpt::new("Mid").sub("default"), SelectOpt::new("High").disabled(true)];
+        let mut root = uzor::ui::dom::El::new("div.k-col")
+            .child(domkit::switch("notify", true, "Notifications"))
+            .child(domkit::input("nick", uzor::ui::dom::Edit::new("ann").placeholder("Nick")))
+            .child(domkit::select_trigger("lvl", "Mid", open, "Level"));
+        if open {
+            root = root.child(domkit::select_popover("lvl", &opts, Some(1), domkit::popover_at(Rect::new(0.0, 80.0, 160.0, 30.0), Rect::new(0.0, 0.0, 800.0, 600.0), 160.0, 120.0)));
+        }
+        root
+    };
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let area = Rect::new(0.0, 0.0, 400.0, 600.0);
+    let r = h.frame(&click("lvl"), |cx| dom(area, &sheet, tree(false)).build(cx));
+    assert_eq!(r.clicked.as_deref(), Some("lvl"));
+    assert!(h.coord.focusable_ids(None).contains(&WidgetId::from("notify")));
+    let r = h.frame(&click("lvl:opt:0"), |cx| dom(area, &sheet, tree(true)).build(cx));
+    assert_eq!(domkit::picked_opt("lvl", r.clicked.as_deref().unwrap_or("")), Some(0));
+    assert!(h.coord.widget_rect(&WidgetId::from("lvl:opt:2")).is_none(), "disabled rows are not targets");
+    // The input is a text-store field seeded with its value.
+    let st = h.coord.text_fields().field_state(&WidgetId::from("nick")).expect("field");
+    assert_eq!(st.text, "ann");
+    // Accessible names come from El::name, then text.
+    let a11y = r.dom.a11y();
+    assert!(a11y.iter().any(|n| n.id == "notify" && n.name == "Notifications" && n.checked == Some(true)));
+}
