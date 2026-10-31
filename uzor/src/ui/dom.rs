@@ -941,10 +941,18 @@ fn resolve<'e>(
         _ => sheet.resolve(&node, parent),
     };
     if let Some(css) = &el.css {
-        for d in css.split(';') {
-            if let Some((k, v)) = d.split_once(':') {
-                apply_decl(&mut s, k.trim(), v.trim());
+        // Inline declarations: custom properties first (they reach the subtree like sheet
+        // ones), then every value with `var()` resolved against them.
+        let decls: Vec<(&str, &str)> = css.split(';').filter_map(|d| d.split_once(':')).map(|(k, v)| (k.trim(), v.trim())).collect();
+        for (k, v) in &decls {
+            if k.starts_with("--") {
+                let v = sheet.subst_with(v, &s.custom);
+                s.custom.insert(k.to_string(), v);
             }
+        }
+        for (k, v) in decls.iter().filter(|(k, _)| !k.starts_with("--")) {
+            let v = sheet.subst_with(v, &s.custom);
+            apply_decl(&mut s, k, &v);
         }
     }
     if s.display.as_deref() == Some("none") {
@@ -1797,6 +1805,19 @@ pub fn render(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64, y: 
 mod tests {
     use super::*;
     use crate::testing::NullRenderContext;
+
+    #[test]
+    fn inline_custom_properties_reach_the_subtree() {
+        let sh = Sheet::parse(":root { --acc: #111111 } span.t { color: var(--acc) } div.b { background: var(--acc) }").unwrap();
+        let mut ctx = NullRenderContext::default();
+        let page = El::new("div.r").css("--acc: #ff0000; border-color: var(--acc)").child(El::new("span.t").id("t").text("x")).child(El::new("div.b").id("b"));
+        let dom = lay_out(&mut ctx, &sh, &page, 0.0, 0.0, 200.0, &|_| State::NONE);
+        assert_eq!(dom.get("t").and_then(|p| p.style.color.as_deref()), Some("#ff0000"));
+        assert_eq!(dom.get("b").and_then(|p| p.style.background.as_deref()), Some("#ff0000"));
+        let plain = El::new("div.r").child(El::new("span.t").id("t").text("x"));
+        let dom = lay_out(&mut ctx, &sh, &plain, 0.0, 0.0, 200.0, &|_| State::NONE);
+        assert_eq!(dom.get("t").and_then(|p| p.style.color.as_deref()), Some("#111111"));
+    }
 
     const CSS: &str = r#"
         :root { --txt: #f5f5f5 }

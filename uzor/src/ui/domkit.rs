@@ -236,7 +236,10 @@ impl ListView<'_> {
 
 /// [`select_popover`] for a windowed, searchable list: rows `view.top ..` of `opts` (the
 /// already filtered options; hits keep their index in `opts`), the highlighted row, a
-/// search line and a scroll thumb. "No matches" when `opts` is empty.
+/// search line and a scroll thumb. "No matches" when `opts` is empty. The popover is
+/// `position: fixed` at `at`, so `at` is in the coordinates of the viewport given to
+/// [`lay_out_in`](crate::ui::dom::lay_out_in) (the window, origin 0,0). Its rows' `--k-accent`
+/// (the chosen row's tick) can be set inline on the returned element.
 pub fn select_list(id: &str, opts: &[SelectOpt], chosen: Option<usize>, view: &ListView<'_>, at: Rect) -> El {
     let mut pop = El::new("div.k-pop").id(format!("{id}:pop")).css(format!("top: {}px; left: {}px; width: {}px", at.y, at.x, at.width));
     if let Some(q) = view.query {

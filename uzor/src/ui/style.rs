@@ -604,6 +604,11 @@ impl Sheet {
         self.el(spec)
     }
 
+    /// `v` with `var()` resolved against an element's custom properties, then the sheet's.
+    pub(crate) fn subst_with(&self, v: &str, local: &std::collections::BTreeMap<String, String>) -> String {
+        self.subst_in(v, 0, Some(local))
+    }
+
     fn subst(&self, v: &str, depth: u32) -> String {
         self.subst_in(v, depth, None)
     }
