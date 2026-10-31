@@ -957,3 +957,37 @@ mod tests {
         assert!(bad.is_empty(), "{}", bad.join("\n"));
     }
 }
+
+#[cfg(all(test, feature = "flow-flex"))]
+mod pct_tests {
+    use super::*;
+
+    #[test]
+    fn percent_widths_heights_and_aspect_ratio() {
+        let root = LBox::css("width:400px;height:300px;padding:10px")
+            .child(LBox::css("width:50%;height:10%"))
+            .child(LBox::css("width:25%;aspect-ratio:2"))
+            .child(LBox::css("height:20px;aspect-ratio:3;"));
+        let l = layout(&root, 0.0, 0.0, 800.0);
+        let r: Vec<(f64, f64)> = l.children.iter().map(|c| (c.rect.width, c.rect.height)).collect();
+        // content box 380 × 280
+        assert_eq!(r, vec![(190.0, 28.0), (95.0, 47.5), (60.0, 20.0)]);
+        // flex rows resolve against the row's content box too
+        let row = LBox::css("display:flex;width:300px").child(LBox::css("width:50%;height:10px")).child(LBox::css("flex-grow:1;height:10px"));
+        let l = layout(&row, 0.0, 0.0, 800.0);
+        assert_eq!((l.children[0].rect.width, l.children[1].rect.width), (150.0, 150.0));
+        // an absolute box resolves against its containing block's padding box
+        let root = LBox::css("position:relative;width:200px;height:100px").child(LBox::css("position:absolute;top:0;left:0;width:50%;height:50%"));
+        let l = layout(&root, 0.0, 0.0, 800.0);
+        assert_eq!((l.children[0].rect.width, l.children[0].rect.height), (100.0, 50.0));
+    }
+
+    #[test]
+    fn fixed_boxes_use_the_viewport() {
+        let root = LBox::css("width:300px")
+            .child(LBox::css("position:relative;height:500px").child(LBox::css("position:fixed;top:0;left:0;right:0;height:40px")));
+        let vp = Rect::new(0.0, 0.0, 1000.0, 700.0);
+        let l = layout_in(&root, 0.0, -200.0, 300.0, Some(vp));
+        assert_eq!(l.children[0].children[0].rect, Rect::new(0.0, 0.0, 1000.0, 40.0));
+    }
+}

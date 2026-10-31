@@ -1158,8 +1158,43 @@ mod tests {
     "#;
 
     #[test]
-    fn rejects_descendant_selectors() {
-        assert!(Sheet::parse(CSS).is_err());
+    fn descendant_and_child_selectors() {
+        let sh = Sheet::parse(CSS).unwrap();
+        let seg = [Node::parse("div.seg")];
+        // `.seg button` needs the ancestor; without one only `button` applies.
+        assert_eq!(sh.resolve_in(&Node::new("button"), &seg, None).gap, Some(1.0));
+        assert_eq!(sh.resolve(&Node::new("button"), None).gap, None);
+        let sh = Sheet::parse(
+            ".a > .b { width: 10px } .a .b { height: 5px } .a .c > .b { width: 20px } .x { width: 3px } .bad >  { }",
+        );
+        assert!(sh.is_err(), "a dangling combinator is rejected");
+        let sh = Sheet::parse(".a > .b { width: 10px } .a .b { height: 5px } .a .c > .b { width: 20px }").unwrap();
+        assert!(sh.has_complex());
+        let b = Node::parse("div.b");
+        // child of .a
+        let s = sh.resolve_in(&b, &[Node::parse("div.a")], None);
+        assert_eq!((s.width, s.height), (Some(10.0), Some(5.0)));
+        // grandchild of .a through .c: descendant + the more specific `.a .c > .b`
+        let s = sh.resolve_in(&b, &[Node::parse("div.a"), Node::parse("div.c")], None);
+        assert_eq!((s.width, s.height), (Some(20.0), Some(5.0)));
+        // grandchild through a plain div: descendant only
+        let s = sh.resolve_in(&b, &[Node::parse("div.a"), Node::parse("div")], None);
+        assert_eq!((s.width, s.height), (None, Some(5.0)));
+        // backtracking: `.a .c > .b` with .c the parent and .a further up
+        let s = sh.resolve_in(&b, &[Node::parse("div.a"), Node::parse("div"), Node::parse("div.c")], None);
+        assert_eq!(s.width, Some(20.0));
+    }
+
+    #[test]
+    fn percent_lengths_aspect_ratio_and_border_style() {
+        let s = inline("width: 50%; height: 25%; max-width: 80%; aspect-ratio: 16 / 9; border: 1px dashed #333");
+        assert_eq!((s.width, s.width_pct, s.height_pct, s.max_width_pct), (None, Some(0.5), Some(0.25), Some(0.8)));
+        assert!((s.aspect_ratio.unwrap() - 16.0 / 9.0).abs() < 1e-9);
+        assert_eq!((s.border_style.as_deref(), s.border_color.as_deref(), s.border_width), (Some("dashed"), Some("#333"), Some(1.0)));
+        assert_eq!(s.border_dash(1.0), Some([3.0, 3.0]));
+        assert!(!inline("border-style: none").border_drawn());
+        assert_eq!(inline("aspect-ratio: 1.5").aspect_ratio, Some(1.5));
+        assert_eq!(inline("aspect-ratio: auto").aspect_ratio, None);
     }
 
     #[test]
