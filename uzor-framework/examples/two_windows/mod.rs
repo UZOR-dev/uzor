@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use uzor::layout::docking::DockPanel;
-use uzor::render::InvalidateBits;
+use uzor::render::{InvalidateBits, TickRate};
 use uzor::tokens::{BuiltinSet, Tokens};
 use uzor::ui::dom::El;
 use uzor::ui::domkit as k;
@@ -69,6 +69,8 @@ pub struct TwoWindows {
     log: Vec<String>,
     opened: u32,
     sheet: Sheet,
+    /// Each window's laid-out element rects (tests click them).
+    rects: BTreeMap<WindowId, Vec<(String, uzor::Rect)>>,
 }
 
 impl Default for TwoWindows {
@@ -79,7 +81,7 @@ impl Default for TwoWindows {
 
 impl TwoWindows {
     pub fn new() -> Self {
-        Self { wins: BTreeMap::new(), pings: 0, log: Vec::new(), opened: 0, sheet: look::sheet(CSS) }
+        Self { wins: BTreeMap::new(), pings: 0, log: Vec::new(), opened: 0, sheet: look::sheet(CSS), rects: BTreeMap::new() }
     }
 
     pub fn config() -> RuntimeConfig {
@@ -90,8 +92,21 @@ impl TwoWindows {
             ],
             tokens: Tokens::builtin(BuiltinSet::Dark),
             dark: true,
+            // Paint on demand: input and the ping's invalidates schedule frames.
+            tick: TickRate::Dirty,
             ..RuntimeConfig::default()
         }
+    }
+
+    pub fn window_count(&self) -> usize {
+        self.wins.len()
+    }
+    pub fn pings(&self) -> u32 {
+        self.pings
+    }
+    /// Where element `id` was last laid out in window `win`.
+    pub fn hit(&self, win: WindowId, id: &str) -> Option<uzor::Rect> {
+        self.rects.get(&win)?.iter().find(|(i, _)| i == id).map(|(_, r)| *r)
     }
 
     fn note(&mut self, line: String) {
@@ -150,6 +165,7 @@ impl App for TwoWindows {
         let win = cx.window;
         let body = look::leaf_body(cx.rect);
         let resp = kit::dom(body, &self.sheet, self.tree(win, body.height)).build(cx);
+        self.rects.insert(win, resp.dom.hits().map(|(i, r)| (i.to_string(), r)).collect());
         let letter = self.wins.get(&win).map_or('?', |w| w.1);
         match resp.clicked.as_deref() {
             Some("tw-ping") => {
