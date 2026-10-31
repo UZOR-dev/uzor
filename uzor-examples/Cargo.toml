@@ -35,3 +35,18 @@ required-features = ["native"]
 name = "dom-gallery-frames"
 path = "src/bin/dom_gallery_frames.rs"
 required-features = ["png"]
+
+[[bin]]
+name = "kit-gallery"
+path = "src/bin/kit_gallery.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "dom-gallery"
+path = "src/bin/dom_gallery.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "uzor-launcher"
+path = "src/bin/launcher.rs"
+required-features = ["native"]
