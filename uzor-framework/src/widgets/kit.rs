@@ -1467,7 +1467,11 @@ impl<'a> DomBuilder<'a> {
                     s = s | State::ACTIVE;
                 }
                 if v.is_focused(&w) {
-                    s = s | State::FOCUS_VISIBLE;
+                    // `:focus-visible` like the browser: keyboard focus only, not a click.
+                    s = s | State::FOCUS;
+                    if v.focus_visible() {
+                        s = s | State::FOCUS_VISIBLE;
+                    }
                 }
                 s
             };

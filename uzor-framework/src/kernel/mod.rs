@@ -263,6 +263,11 @@ impl<S: Spec> Kernel<S> {
                 self.conduct_layout(now, fx);
                 let fx = self.input.apply(InputOp::Open(win));
                 self.conduct_input(now, fx);
+                // The overlay stack learns the viewport now, not at the first
+                // resize: a modal opened before one centres instead of sitting
+                // at the origin.
+                let fx = self.overlays.apply(OverlayOp::Reclamp { win, viewport });
+                self.conduct_overlay(now, fx);
                 // The app learns the id here (design `WindowIntent::Opened`).
                 // Layout commands need it; F7 conducted the engines but did
                 // not surface the intent.

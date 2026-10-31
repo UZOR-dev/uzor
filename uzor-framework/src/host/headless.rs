@@ -139,6 +139,27 @@ impl<S: Spec, A: App<Spec = S>> HeadlessHost<S, A> {
         &self.last
     }
 
+    /// Paint window `win` once into `ctx` at its viewport size and `dpr`, outside the
+    /// tick (frame dumps, screenshots, goldens). The caller sizes `ctx`
+    /// (viewport × `dpr`) and clears it. Returns the viewport size in logical pixels,
+    /// or `None` for an unknown window.
+    pub fn paint_window(&mut self, win: WindowId, dpr: f64, ctx: &mut dyn uzor::render::RenderContext) -> Option<(f64, f64)> {
+        let snap = self.snapshot();
+        let vp = snap.window(win)?.geometry.viewport;
+        drop(snap);
+        let size = SizePx::new(vp.width.round().max(1.0) as u32, vp.height.round().max(1.0) as u32);
+        let req = crate::FrameRequest {
+            window: win,
+            size,
+            dpr,
+            background: 0,
+            regions: Default::default(),
+            invalidations: Default::default(),
+        };
+        self.rt.paint(&req, ctx);
+        Some((vp.width, vp.height))
+    }
+
     /// The last published snapshot.
     pub fn snapshot(&self) -> Arc<VisualSnapshot<S>> {
         self.rt.snapshot()
