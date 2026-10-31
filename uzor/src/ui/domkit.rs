@@ -54,9 +54,17 @@ select.k-select:hover { background: #33363d }
 select.k-select.open { border: 1px solid var(--k-accent) }
 div.k-pop { position: fixed; z-index: 100; padding: 4px; border-radius: 10px; background: var(--k-panel); border: 1px solid var(--k-line);
             box-shadow: 0 8px 24px rgba(0,0,0,0.45); display: flex; flex-direction: column }
-div.k-opt { padding: 7px 10px; border-radius: 6px; color: var(--k-fg) }
+div.k-opt { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px; color: var(--k-fg); flex-shrink: 0 }
 div.k-opt:hover { background: #2c2f36 }
 div.k-opt.sel { background: rgba(59,130,246,0.18) }
+div.k-opt.hi { background: #33363d }
+span.k-tick { width: 14px; height: 14px; flex-shrink: 0; color: var(--k-accent) }
+div.k-optl { display: flex; flex-direction: column; flex-grow: 1; min-width: 0 }
+div.k-search { display: flex; align-items: center; gap: 8px; height: 28px; margin: 2px 2px 4px; padding: 0 8px; border-radius: 6px; background: #141518; flex-shrink: 0 }
+span.k-mag { width: 14px; height: 14px; color: var(--k-muted) }
+div.k-ph { color: var(--k-muted) }
+div.k-empty { padding: 7px 14px; color: var(--k-muted) }
+div.k-thumb { position: absolute; right: 3px; width: 3px; border-radius: 2px; background: #4a4d55 }
 div.k-opt.dis { color: #5d6068 }
 div.k-opt .k-sub { color: var(--k-muted); font-size: 11px }
 div.k-opt.dis .k-sub { color: #4b4e55 }
@@ -122,6 +130,8 @@ pub mod icons {
     pub const COPY: &str = r#"<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>"#;
     pub const SMILE: &str = r#"<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/>"#;
     pub const MORE: &str = r#"<path d="M5 12h.01M12 12h.01M19 12h.01"/>"#;
+    pub const CHECK: &str = r#"<path d="M5 12.5l4.5 4.5L19 7.5"/>"#;
+    pub const SEARCH: &str = r#"<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/>"#;
 }
 
 /// A push button.
@@ -196,25 +206,76 @@ pub fn popover_at(anchor: Rect, viewport: Rect, w: f64, h: f64) -> Rect {
 
 /// The open select's list as a `position: fixed` popover at `at` (see [`popover_at`]):
 /// it paints above the page and does not scroll with it. Enabled rows are hits
-/// `{id}:opt:{i}`; `chosen` is marked `.sel`.
+/// `{id}:opt:{i}`; `chosen` is marked `.sel` (with a tick).
 pub fn select_popover(id: &str, opts: &[SelectOpt], chosen: Option<usize>, at: Rect) -> El {
+    select_list(id, opts, chosen, &ListView::all(), at)
+}
+
+/// What part of a long option list a popover shows. The select's own model (keyboard,
+/// wheel, type-to-filter) keeps it; the popover only draws it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ListView<'a> {
+    /// The keyboard-highlighted row (`.hi`).
+    pub hi: Option<usize>,
+    /// First shown row.
+    pub top: usize,
+    /// How many rows show (a scroll thumb appears when there are more).
+    pub rows: usize,
+    /// A search line with this query (`Some("")`: its placeholder).
+    pub query: Option<&'a str>,
+    /// Height of a row (sets the thumb's travel; rows are styled by CSS).
+    pub row_h: f64,
+}
+
+impl ListView<'_> {
+    /// Every row, no search line.
+    pub fn all() -> Self {
+        ListView { hi: None, top: 0, rows: usize::MAX, query: None, row_h: 0.0 }
+    }
+}
+
+/// [`select_popover`] for a windowed, searchable list: rows `view.top ..` of `opts` (the
+/// already filtered options; hits keep their index in `opts`), the highlighted row, a
+/// search line and a scroll thumb. "No matches" when `opts` is empty.
+pub fn select_list(id: &str, opts: &[SelectOpt], chosen: Option<usize>, view: &ListView<'_>, at: Rect) -> El {
     let mut pop = El::new("div.k-pop").id(format!("{id}:pop")).css(format!("top: {}px; left: {}px; width: {}px", at.y, at.x, at.width));
-    for (i, o) in opts.iter().enumerate() {
+    if let Some(q) = view.query {
+        let line = El::new("div.k-search").child(El::new("span.k-mag").svg(icon(icons::SEARCH)));
+        pop = pop.child(if q.is_empty() { line.child(El::new("div.k-ph").text("Type to search")) } else { line.child(El::new("div.k-q").text(q)) });
+    }
+    if opts.is_empty() {
+        pop = pop.child(El::new("div.k-empty").text("No matches"));
+    }
+    let end = view.top.saturating_add(view.rows).min(opts.len());
+    for (i, o) in opts.iter().enumerate().take(end).skip(view.top) {
         let mut spec = String::from("div.k-opt");
         if chosen == Some(i) {
             spec.push_str(".sel");
         }
+        if view.hi == Some(i) {
+            spec.push_str(".hi");
+        }
         if o.disabled {
             spec.push_str(".dis");
         }
-        let mut row = El::new(spec).name(&o.label).child(El::new("div.k-label").text(&o.label));
+        let mut label = El::new("div.k-optl").child(El::new("div.k-label").text(&o.label));
         if let Some(s) = &o.sub {
-            row = row.child(El::new("div.k-sub").text(s));
+            label = label.child(El::new("div.k-sub").text(s));
         }
+        let tick = El::new("span.k-tick");
+        let tick = if chosen == Some(i) { tick.svg(icon(icons::CHECK)) } else { tick };
+        let mut row = El::new(spec).name(&o.label).child(tick).child(label);
         if !o.disabled {
-            row = row.id(format!("{id}:opt:{i}"));
+            row = row.id(format!("{id}:opt:{i}")).tab();
         }
         pop = pop.child(row);
+    }
+    let n = opts.len();
+    if n > view.rows && view.row_h > 0.0 {
+        let track = view.row_h * view.rows as f64;
+        let th = (track * view.rows as f64 / n as f64).max(18.0);
+        let ty = (track - th) * view.top as f64 / (n - view.rows) as f64 + if view.query.is_some() { 34.0 } else { 0.0 } + 4.0;
+        pop = pop.child(El::new("div.k-thumb").css(format!("top: {ty}px; height: {th}px")));
     }
     pop
 }
@@ -557,6 +618,25 @@ mod tests {
         assert_eq!(moved.rect("theme").map(|r| r.y), dom.rect("theme").map(|r| r.y - 300.0));
         assert_eq!(moved.hit(20.0, 60.0), Some("theme:opt:0"));
         assert_eq!(picked_opt("theme", "theme:opt:1"), Some(1));
+    }
+
+    #[test]
+    fn select_list_windows_highlights_and_searches() {
+        let opts: Vec<SelectOpt> = (0..20).map(|i| SelectOpt::new(format!("Zone {i}"))).collect();
+        let view = ListView { hi: Some(6), top: 5, rows: 4, query: Some("zo"), row_h: 30.0 };
+        let pop = select_list("tz", &opts, Some(7), &view, Rect::new(0.0, 0.0, 240.0, 200.0));
+        let mut ctx = NullRenderContext::default();
+        let vp = Rect::new(0.0, 0.0, 800.0, 600.0);
+        let dom = lay_out_in(&mut ctx, &sheet(), &pop, 0.0, 0.0, 800.0, Some(vp), &|_| State::NONE);
+        let shown: Vec<&str> = dom.hits().map(|(id, _)| id).filter(|id| id.starts_with("tz:opt:")).collect();
+        assert_eq!(shown, ["tz:opt:5", "tz:opt:6", "tz:opt:7", "tz:opt:8"]);
+        assert_eq!(dom.get("tz:opt:6").and_then(|p| p.style.background.as_deref()), Some("#33363d"));
+        assert!(dom.get("tz:opt:5").is_some_and(|p| p.style.background.is_none()));
+        let row = dom.rect("tz:opt:5").unwrap();
+        assert!(row.y > 30.0, "below the search line");
+        let none = select_list("tz", &[], None, &ListView { query: Some(""), ..ListView::all() }, Rect::new(0.0, 0.0, 240.0, 80.0));
+        let dom = lay_out_in(&mut ctx, &sheet(), &none, 0.0, 0.0, 800.0, Some(vp), &|_| State::NONE);
+        assert!(dom.hits().all(|(id, _)| !id.contains(":opt:")));
     }
 
     #[test]
