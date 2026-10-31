@@ -14,16 +14,24 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-uzor = { workspace = true }
+uzor = { workspace = true, features = ["flow-flex", "flow-grid"] }
 uzor-framework = { workspace = true }
 env_logger = { version = "0.11", optional = true }
+uzor-render-tiny-skia = { workspace = true, optional = true }
 
 [features]
 # Native host for the dashboard bin. Not a default feature: `cargo test`
 # stays on the headless host and does not pull winit or a render backend.
 native = ["uzor-framework/native", "dep:env_logger"]
+# The `dom-gallery-frames` bin: renders the DOM gallery to PNG frames on the CPU.
+png = ["dep:uzor-render-tiny-skia"]
 
 [[bin]]
 name = "l4-dashboard"
 path = "src/l4/dashboard.rs"
 required-features = ["native"]
+
+[[bin]]
+name = "dom-gallery-frames"
+path = "src/bin/dom_gallery_frames.rs"
+required-features = ["png"]

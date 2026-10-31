@@ -442,6 +442,9 @@ pub struct Placed {
     /// In a `position: fixed` subtree: placed against the viewport and not moved by
     /// [`Dom::moved`] (an overlay that does not scroll with the page).
     pub fixed: bool,
+    /// The clip from `overflow: hidden` ancestors (their padding boxes intersected),
+    /// in the same coordinates as [`Placed::rect`]; paint and hits stay inside it.
+    pub clip: Option<Rect>,
     /// A text input's char boundaries: x of each boundary of [`Edit::display`] from the
     /// text start (`chars + 1` values).
     pub bounds: Vec<f64>,
@@ -463,6 +466,7 @@ impl Default for Placed {
             control: None,
             slot: None,
             fixed: false,
+            clip: None,
             bounds: Vec::new(),
         }
     }
@@ -570,14 +574,18 @@ impl Dom {
     /// with ids follow it, one rect per piece.
     pub fn hits(&self) -> impl Iterator<Item = (&str, Rect)> {
         self.boxes.iter().flat_map(|b| {
-            let own = b.id.as_deref().map(|i| (i, b.rect));
+            let cut = |r: Rect| match b.clip {
+                Some(c) => c.intersect(r),
+                None => r,
+            };
+            let own = b.id.as_deref().map(|i| (i, cut(b.rect)));
             let runs: Vec<(&str, Rect)> = match &b.inline {
                 Some(inl) if inl.runs.iter().any(|r| r.id.is_some()) => {
-                    b.run_boxes().into_iter().filter_map(|(ri, r)| Some((inl.runs[ri].id.as_deref()?, r))).collect()
+                    b.run_boxes().into_iter().filter_map(|(ri, r)| Some((inl.runs[ri].id.as_deref()?, cut(r)))).collect()
                 }
                 _ => Vec::new(),
             };
-            own.into_iter().chain(runs)
+            own.into_iter().chain(runs).filter(|(_, r)| r.width > 0.0 && r.height > 0.0)
         })
     }
     /// The topmost element with inline runs under `(x, y)` and the run there (a piece of
@@ -600,6 +608,9 @@ impl Dom {
     pub fn moved(mut self, dx: f64, dy: f64) -> Self {
         for b in self.boxes.iter_mut().filter(|b| !b.fixed) {
             b.rect = Rect::new(b.rect.x + dx, b.rect.y + dy, b.rect.width, b.rect.height);
+            if let Some(c) = &mut b.clip {
+                *c = Rect::new(c.x + dx, c.y + dy, c.width, c.height);
+            }
         }
         self.root = Rect::new(self.root.x + dx, self.root.y + dy, self.root.width, self.root.height);
         self
@@ -1096,8 +1107,16 @@ fn collect_measures(r: &Resolved, out: &mut Vec<Box<dyn Fn(Option<f64>) -> (f64,
 /// collected in `layers` with their `z-index` and painted after it.
 /// `fixed`: inside a `position: fixed` subtree. Fixed subtrees form the top layers
 /// (above every non-fixed one, by `z-index` among themselves).
-fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(bool, i32, Vec<Placed>)>, alpha: f64, fixed: bool) {
+#[allow(clippy::too_many_arguments)]
+fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(bool, i32, Vec<Placed>)>, alpha: f64, fixed: bool, clip: Option<Rect>) {
     let mut style = r.style;
+    let inner = if style.clips() {
+        let e = style.border_edges();
+        let pb = Rect::new(l.rect.x + e[3], l.rect.y + e[0], (l.rect.width - e[1] - e[3]).max(0.0), (l.rect.height - e[0] - e[2]).max(0.0));
+        Some(clip.map_or(pb, |c| c.intersect(pb)))
+    } else {
+        clip
+    };
     let a = alpha * style.opacity.unwrap_or(1.0);
     style.opacity = (a < 1.0).then_some(a);
     let inline = r.runs.map(|m| {
@@ -1135,6 +1154,7 @@ fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(bool, i
         control: r.control,
         slot: r.slot,
         fixed,
+        clip,
         bounds: r.bounds,
     });
     for (c, cl) in r.children.into_iter().zip(&l.children) {
@@ -1145,10 +1165,12 @@ fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(bool, i
             let at = layers.len();
             layers.push((f, z, Vec::new()));
             let mut sub = Vec::new();
-            place(c, cl, &mut sub, layers, a, f);
+            // A fixed box escapes its ancestors' overflow clips.
+            let cc = if f && !fixed { None } else { inner };
+            place(c, cl, &mut sub, layers, a, f, cc);
             layers[at].2 = sub;
         } else {
-            place(c, cl, out, layers, a, fixed);
+            place(c, cl, out, layers, a, fixed, inner);
         }
     }
 }
@@ -1178,7 +1200,7 @@ pub fn lay_out_in(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64,
     let mut flow = Vec::new();
     let mut layers = Vec::new();
     let root_fixed = r.style.fixed();
-    place(r, &laid, &mut flow, &mut layers, 1.0, root_fixed);
+    place(r, &laid, &mut flow, &mut layers, 1.0, root_fixed, None);
     if layers.is_empty() {
         return Dom { boxes: flow, root: laid.rect };
     }
@@ -1450,8 +1472,37 @@ pub fn chevron(ctx: &mut dyn RenderContext, x: f64, y: f64, color: &str) {
 
 /// Paint a laid-out tree (document order: parents under children).
 pub fn paint(ctx: &mut dyn RenderContext, dom: &Dom) {
+    paint_slots(ctx, dom, &mut |_, _, _| {});
+}
+
+/// [`paint`], calling `slot(ctx, key, content box)` where each embed slot
+/// ([`El::slot`]) is in paint order, so a kit widget drawn there sits under later
+/// layers (a popover, a fixed panel) and inside `overflow: hidden` ancestors.
+pub fn paint_slots(ctx: &mut dyn RenderContext, dom: &Dom, slot: &mut dyn FnMut(&mut dyn RenderContext, &str, Rect)) {
     for b in &dom.boxes {
-        paint_box(ctx, b);
+        with_clip(ctx, b, |ctx| {
+            paint_box(ctx, b);
+            if let Some(k) = &b.slot {
+                slot(ctx, k, content_box(b));
+            }
+        });
+    }
+}
+
+fn with_clip(ctx: &mut dyn RenderContext, b: &Placed, f: impl FnOnce(&mut dyn RenderContext)) {
+    match b.clip {
+        Some(c) => {
+            if c.width <= 0.0 || c.height <= 0.0 {
+                return;
+            }
+            ctx.save();
+            ctx.begin_path();
+            ctx.rect(c.x, c.y, c.width, c.height);
+            ctx.clip();
+            f(ctx);
+            ctx.restore();
+        }
+        None => f(ctx),
     }
 }
 
@@ -1727,8 +1778,10 @@ pub fn paint_anim(ctx: &mut dyn RenderContext, b: &Placed, reg: &mut AnimRegistr
 pub fn paint_with(ctx: &mut dyn RenderContext, dom: &Dom, reg: &mut AnimRegistry, frame: &AnimFrame<'_>) -> AnimReport {
     let mut report = AnimReport::default();
     for b in &dom.boxes {
-        paint_box(ctx, b);
-        paint_anim(ctx, b, reg, frame, &mut report);
+        with_clip(ctx, b, |ctx| {
+            paint_box(ctx, b);
+            paint_anim(ctx, b, reg, frame, &mut report);
+        });
     }
     report
 }
@@ -2086,5 +2139,28 @@ mod tests {
         ctx.ops.clear();
         path_border_box(&mut ctx, &d.boxes[0]);
         assert!(format!("{:?}", ctx.ops).contains("MoveTo { x: 12.0, y: 0.0 }"));
+    }
+
+    #[test]
+    fn overflow_hidden_clips_paint_and_hits_and_fixed_escapes() {
+        let sh = Sheet::parse("div.v { width: 100px; height: 50px; overflow: hidden; border: 2px solid #333 } div.r { height: 40px } div.f { position: fixed; top: 0; left: 0; width: 10px; height: 10px } div.s { height: 20px }").unwrap();
+        let mut ctx = NullRenderContext::default();
+        let root = El::new("div.v")
+            .child(El::new("div.r").id("a"))
+            .child(El::new("div.r").id("b"))
+            .child(El::new("div.f").id("fx"))
+            .child(El::new("div.s").slot("@k"));
+        let d = lay_out_in(&mut ctx, &sh, &root, 0.0, 0.0, 300.0, Some(Rect::new(0.0, 0.0, 300.0, 300.0)), &|_| State::NONE);
+        let b = d.get("b").unwrap();
+        assert_eq!(b.clip, Some(Rect::new(2.0, 2.0, 96.0, 46.0)));
+        assert_eq!(d.hit(10.0, 45.0), Some("b"));
+        assert_eq!(d.hit(10.0, 60.0), None, "clipped away");
+        assert_eq!(d.get("fx").unwrap().clip, None, "fixed escapes the clip");
+        // The slot callback runs in paint order, inside the clip.
+        let mut seen = Vec::new();
+        paint_slots(&mut ctx, &d, &mut |_, k, r| seen.push((k.to_string(), r)));
+        assert_eq!(seen.len(), 1);
+        let d = d.moved(0.0, -30.0);
+        assert_eq!(d.get("b").unwrap().clip, Some(Rect::new(2.0, -28.0, 96.0, 46.0)));
     }
 }

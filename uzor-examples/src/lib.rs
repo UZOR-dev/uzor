@@ -9,3 +9,4 @@ pub mod kit_gallery;
 
 pub use dashboard::DashboardApp;
 pub use kit_gallery::Gallery;
+pub mod dom_gallery;

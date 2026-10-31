@@ -1484,11 +1484,19 @@ impl<'a> DomBuilder<'a> {
             let mut ime = None;
             for b in &d.boxes {
                 let Some(id) = b.id.as_deref() else { continue };
+                // What is visible of it: inside the panel (unless fixed) and its clips.
+                let mut vis = b.clip.map_or(b.rect, |c| c.intersect(b.rect));
+                if !b.fixed {
+                    vis = vis.intersect(rect);
+                }
+                if vis.width <= 0.0 || vis.height <= 0.0 {
+                    continue;
+                }
                 let wid = WidgetId::from(id);
                 let name = b.accessible_name().unwrap_or_default().to_string();
                 if let Some(Control::Input(e)) = &b.control {
                     let cfg = if e.masked { uzor::TextFieldConfig::password() } else { uzor::TextFieldConfig::text() };
-                    coord.register_text_field(wid.clone(), b.rect, cfg);
+                    coord.register_text_field(wid.clone(), vis, cfg);
                     if let Some((_, v)) = seed.iter().find(|(s, _)| *s == wid) {
                         coord.text_fields_mut().set_text(&wid, v);
                     }
@@ -1509,7 +1517,7 @@ impl<'a> DomBuilder<'a> {
                     }
                 } else if b.tab || b.id.is_some() {
                     let sense = if b.tab { focusable() } else { Sense::CLICK | Sense::HOVER };
-                    coord.register_atomic(wid.clone(), WidgetKind::Button, b.rect, sense, layer);
+                    coord.register_atomic(wid.clone(), WidgetKind::Button, vis, sense, layer);
                     coord.set_a11y(&wid, &name, b.control.as_ref().and_then(Control::checked));
                 }
             }

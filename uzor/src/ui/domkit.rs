@@ -73,6 +73,7 @@ div.k-body i { font-style: italic }
 div.k-body a.link { color: #93c5fd }
 div.k-body a.mention { color: #93c5fd; font-weight: 600 }
 div.k-msg.me div.k-body a.link { color: #ffffff }
+div.k-msg > div.k-actions { align-self: flex-end }
 div.k-actions { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--k-panel); border: 1px solid var(--k-line) }
 button.k-act { width: 26px; height: 26px; padding: 5px; border-radius: 6px; color: var(--k-muted) }
 button.k-act:hover { background: #2c2f36; color: var(--k-fg) }
@@ -467,12 +468,20 @@ impl VirtualList {
         Window { start, end, top, bottom }
     }
     /// The list element: `container` holding spacers and the rows `row(i)` for `w`.
+    /// A container column `gap` must equal [`VirtualList::gap`] (spacers are emitted
+    /// only when they stand for rows, so the gap is not doubled).
     pub fn el(&self, container: El, w: Window, mut row: impl FnMut(usize) -> El) -> El {
-        let mut c = container.child(El::new("div.k-vspace").css(format!("height: {}px", w.top)));
+        let mut c = container;
+        if w.start > 0 {
+            c = c.child(El::new("div.k-vspace").css(format!("height: {}px", (w.top - self.gap).max(0.0))));
+        }
         for i in w.start..w.end {
             c = c.child(row(i));
         }
-        c.child(El::new("div.k-vspace").css(format!("height: {}px", w.bottom)))
+        if w.end < self.len() {
+            c = c.child(El::new("div.k-vspace").css(format!("height: {}px", w.bottom)));
+        }
+        c
     }
     /// Learn the shown rows' heights from a laid-out tree: row `i`'s element has id
     /// `id_of(i)`. Returns whether any height changed (re-lay out to settle).

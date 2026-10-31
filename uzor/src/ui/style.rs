@@ -183,6 +183,9 @@ pub struct Style {
     /// `overflow-wrap` (inherited): `anywhere` / `break-word` let inline runs
     /// ([`crate::ui::dom::El::runs`]) break inside a word that does not fit a line.
     pub overflow_wrap: Option<String>,
+    /// `overflow` (`hidden` / `clip` / `auto` / `scroll` clip descendants to the padding
+    /// box; scrolling itself is the host's, see [`crate::ui::dom::Dom::moved`]).
+    pub overflow: Option<String>,
     /// `shape-rendering` (inherited, as in SVG): `geometricPrecision` draws an element's
     /// [`crate::ui::dom::El::svg`] icon exactly (no pixel-grid snapping of its origin or
     /// strokes); unset / `auto` / `crispEdges` snap for crispness.
@@ -270,6 +273,10 @@ impl Style {
     /// `position: absolute` (or `fixed`): out of the flow.
     pub fn out_of_flow(&self) -> bool {
         matches!(self.position.as_deref(), Some("absolute" | "fixed"))
+    }
+    /// `overflow` other than `visible`: descendants are clipped to the padding box.
+    pub fn clips(&self) -> bool {
+        matches!(self.overflow.as_deref(), Some("hidden" | "clip" | "auto" | "scroll"))
     }
     /// `position: fixed`: placed against the viewport and left where it is when the
     /// tree scrolls ([`crate::ui::dom::Dom::moved`]).
@@ -922,6 +929,7 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         "z-index" => s.z_index = v.trim().parse().ok(),
         "font-style" => s.font_style = Some(v.trim().into()),
         "overflow-wrap" | "word-wrap" => s.overflow_wrap = Some(v.trim().into()),
+        "overflow" | "overflow-x" | "overflow-y" => s.overflow = Some(v.split_whitespace().next().unwrap_or("visible").into()),
         "shape-rendering" => s.shape_rendering = Some(v.trim().into()),
         "font-size" => s.font_size = px(v),
         "font-weight" => {
