@@ -120,7 +120,7 @@ pub const EXAMPLES: &[Example] = &[
         path: "uzor-framework/examples/demo",
         kind: Kind::Native,
         icon: icons::BOLT,
-        blurb: "The framework tour: panels, overlays, actions, persistence.",
+        blurb: "The framework tour: panels, overlays, actions.",
         shows: &["App / Spec vocabulary", "Overlays and actions", "Same code on the web build"],
         cmd: "cargo run -p uzor-framework --release --features native --example demo_native",
         args: &[],
@@ -192,19 +192,19 @@ div.c-head { display: flex; align-items: center; gap: 10px; flex-shrink: 0 }
 div.c-body { display: flex; gap: 14px; flex-grow: 1 }
 div.c-main { display: flex; flex-direction: column; gap: 12px; flex-grow: 1 }
 div.c-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; flex-shrink: 0 }
-div.c-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; height: 132px; border-radius: 12px;
+div.c-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; height: 150px; border-radius: 12px;
              background: var(--k-panel); border: 1px solid var(--k-line) }
 div.c-card:hover { border-color: var(--k-muted) }
 div.c-card.on { border: 1px solid var(--k-accent) }
 div.c-title { font-weight: 600; flex-grow: 1 }
-div.c-blurb { color: var(--k-muted); height: 36px }
+div.c-blurb { color: var(--k-muted); height: 36px; white-space: normal }
 div.c-tags { display: flex; gap: 6px; flex-wrap: wrap }
 div.c-tag { padding: 1px 7px; border-radius: 9px; font-size: 11px; color: var(--k-muted); border: 1px solid var(--k-line) }
 div.c-side { display: flex; flex-direction: column; gap: 10px; width: 330px; padding: 14px; border-radius: 12px;
              background: var(--k-panel); border: 1px solid var(--k-line); flex-shrink: 0 }
-div.c-code { padding: 8px 10px; border-radius: 8px; background: var(--k-bg); border: 1px solid var(--k-line); font-size: 12px }
+div.c-code { white-space: normal; padding: 8px 10px; border-radius: 8px; background: var(--k-bg); border: 1px solid var(--k-line); font-size: 12px }
 div.c-li { color: var(--k-fg) }
-div.c-status { color: var(--k-muted); font-size: 12px }
+div.c-status { white-space: normal; color: var(--k-muted); font-size: 12px }
 div.c-plan { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0 }
 div.c-planned { padding: 4px 10px; border-radius: 12px; border: 1px dashed var(--k-line); color: var(--k-muted); font-size: 12px }
 div.c-empty { color: var(--k-muted); padding: 24px }
@@ -308,7 +308,7 @@ impl Catalog {
                 .child(El::new("div.c-tags").children(e.shows.iter().take(2).map(|s| El::new("div.c-tag").text(s.split([':', ',']).next().unwrap_or(s)))));
             grid = grid.child(card);
         }
-        let mut main = El::new("div.c-main").child(El::new("div.p-sec").text("EXAMPLES"));
+        let mut main = El::new("div.c-main").css(format!("width: {}px", (area.width - 28.0 - 14.0 - 330.0).max(200.0))).child(El::new("div.p-sec").text("EXAMPLES"));
         main = if vis.is_empty() { main.child(El::new("div.c-empty").text("Nothing matches the search.")) } else { main.child(grid) };
         main = main
             .child(El::new("div.p-sec").text("NEXT UP"))
@@ -328,14 +328,14 @@ impl Catalog {
         El::new("div.c-side")
             .id("cat:detail")
             .child(El::new("div.p-row").child(look::ico(e.icon, true)).child(El::new("div.p-h1.p-grow").text(e.name)).child(state))
-            .child(El::new("div.p-muted").text(e.blurb))
+            .child(El::new("div.p-muted").css("white-space: normal").text(e.blurb))
             .child(El::new("div.p-sec").text("SHOWS"))
             .children(e.shows.iter().map(|s| El::new("div.c-li").text(format!("• {s}"))))
             .child(El::new("div.p-sec").text("SOURCE"))
             .child(El::new("div.c-code").text(e.path))
             .child(El::new("div.p-sec").text("RUN"))
             .child(El::new("div.c-code").id("cat:cmd").text(e.cmd))
-            .child(El::new("div.p-row").child(El::new("button.k-btn.primary").id("cat:launch").tab().text(launch)).child(El::new("div.p-grow")).child(k::kbd("Enter")))
+            .child(El::new("div.p-row").child(El::new("button.k-btn.primary").id("cat:launch").tab().text(launch)).child(El::new("div.p-muted").text("or double-click a card")))
             .child(El::new("div.c-status").id("cat:status").text(&self.status))
     }
 
