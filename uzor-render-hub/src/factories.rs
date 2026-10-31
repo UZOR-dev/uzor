@@ -1069,7 +1069,16 @@ impl RenderSurfaceFactory for UrxSurfaceFactory {
         }
 
         let pair = extract_handle_pair(handle, backend)?;
-        let (gpu_pool, surface, dev_id) = init_gpu_surface(pair, size, backend)?;
+        let (gpu_pool, surface, dev_id) = match init_gpu_surface(pair, size, backend) {
+            Ok(ok) => ok,
+            // UrxCpu rasterises on the CPU anyway: with no GPU device (a VM, Xvfb, CI)
+            // it presents through the software presenter instead of failing the spawn.
+            #[cfg(all(feature = "tiny-skia", feature = "gpu"))]
+            Err(err) if backend == RenderBackend::UrxCpu && gpu_device_missing(&err) => {
+                return tiny_skia_cpu_fallback(pair, size);
+            }
+            Err(err) => return Err(err),
+        };
         Ok(WindowRenderState::new_gpu_no_vello(
             gpu_pool,
             surface,
