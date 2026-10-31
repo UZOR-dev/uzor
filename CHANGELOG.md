@@ -2,6 +2,69 @@
 
 All crates in the workspace share one version.
 
+## 1.5.21
+
+### DOM engine (uzor)
+
+- Selectors: descendant (`.a .b`) and child (`.a > .b`) combinators
+  (`Sheet::resolve_in`, `Sheet::has_complex`).
+- Layout: `%` widths and heights, `aspect-ratio`, `position: absolute` and
+  `position: fixed` (a fixed layer placed against the viewport given to
+  `dom::lay_out_in`), `border-style` (solid / dashed / dotted / none), overflow clipping.
+- Built-in controls on any element (`El::control`): `Control::Switch`, `Checkbox`,
+  `Spinner` and `Input` (caret, selection, placeholder, IME area). They are styled by the
+  sheet (`:checked`, `:focus`, custom properties such as `--knob`).
+- `El::name` is the accessible name (`Placed` exposes it with the role and the checked
+  state); `El::slot` reserves a box that a kit widget paints into (`dom::paint_slots`).
+- Inline `El::css` custom properties (`--name: value`) cascade to the subtree, and inline
+  values resolve `var()`.
+- Markdown inline runs support italic (`*x*`, `_x_`) next to bold, code and links.
+
+### Widget catalog (uzor `ui::domkit`)
+
+- `KIT_CSS`, `sheet()`, `sheet_with(app_css)`: the default dark theme, themed through
+  `:root` variables (`--k-accent`, `--k-bg`, `--k-panel`, …).
+- Controls: `button`, `switch` / `switch_at`, `checkbox`, `spinner`, `input`.
+- Select: `select_trigger`, `select_popover`, `popover_at`, `picked_opt`,
+  `SelectOpt::new(..).sub(..).disabled(..)`, and `select_list` with `ListView` (a
+  windowed, searchable list with highlight, tick, "No matches" and a scroll thumb). The
+  popover is `position: fixed`, so it does not scroll with the content under it.
+- Chat blocks: `bubble`, `action_row` (hover actions), `card` (collapsible), `chip`,
+  `banner`, `side_panel`, and `inline_md`.
+- `VirtualList` / `Window`: only the rows in view are built.
+- `icons`: `CLOSE`, `RIGHT`, `DOWN`, `REPLY`, `COPY`, `SMILE`, `MORE`, `CHECK`, `SEARCH` (SVG bodies for `icon()`).
+
+### Framework (uzor-framework)
+
+- `kit::dom(rect, sheet, root)`: a DOM tree inside a kit panel. It gives hit targets,
+  a11y nodes, text-store-backed inputs and the IME area, and kit widgets can go in its slots.
+  `kit` re-exports `domkit`.
+
+### Examples (uzor-examples)
+
+- `dom_gallery`: every catalog widget on one page. The `dom_gallery_frames` bin renders it
+  to PNG frames.
+
+### Size
+
+- Float clamps with runtime bounds are written as `max(..).min(..)`. `f32::clamp` and
+  `f64::clamp` kept their `min > max` / NaN assert, and with it the float `Debug`
+  formatter, in every wasm build (about 3.5K raw).
+
+### Compatibility notes
+
+- New public fields on `ui::style::Style`, `ui::dom::El` and `ui::dom::Placed`: struct
+  literals without `..Default::default()` stop compiling.
+- The rewritten clamps (dock, scroll, modal, popup, state, frame view, canvas2d) no
+  longer panic when a bound is NaN or `min > max`; they return the lower bound.
+- Flex items: when CSS `min-*` exceeds `max-*`, the minimum wins, as in CSS. Before,
+  the maximum won.
+- `position: fixed` is relative to the viewport passed to `lay_out_in`, not to the
+  layout origin. Pass the window rect (origin 0,0) when placing popovers in window
+  coordinates.
+- Custom properties set inline now reach descendants. A child that used to fall back
+  to the `:root` value now sees the inline one.
+
 ## 1.5.20
 
 ### Render (uzor-render-hub)
