@@ -227,6 +227,28 @@ pub mod icons {
     pub const MORE: &str = r#"<path d="M5 12h.01M12 12h.01M19 12h.01"/>"#;
     pub const CHECK: &str = r#"<path d="M5 12.5l4.5 4.5L19 7.5"/>"#;
     pub const SEARCH: &str = r#"<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/>"#;
+    pub const LEFT: &str = r#"<path d="M15 6l-6 6 6 6"/>"#;
+    pub const PLUS: &str = r#"<path d="M12 5v14M5 12h14"/>"#;
+    pub const SETTINGS: &str = r#"<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>"#;
+    pub const MENU: &str = r#"<path d="M4 6h16M4 12h16M4 18h16"/>"#;
+    pub const SUN: &str = r#"<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6L19 19M5 19l1.4-1.4M17.6 6.4L19 5"/>"#;
+    pub const MOON: &str = r#"<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>"#;
+    pub const SAVE: &str = r#"<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/>"#;
+    pub const UNDO: &str = r#"<path d="M4 9h11a5 5 0 0 1 0 10H8"/><path d="M8 5L4 9l4 4"/>"#;
+    pub const EXPAND: &str = r#"<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>"#;
+    pub const PLAY: &str = r#"<path d="M7 4l13 8-13 8z"/>"#;
+    pub const GRID: &str = r#"<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>"#;
+    pub const IMAGE: &str = r#"<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>"#;
+    pub const WINDOW: &str = r#"<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>"#;
+    pub const DOWNLOAD: &str = r#"<path d="M12 3v12M7 10l5 5 5-5M4 20h16"/>"#;
+    pub const CHART: &str = r#"<path d="M4 20V4M4 20h16M8 16v-5M12 16V8M16 16v-8"/>"#;
+    pub const LIST: &str = r#"<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>"#;
+    pub const TERMINAL: &str = r#"<path d="M4 7l5 5-5 5M12 19h8"/>"#;
+    pub const TRASH: &str = r#"<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>"#;
+    pub const EDIT: &str = r#"<path d="M4 20h4L19 9l-4-4L4 16z"/>"#;
+    pub const PIN: &str = r#"<path d="M9 4h6l-1 6 4 4H6l4-4zM12 14v6"/>"#;
+    pub const BOX: &str = r#"<path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/>"#;
+    pub const BOLT: &str = r#"<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>"#;
 }
 
 /// A push button.
