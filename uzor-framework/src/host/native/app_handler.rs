@@ -408,6 +408,9 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
                 nw.window.set_visible(true);
             }
         }
+        if std::env::var_os("UZOR_TRACE_PAINT").is_some() {
+            eprintln!("[tick] frames {} wake {:?}", out.frames.len(), out.wake);
+        }
         self.paint_due(out.frames);
 
         if self.exit || self.runtime.should_exit() {
