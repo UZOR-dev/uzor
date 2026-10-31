@@ -1,31 +1,35 @@
-//! Widget-catalog dashboard on the `uzor-framework` [`App`] (brief E1).
+//! The L4 dashboard on the `uzor-framework` [`App`], on the DOM engine.
 //!
-//! One window: a Settings leaf and the four painting cells from the old
-//! `l4/dashboard.rs`, drawn with [`view!`]. The window strip is
-//! [`App::chrome_model`] (its new-window button is `WindowIntent::NewWindowRequested`).
-//! `<chrome>` is also in the settings tree — that tag is part of the M1
-//! surface — but the macro paints it at the measured origin. It does not
-//! forward the flex rect, and M1 is not changed here.
+//! One window, five dock leaves. The Settings leaf is a DOM page (theme segmented
+//! control, checkbox, switch, a "new window" button, live stats). The four cells are
+//! DOM cards that each embed a canvas slot: a sparkline painted with the render
+//! context into the box the DOM laid out (`Dom::slots`). Their titles keep the old
+//! cadence names; `panel` runs for every visible leaf of a frame, so they share the
+//! window clock. With "Live repaint" off the window paints on demand
+//! (`TickRate::Dirty`), so the rebuild counters only move on input.
 //!
-//! Left on the old door, so not in this crate: `uzor-desktop` render
-//! control (backend, vsync, MSAA, fps limit), the tree-debug blackbox,
-//! tray and the png icon, and per-cell `RenderRegion` cadence. `panel`
-//! runs for every visible leaf of a frame, so the four cells share the
-//! window clock. Their titles keep the old cadence names.
+//! Left on the old door, so not in this crate: `uzor-desktop` render control
+//! (backend, vsync, MSAA, fps limit), the tree-debug blackbox, tray and the png icon,
+//! and per-cell `RenderRegion` cadence.
 
-use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use uzor::layout::docking::DockPanel;
+use uzor::render::{RenderContext, TickRate};
 use uzor::tokens::{BuiltinSet, Tokens};
+use uzor::ui::dom::El;
+use uzor::ui::domkit::{self as k, icons};
+use uzor::ui::style::Sheet;
 use uzor::{CornerStyle, Rect};
 
-use uzor_framework::view;
+use uzor_framework::widgets::kit;
 use uzor_framework::{
     App, AppCommand, ChromeModel, ChromeTab, DockIntent, DockTarget, Intent, IntentCx, LayoutCmd,
     LeafView, OverlayCx, OverlayModel, PanelCx, PanelHome, RuntimeConfig, SizePx, Spec, SplitDir,
     ThemeCmd, WindowCmd, WindowId, WindowIntent, WindowSpec,
 };
+
+use crate::look;
 
 const ID_SETTINGS: &str = "settings";
 const ID_DIRTY: &str = "paint:r0_dirty";
@@ -33,24 +37,17 @@ const ID_30: &str = "paint:r1_30fps";
 const ID_120: &str = "paint:r2_120fps";
 const ID_UNCAP: &str = "paint:r3_uncap";
 
-/// Dock header is 24px and is painted over the leaf rect. Content starts
-/// below it.
-const CONTENT_TOP: f64 = 32.0;
-const CONTENT_X: f64 = 8.0;
-const COL_GAP: f64 = 6.0;
-const COL_PAD: f64 = 8.0;
+/// Samples a sparkline keeps.
+const SPARK: usize = 90;
 
-// Settings column, top to bottom. `theme_button_center` solves the same
-// list; the button row is index 4.
-const CHROME_ROW: f64 = 32.0;
-const TITLE_ROW: f64 = 20.0;
-const SEP_ROW: f64 = 1.0;
-const LABEL_ROW: f64 = 16.0;
-const BUTTON_ROW: f64 = 28.0;
-const CHECK_ROW: f64 = 24.0;
-const STATUS_ROW: f64 = 18.0;
-#[cfg(test)]
-const BUTTON_INDEX: usize = 4;
+/// Dashboard classes on top of the shared look.
+const CSS: &str = r#"
+div.d-note { color: var(--k-muted); font-size: 12px; white-space: normal; flex-shrink: 0 }
+div.d-spark { flex-grow: 1; border-radius: 10px; background: var(--k-panel); border: 1px solid var(--k-line); padding: 8px 10px;
+              display: flex; flex-direction: column; gap: 6px; min-height: 40px }
+div.k-slot.d-chart { border: none; border-radius: 0px; flex-grow: 1 }
+div.d-legend { display: flex; gap: 10px; color: var(--k-muted); font-size: 11px; height: 14px; flex-shrink: 0 }
+"#;
 
 /// The five dock leaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +86,24 @@ impl DashPanel {
         })
     }
 
+    fn kind(self) -> &'static str {
+        match self {
+            Self::PaintDirty => "ok",
+            Self::Paint30 => "info",
+            Self::Paint120 => "warn",
+            _ => "error",
+        }
+    }
+
+    fn color(self) -> &'static str {
+        match self {
+            Self::PaintDirty => "#22c55e",
+            Self::Paint30 => "#3b82f6",
+            Self::Paint120 => "#f59e0b",
+            _ => "#ef4444",
+        }
+    }
+
     fn blurb(self) -> &'static str {
         match self {
             Self::PaintDirty => "dirty-driven",
@@ -96,36 +111,6 @@ impl DashPanel {
             Self::Paint120 => "120 fps",
             Self::PaintUncap => "uncapped",
             Self::Settings => "",
-        }
-    }
-
-    fn title_id(self) -> &'static str {
-        match self {
-            Self::PaintDirty => "paint:r0_dirty:title",
-            Self::Paint30 => "paint:r1_30fps:title",
-            Self::Paint120 => "paint:r2_120fps:title",
-            Self::PaintUncap => "paint:r3_uncap:title",
-            Self::Settings => "settings:title",
-        }
-    }
-
-    fn note_id(self) -> &'static str {
-        match self {
-            Self::PaintDirty => "paint:r0_dirty:note",
-            Self::Paint30 => "paint:r1_30fps:note",
-            Self::Paint120 => "paint:r2_120fps:note",
-            Self::PaintUncap => "paint:r3_uncap:note",
-            Self::Settings => "settings:note",
-        }
-    }
-
-    fn sep_id(self) -> &'static str {
-        match self {
-            Self::PaintDirty => "paint:r0_dirty:sep",
-            Self::Paint30 => "paint:r1_30fps:sep",
-            Self::Paint120 => "paint:r2_120fps:sep",
-            Self::PaintUncap => "paint:r3_uncap:sep",
-            Self::Settings => "settings:sep-cell",
         }
     }
 }
@@ -192,9 +177,16 @@ pub struct DashboardApp {
     show_counts: bool,
     live: bool,
     counts: [u64; 4],
+    /// The last [`SPARK`] signal samples of each cell, one per paint.
+    spark: [VecDeque<f64>; 4],
     /// 0 = settings only, then one split per step, 4 = grid complete.
     phase: BTreeMap<WindowId, u8>,
     extra: u32,
+    sheet: Sheet,
+    /// Hit rects of the last settings page (test door, see [`DashboardApp::hit`]).
+    hits: BTreeMap<String, Rect>,
+    /// Cells whose last paint laid out a chart slot.
+    charts: [bool; 4],
 }
 
 impl Default for DashboardApp {
@@ -211,17 +203,23 @@ impl DashboardApp {
             show_counts: true,
             live: false,
             counts: [0; 4],
+            spark: Default::default(),
             phase: BTreeMap::new(),
             extra: 0,
+            sheet: look::sheet(CSS),
+            hits: BTreeMap::new(),
+            charts: [false; 4],
         }
     }
 
-    /// One undecorated window, dark tokens. Same size as the old L4 bin.
+    /// One undecorated window, dark tokens, painted on demand. Same size as the old
+    /// L4 bin.
     pub fn runtime_config() -> RuntimeConfig {
         RuntimeConfig {
             windows: vec![main_window()],
             tokens: Tokens::builtin(BuiltinSet::Dark),
             dark: true,
+            tick: TickRate::Dirty,
             ..RuntimeConfig::default()
         }
     }
@@ -231,52 +229,94 @@ impl DashboardApp {
         self.dark
     }
 
+    /// Where the settings page last laid out element `id` (window coordinates).
+    pub fn hit(&self, id: &str) -> Option<Rect> {
+        self.hits.get(id).copied()
+    }
+
+    /// How many cells laid out their sparkline slot on their last paint.
+    pub fn chart_slots(&self) -> usize {
+        self.charts.iter().filter(|c| **c).count()
+    }
+
+    fn settings_tree(&self, h: f64, dt_ms: f64) -> El {
+        let total: u64 = self.counts.iter().sum();
+        let theme = if self.dark { "Dark" } else { "Light" };
+        look::root(self.dark, h).child(
+            El::new("div.p-page")
+                .css(format!("height: {h}px"))
+                .child(
+                    El::new("div.p-row")
+                        .child(look::ico(icons::GRID, true))
+                        .child(El::new("div.p-h1").text("Dashboard"))
+                        .child(El::new("div.p-grow"))
+                        .child(k::badge("DOM", "info")),
+                )
+                .child(El::new("div.d-note").text(
+                    "Five dock leaves. This page is DOM; every cell is a DOM card with a canvas slot painted by the app.",
+                ))
+                .child(El::new("div.p-sec").text("THEME"))
+                .child(k::segmented("dash-theme", &["Dark", "Light"], usize::from(!self.dark)))
+                .child(El::new("div.p-sec").text("OPTIONS"))
+                .child(
+                    El::new("div.p-card")
+                        .child(k::checkbox("settings:counts", self.show_counts, "Rebuild counters"))
+                        .child(
+                            El::new("div.p-row")
+                                .child(k::switch("settings:live", self.live, "Live repaint"))
+                                .child(El::new("div").text("Live repaint"))
+                                .child(El::new("div.p-grow"))
+                                .child(k::badge(if self.live { "60 fps" } else { "on demand" }, if self.live { "warn" } else { "ok" })),
+                        ),
+                )
+                .child(El::new("div.p-sec").text("WINDOWS"))
+                .child(
+                    El::new("div.p-row")
+                        .child(k::button("settings:new", "New window"))
+                        .child(El::new("div.p-muted").text(format!("{} extra", self.extra))),
+                )
+                .child(
+                    El::new("div.p-grid2")
+                        .child(k::stat("settings:frame", "FRAME", &format!("{dt_ms:.1} ms"), &format!("theme {theme}")))
+                        .child(k::stat("settings:total", "REBUILDS", &total.to_string(), "all cells")),
+                ),
+        )
+    }
+
     fn paint_settings(&mut self, cx: &mut PanelCx<'_, DashSpec>) {
-        let dark = self.dark;
-        let dt_ms = cx.time.dt * 1000.0;
-        let status = format!(
-            "{}   {:.1} ms",
-            if dark { "theme dark" } else { "theme light" },
-            dt_ms
-        );
-        let theme_click: Cell<Option<bool>> = Cell::new(None);
-        let show_counts = &mut self.show_counts;
-        let live = &mut self.live;
-        let body = content_body(cx.rect);
-        view! {
-            <col rect={body} gap={COL_GAP} pad={COL_PAD}>
-                <row flex=0.0 size={CHROME_ROW}>
-                    <chrome show_new_window=true />
-                </row>
-                <text flex=0.0 size={TITLE_ROW} id="settings:title" text="Settings" />
-                <separator flex=0.0 size={SEP_ROW} id="settings:sep0" />
-                <text flex=0.0 size={LABEL_ROW} id="settings:theme_lbl" text="Theme" />
-                <row flex=0.0 size={BUTTON_ROW} gap={COL_GAP}>
-                    <button id="settings:theme_dark" text="Dark" active={dark} on_click={|| theme_click.set(Some(true))} />
-                    <button id="settings:theme_light" text="Light" active={!dark} on_click={|| theme_click.set(Some(false))} />
-                </row>
-                <separator flex=0.0 size={SEP_ROW} id="settings:sep1" />
-                <checkbox flex=0.0 size={CHECK_ROW} id="settings:counts" bind={show_counts} label="Rebuild counters" />
-                <toggle flex=0.0 size={CHECK_ROW} id="settings:live" bind={live} label="Live repaint" />
-                <text flex=1.0 size={STATUS_ROW} id="settings:status" text={status.as_str()} />
-            </col>
-        }
-        if let Some(dark) = theme_click.get() {
-            if dark != self.dark {
-                self.dark = dark;
-                let set = if dark {
-                    BuiltinSet::Dark
-                } else {
-                    BuiltinSet::Light
-                };
-                cx.out
-                    .command(AppCommand::Theme(ThemeCmd::SetTokens(Tokens::builtin(set))));
-                cx.out.command(AppCommand::Theme(ThemeCmd::SetDark(dark)));
+        let body = look::leaf_body(cx.rect);
+        let tree = self.settings_tree(body.height, cx.time.dt * 1000.0);
+        let resp = kit::dom(body, &self.sheet, tree).build(cx);
+        self.hits = resp.dom.hits().map(|(id, r)| (id.to_string(), r)).collect();
+        if let Some(c) = resp.clicked.as_deref() {
+            match c {
+                "settings:counts" => self.show_counts = !self.show_counts,
+                "settings:live" => self.live = !self.live,
+                "settings:new" => {
+                    self.extra = self.extra.wrapping_add(1);
+                    cx.out.command(AppCommand::Window(WindowCmd::Open(extra_window(self.extra))));
+                }
+                _ => {
+                    if let Some(i) = k::picked("dash-theme", "", c) {
+                        self.set_theme(cx, i == 0);
+                    }
+                }
             }
+            cx.out.request_frame();
         }
         if self.live {
             cx.out.request_frame();
         }
+    }
+
+    fn set_theme(&mut self, cx: &mut PanelCx<'_, DashSpec>, dark: bool) {
+        if dark == self.dark {
+            return;
+        }
+        self.dark = dark;
+        let set = if dark { BuiltinSet::Dark } else { BuiltinSet::Light };
+        cx.out.command(AppCommand::Theme(ThemeCmd::SetTokens(Tokens::builtin(set))));
+        cx.out.command(AppCommand::Theme(ThemeCmd::SetDark(dark)));
     }
 
     fn paint_cell(&mut self, cx: &mut PanelCx<'_, DashSpec>, panel: DashPanel) {
@@ -284,23 +324,51 @@ impl DashboardApp {
             return;
         };
         self.counts[idx] = self.counts[idx].wrapping_add(1);
+        let t = cx.time.now.0;
+        let f = 0.6 + idx as f64 * 0.45;
+        let v = (0.5 + 0.32 * (t * f + idx as f64).sin() + 0.12 * (t * f * 3.7).sin()).clamp(0.0, 1.0);
+        let spark = &mut self.spark[idx];
+        spark.push_back(v);
+        while spark.len() > SPARK {
+            spark.pop_front();
+        }
         let count = self.counts[idx];
-        let line = if self.show_counts {
-            format!("{}   {count}", panel.title())
-        } else {
-            panel.title().to_string()
-        };
-        let body = content_body(cx.rect);
-        let title_id = panel.title_id();
-        let sep_id = panel.sep_id();
-        let note_id = panel.note_id();
-        let note = panel.blurb();
-        view! {
-            <col rect={body} gap={COL_GAP} pad={COL_PAD}>
-                <text flex=0.0 size={TITLE_ROW} id={title_id} text={line.as_str()} />
-                <separator flex=0.0 size={SEP_ROW} id={sep_id} />
-                <text flex=1.0 size={LABEL_ROW} id={note_id} text={note} />
-            </col>
+        let body = look::leaf_body(cx.rect);
+        let h = body.height;
+        let key = format!("spark:{idx}");
+        let tree = look::root(self.dark, h).child(
+            El::new("div.p-page")
+                .css(format!("height: {h}px"))
+                .child(
+                    El::new("div.p-row")
+                        .child(look::ico(icons::CHART, false))
+                        .child(El::new("div.p-h1").text(panel.title()))
+                        .child(El::new("div.p-grow"))
+                        .child(k::badge(panel.blurb(), panel.kind())),
+                )
+                .child_if(self.show_counts && h > 220.0, || {
+                    El::new("div.p-grid2")
+                        .child(k::stat(&format!("{}:count", panel.type_id()), "REBUILDS", &count.to_string(), "paints of this leaf"))
+                        .child(k::stat(&format!("{}:last", panel.type_id()), "SIGNAL", &format!("{:.0}%", v * 100.0), "last sample"))
+                })
+                .child(
+                    El::new("div.d-spark")
+                        .child(
+                            El::new("div.d-legend")
+                                .child(El::new("div").text(format!("last {} paints", self.spark[idx].len())))
+                                .child(El::new("div.p-grow"))
+                                .child(El::new("div").text(if self.show_counts { format!("#{count}") } else { String::new() })),
+                        )
+                        .child(El::new("div.k-slot.d-chart").slot(&key)),
+                ),
+        );
+        let resp = kit::dom(body, &self.sheet, tree).build(cx);
+        self.charts[idx] = false;
+        for (slot, r) in resp.dom.slots() {
+            if slot == key {
+                self.charts[idx] = true;
+                paint_spark(cx.render, r, &self.spark[idx], panel.color(), self.dark);
+            }
         }
     }
 
@@ -432,15 +500,6 @@ fn extra_window(n: u32) -> WindowSpec {
     spec
 }
 
-fn content_body(panel: Rect) -> Rect {
-    Rect::new(
-        panel.x + CONTENT_X,
-        panel.y + CONTENT_TOP,
-        (panel.width - CONTENT_X * 2.0).max(1.0),
-        (panel.height - CONTENT_TOP - CONTENT_X).max(1.0),
-    )
-}
-
 fn leaf_with(leaves: &[LeafView], type_id: &str) -> Option<uzor::layout::docking::LeafId> {
     leaves.iter().find_map(|leaf| {
         leaf.panels
@@ -450,59 +509,58 @@ fn leaf_with(leaves: &[LeafView], type_id: &str) -> Option<uzor::layout::docking
     })
 }
 
-/// Column children in the same order as `paint_settings`.
-#[cfg(test)]
-fn settings_children() -> [uzor_framework::flex::FlexChild; 9] {
-    use uzor_framework::flex::FlexChild;
-    let fixed = |basis| FlexChild { basis, flex: 0.0 };
-    [
-        fixed(CHROME_ROW),
-        fixed(TITLE_ROW),
-        fixed(SEP_ROW),
-        fixed(LABEL_ROW),
-        fixed(BUTTON_ROW),
-        fixed(SEP_ROW),
-        fixed(CHECK_ROW),
-        fixed(CHECK_ROW),
-        FlexChild {
-            basis: STATUS_ROW,
-            flex: 1.0,
-        },
-    ]
-}
-
-/// Center of the Dark (`light == false`) or Light button, in the same
-/// coordinates `paint_settings` gives `view!`.
-#[cfg(test)]
-fn theme_button_center(panel: Rect, light: bool) -> (f64, f64) {
-    use uzor_framework::flex::{FlexChild, FlexDir};
-    let body = content_body(panel);
-    let col = uzor_framework::flex::flex_solve(
-        body,
-        FlexDir::Col,
-        COL_GAP,
-        COL_PAD,
-        &settings_children(),
-    );
-    let row = col[BUTTON_INDEX];
-    let buttons = uzor_framework::flex::flex_solve(
-        row,
-        FlexDir::Row,
-        COL_GAP,
-        0.0,
-        &[
-            FlexChild {
-                basis: 0.0,
-                flex: 1.0,
-            },
-            FlexChild {
-                basis: 0.0,
-                flex: 1.0,
-            },
-        ],
-    );
-    let r = buttons[usize::from(light)];
-    (r.x + r.width * 0.5, r.y + r.height * 0.5)
+/// A filled sparkline of `samples` (0 … 1) in `r`, newest on the right.
+fn paint_spark(ctx: &mut dyn RenderContext, r: Rect, samples: &VecDeque<f64>, color: &str, dark: bool) {
+    if r.width < 4.0 || r.height < 4.0 {
+        return;
+    }
+    ctx.save();
+    ctx.clip_rect(r.x, r.y, r.width, r.height);
+    // Grid: quarter lines.
+    ctx.set_stroke_color(if dark { "#2a2d33" } else { "#e3e5e8" });
+    ctx.set_stroke_width(1.0);
+    for q in 1..4 {
+        let y = (r.y + r.height * q as f64 / 4.0).round() + 0.5;
+        ctx.begin_path();
+        ctx.move_to(r.x, y);
+        ctx.line_to(r.x + r.width, y);
+        ctx.stroke();
+    }
+    if samples.len() >= 2 {
+        let step = r.width / (SPARK - 1) as f64;
+        let x0 = r.x + r.width - step * (samples.len() - 1) as f64;
+        let y_of = |v: f64| r.y + 4.0 + (1.0 - v) * (r.height - 8.0);
+        ctx.begin_path();
+        ctx.move_to(x0, r.y + r.height);
+        for (i, v) in samples.iter().enumerate() {
+            ctx.line_to(x0 + step * i as f64, y_of(*v));
+        }
+        ctx.line_to(r.x + r.width, r.y + r.height);
+        ctx.close_path();
+        ctx.set_global_alpha(0.18);
+        ctx.set_fill_color(color);
+        ctx.fill();
+        ctx.set_global_alpha(1.0);
+        ctx.begin_path();
+        for (i, v) in samples.iter().enumerate() {
+            let (x, y) = (x0 + step * i as f64, y_of(*v));
+            if i == 0 {
+                ctx.move_to(x, y);
+            } else {
+                ctx.line_to(x, y);
+            }
+        }
+        ctx.set_stroke_color(color);
+        ctx.set_stroke_width(2.0);
+        ctx.stroke();
+        if let Some(v) = samples.back() {
+            ctx.set_fill_color(color);
+            ctx.begin_path();
+            ctx.arc(r.x + r.width - 3.0, y_of(*v), 3.0, 0.0, std::f64::consts::TAU);
+            ctx.fill();
+        }
+    }
+    ctx.restore();
 }
 
 #[cfg(test)]
@@ -591,7 +649,7 @@ mod tests {
         let mut host = open_settled();
         let before = host.snapshot().theme_rev;
         let rect = settings_rect(&host);
-        let (x, y) = theme_button_center(rect, true);
+        let (x, y) = center(&host, "dash-theme:1");
         assert!(
             y > rect.y + 24.0,
             "light button {y} overlaps the header of {rect:?}"
@@ -603,9 +661,37 @@ mod tests {
         );
         assert!(host.snapshot().theme_rev > before);
 
-        let rect = settings_rect(&host);
-        let (x, y) = theme_button_center(rect, false);
+        let (x, y) = center(&host, "dash-theme:0");
         click(&mut host, x, y);
         assert!(host.runtime().app().is_dark());
     }
+
+    fn center(host: &HeadlessHost<DashSpec, DashboardApp>, id: &str) -> (f64, f64) {
+        let r = host.runtime().app().hit(id).unwrap_or_else(|| panic!("{id} not on the settings page"));
+        (r.x + r.width * 0.5, r.y + r.height * 0.5)
+    }
+
+    #[test]
+    fn dashboard_switches_and_new_window() {
+        let mut host = open_settled();
+        let (x, y) = center(&host, "settings:counts");
+        click(&mut host, x, y);
+        assert!(!host.runtime().app().show_counts, "checkbox toggles the counters");
+        let (x, y) = center(&host, "settings:live");
+        click(&mut host, x, y);
+        assert!(host.runtime().app().live, "switch turns live repaint on");
+        let (x, y) = center(&host, "settings:new");
+        click(&mut host, x, y);
+        for _ in 0..6 {
+            host.advance(0.02);
+        }
+        assert_eq!(host.snapshot().windows.len(), 2, "new window button opens a window");
+    }
+
+    #[test]
+    fn dashboard_cells_embed_a_chart_slot() {
+        let host = open_settled();
+        assert_eq!(host.runtime().app().chart_slots(), 4, "every cell lays out its sparkline slot");
+    }
+
 }

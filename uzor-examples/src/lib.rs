@@ -6,6 +6,7 @@
 
 pub mod dashboard;
 pub mod kit_gallery;
+pub mod look;
 
 pub use dashboard::DashboardApp;
 pub use kit_gallery::Gallery;
