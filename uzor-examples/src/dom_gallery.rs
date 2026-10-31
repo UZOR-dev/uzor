@@ -206,6 +206,8 @@ impl DomGalleryPage {
         // The chat scrolls with the wheel over it (kept in range by the list).
         let max = (self.list.total() - 500.0).max(0.0);
         let tree = self.g.tree(&self.list, area.width, area.height, self.anchor.map(|a| Rect::new(a.x - area.x, a.y - area.y, a.width, a.height)));
+        // Fill the window: the root is as tall as the area.
+        let tree = tree.css(format!("height: {}px; background: var(--k-bg)", area.height));
         let resp = kit::dom(area, &self.sheet, tree).build(cx);
         self.hits = resp.dom.hits().map(|(id, r)| (id.to_string(), r)).collect();
         let over_chat = resp.hovered.as_deref().is_some_and(|h| h == "chat" || (h.starts_with('m') && h[1..].chars().next().is_some_and(|c| c.is_ascii_digit())));
