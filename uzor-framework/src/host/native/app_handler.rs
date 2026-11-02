@@ -69,11 +69,11 @@ pub struct NativeHost<S: Spec, A: App<Spec = S>> {
 struct AutoState {
     port: Option<crate::automation::AutomationPort>,
     /// Input replies owed after this loop turn's paint.
-    after_paint: Vec<(std::sync::mpsc::SyncSender<crate::automation::AutoReply>, WindowId)>,
+    after_paint: Vec<(crate::automation::AutoReplyTx, WindowId)>,
     /// Queries answered after this loop turn's paint (they read the new frame).
     queries: Vec<crate::automation::AutoJob>,
-    /// Frames painted since start.
-    frames: u64,
+    /// Frames painted since start, and callers waiting for the next one.
+    waits: crate::automation::FrameWaits,
     /// Last clear colour per window (offscreen screenshots reuse it).
     background: HashMap<WindowId, u32>,
 }
@@ -95,6 +95,10 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
     }
 
     fn push(&mut self, window: WindowId, event: InputEvent) {
+        #[cfg(feature = "automation")]
+        if let Some(port) = &self.auto.port {
+            crate::automation::tap_input(port, &self.runtime, window, &event);
+        }
         self.runtime.push_input(InputEnvelope {
             window,
             t: self.now(),
@@ -267,7 +271,11 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
                         let _ = reply.send(AutoReply::Error(AutoError::NoWindow));
                     }
                 },
-                other => self.auto.queries.push((other, reply)),
+                other => {
+                    if let Some(job) = self.auto.waits.take(other, reply) {
+                        self.auto.queries.push(job);
+                    }
+                }
             }
         }
     }
@@ -277,7 +285,7 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
     #[cfg(feature = "automation")]
     fn automation_answer(&mut self) -> bool {
         use crate::automation::{answer_plain, resolve_window, AutoCmd, AutoError, AutoReply, ShotSource};
-        let frame = self.auto.frames;
+        let frame = self.auto.waits.frames;
         for (reply, window) in std::mem::take(&mut self.auto.after_paint) {
             let _ = reply.send(AutoReply::InputDone { window, frame });
         }
@@ -363,7 +371,7 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
             }
             #[cfg(feature = "automation")]
             {
-                self.auto.frames += 1;
+                self.auto.waits.painted();
                 self.auto.background.insert(req.window, req.background);
             }
             if let Err(e) = paint_frame(&mut self.runtime, &mut self.hub, &mut nw.render_state, &req)
@@ -611,30 +619,48 @@ pub struct RenderPreference {
     pub backend: Option<RenderBackend>,
 }
 
-/// Dev control at run time: which app directory the discovery file goes in
-/// and the app name `ping` reports. Served only by a build with the
-/// `dev-control` feature; any other build prints one line and ignores it, so
-/// an app sets it without a `cfg`.
+/// Dev control at run time: which app directory the discovery file goes in,
+/// the app name `ping` reports, and whether to run with no window. Served
+/// only by a build with the `dev-control` feature; any other build prints
+/// one line and ignores it (and refuses `headless`), so an app sets it
+/// without a `cfg`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DevControlConfig {
     /// Directory name under `$XDG_RUNTIME_DIR` (else `~/.config`), e.g. `"hatchery-hq"`.
     pub app_dir: String,
     /// App name in `ping` and the discovery file.
     pub app: String,
+    /// Run with no window and no display ([`crate::host::run_headless`]):
+    /// the same RPC, screenshots offscreen.
+    pub headless: bool,
 }
 
 impl DevControlConfig {
     /// A config for `app_dir` / `app`.
     pub fn new(app_dir: &str, app: &str) -> Self {
-        Self { app_dir: app_dir.to_string(), app: app.to_string() }
+        Self { app_dir: app_dir.to_string(), app: app.to_string(), headless: false }
     }
 
-    /// `Some` when the process was started with `--dev`, or `env_var` is set
-    /// to anything but empty or `0` (e.g. `HQ_DEV=1`).
+    /// `Some` when the process was started with `--dev` (or `--headless`,
+    /// which implies it), or `env_var` is set to anything but empty or `0`
+    /// (e.g. `HQ_DEV=1`; `HQ_DEV=headless` also asks for no window).
     pub fn from_args_env(app_dir: &str, app: &str, env_var: &str) -> Option<Self> {
-        let flag = std::env::args().skip(1).any(|a| a == "--dev");
-        let env = std::env::var(env_var).is_ok_and(|v| !v.is_empty() && v != "0");
-        (flag || env).then(|| Self::new(app_dir, app))
+        Self::from_parts(app_dir, app, std::env::args().skip(1), std::env::var(env_var).ok())
+    }
+
+    fn from_parts(app_dir: &str, app: &str, args: impl Iterator<Item = String>, env: Option<String>) -> Option<Self> {
+        let (mut dev, mut headless) = (false, false);
+        for a in args {
+            match a.as_str() {
+                "--dev" => dev = true,
+                "--headless" => headless = true,
+                _ => {}
+            }
+        }
+        let env = env.unwrap_or_default();
+        headless |= env == "headless";
+        dev |= !env.is_empty() && env != "0";
+        (dev || headless).then(|| Self { headless, ..Self::new(app_dir, app) })
     }
 }
 
@@ -692,7 +718,19 @@ where
     });
     #[cfg(not(feature = "dev-control"))]
     if let Some(c) = native.dev_control.as_ref() {
+        if c.headless {
+            return Err(FrameworkError::Host(format!("{}: --headless needs a build with dev control", c.app)));
+        }
         eprintln!("{}: this build cannot be driven remotely; ignored", c.app);
+    }
+    #[cfg(feature = "dev-control")]
+    if let Some(c) = native.dev_control.as_ref().filter(|c| c.headless) {
+        let Some(port) = native.automation.clone().filter(|_| _dev.is_some()) else {
+            return Err(FrameworkError::Host(format!("{}: headless without dev control is unreachable; not starting", c.app)));
+        };
+        eprintln!("{}: headless (no window, offscreen screenshots)", c.app);
+        crate::host::run_headless(app, cfg, 1.0, port);
+        return Ok(());
     }
 
     let event_loop = EventLoop::<HostWake>::with_user_event()
@@ -784,3 +822,23 @@ fn flush_x11(window: &winit::window::Window) {
 
 #[cfg(not(all(unix, not(target_os = "macos"))))]
 fn flush_x11(_window: &winit::window::Window) {}
+
+#[cfg(test)]
+mod dev_config_tests {
+    use super::DevControlConfig;
+
+    fn parse(args: &[&str], env: Option<&str>) -> Option<DevControlConfig> {
+        DevControlConfig::from_parts("d", "a", args.iter().map(|s| s.to_string()), env.map(str::to_string))
+    }
+
+    #[test]
+    fn flags_and_env() {
+        assert_eq!(parse(&[], None), None);
+        assert_eq!(parse(&[], Some("0")), None);
+        assert!(!parse(&["--dev"], None).unwrap().headless);
+        assert!(parse(&["--dev", "--headless"], None).unwrap().headless);
+        assert!(parse(&["--headless"], None).unwrap().headless);
+        assert!(parse(&[], Some("headless")).unwrap().headless);
+        assert!(!parse(&[], Some("1")).unwrap().headless);
+    }
+}

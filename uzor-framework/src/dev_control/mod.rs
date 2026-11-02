@@ -9,23 +9,32 @@
 //! [`uzor_devtools`] (re-exported as [`devtools`]); the RPC core is
 //! [`Dispatcher`].
 
+mod events;
 mod keys;
 mod protocol;
+mod recorder;
 
+pub use events::{EventLog, EVENT_CAP};
 pub use protocol::{Dispatcher, RpcError, METHODS, PROTOCOL_VERSION};
+pub use recorder::MASKED;
+#[cfg(not(target_arch = "wasm32"))]
 pub use uzor_devtools as devtools;
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::automation::AutomationClient;
 
 /// A running dev-control endpoint: the loopback server and its discovery
 /// file. Dropping it stops serving and removes the file.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct DevControl {
     endpoint: uzor_devtools::Endpoint,
     dispatcher: Arc<Dispatcher>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl DevControl {
     /// The loopback port.
     pub fn port(&self) -> u16 {
@@ -48,6 +57,7 @@ impl DevControl {
 /// names the app in `ping`. The native host calls this itself for
 /// `NativeOptions::dev_control`; call it directly for a headless host
 /// ([`crate::HeadlessHost::serve_automation`]).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn start(app_dir: &str, app: &str, client: AutomationClient) -> std::io::Result<DevControl> {
     let dispatcher = Arc::new(Dispatcher::new(app, client));
     let endpoint = uzor_devtools::serve(app_dir, app, Arc::clone(&dispatcher) as Arc<dyn uzor_devtools::Rpc>)?;

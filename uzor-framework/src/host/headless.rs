@@ -35,12 +35,31 @@ pub struct HeadlessHost<S: Spec, A: App<Spec = S>> {
     pub ctx: RecordingRenderContext,
     last: TickOutput,
     command_log: Vec<(WindowId, WindowCommand)>,
+    #[cfg(feature = "automation")]
+    auto: HeadlessAuto,
+}
+
+/// Automation bookkeeping of the headless host.
+#[cfg(feature = "automation")]
+#[derive(Default)]
+struct HeadlessAuto {
+    /// The port last served (its input tap sees pushed input).
+    port: Option<crate::automation::AutomationPort>,
+    waits: crate::automation::FrameWaits,
+    /// Last clear colour per window.
+    background: std::collections::HashMap<WindowId, u32>,
 }
 
 impl<S: Spec, A: App<Spec = S>> HeadlessHost<S, A> {
     /// A host and the app's handle, with a no-op waker (design §9.1).
     pub fn new(app: A, cfg: RuntimeConfig) -> (Self, Handle<S>) {
-        let (rt, handle) = Runtime::new(app, cfg, Waker::noop());
+        Self::with_waker(app, cfg, Waker::noop())
+    }
+
+    /// A host whose app handle wakes `waker` on every dispatch (a live
+    /// loop sleeps until then; see [`run_headless`]).
+    pub fn with_waker(app: A, cfg: RuntimeConfig, waker: Waker) -> (Self, Handle<S>) {
+        let (rt, handle) = Runtime::new(app, cfg, waker);
         let host = Self {
             rt,
             handle: handle.clone(),
@@ -54,6 +73,8 @@ impl<S: Spec, A: App<Spec = S>> HeadlessHost<S, A> {
             ctx: RecordingRenderContext::new(),
             last: TickOutput::default(),
             command_log: Vec::new(),
+            #[cfg(feature = "automation")]
+            auto: HeadlessAuto::default(),
         };
         (host, handle)
     }
@@ -80,6 +101,10 @@ impl<S: Spec, A: App<Spec = S>> HeadlessHost<S, A> {
 
     /// Queue one input event for the next tick (hop 1 of §4.4).
     pub fn input(&mut self, win: WindowId, event: InputEvent) {
+        #[cfg(feature = "automation")]
+        if let Some(port) = &self.auto.port {
+            crate::automation::tap_input(port, &self.rt, win, &event);
+        }
         self.rt.push_input(InputEnvelope {
             window: win,
             t: self.now,
@@ -132,6 +157,11 @@ impl<S: Spec, A: App<Spec = S>> HeadlessHost<S, A> {
         let frames = std::mem::take(&mut out.frames);
         for req in &frames {
             self.rt.paint(req, &mut self.ctx);
+            #[cfg(feature = "automation")]
+            {
+                self.auto.background.insert(req.window, req.background);
+                self.auto.waits.painted();
+            }
         }
         out.frames = frames;
         self.command_log.extend(out.window_commands.iter().cloned());
@@ -162,34 +192,58 @@ impl<S: Spec, A: App<Spec = S>> HeadlessHost<S, A> {
 
     /// Answer every job queued on `port` (feature `automation`): input is
     /// fed and followed by one `advance(dt)` before its reply; screenshots
-    /// are offscreen (there is no window to read back).
+    /// are offscreen (there is no window to read back). While someone waits
+    /// for a painted frame ([`crate::automation::AutoCmd::Frame`]) the
+    /// clock moves by `dt` per call.
     #[cfg(feature = "automation")]
     pub fn serve_automation(&mut self, port: &crate::automation::AutomationPort, dt: f64) {
-        use crate::automation::{answer_plain, resolve_window, AutoCmd, AutoReply, ShotSource};
-        for (cmd, reply) in port.drain() {
+        let jobs = self.serve_jobs(port, &mut |_| dt);
+        if jobs == 0 && self.auto.waits.anyone_waiting() {
+            self.advance(dt);
+        }
+    }
+
+    /// Answer queued jobs; `dt_of` gives the clock step for each input's
+    /// advance. Returns the number of jobs.
+    #[cfg(feature = "automation")]
+    fn serve_jobs(&mut self, port: &crate::automation::AutomationPort, dt_of: &mut dyn FnMut(&Self) -> f64) -> usize {
+        use crate::automation::{answer_plain, resolve_window, AutoCmd, AutoError, AutoReply, ShotSource};
+        if self.auto.port.is_none() {
+            self.auto.port = Some(port.clone());
+        }
+        let jobs = port.drain();
+        let n = jobs.len();
+        for (cmd, reply) in jobs {
+            let Some((cmd, reply)) = self.auto.waits.take(cmd, reply) else { continue };
             let dpr = self.dpr;
+            let bgs = self.auto.background.clone();
+            let bg_of = move |w: WindowId| bgs.get(&w).copied().unwrap_or(0xffffffff);
             let answer = match &cmd {
                 AutoCmd::Input { win, events } => match resolve_window(&self.rt, *win) {
                     Some(w) => {
                         for ev in events.clone() {
                             self.input(w, ev);
                         }
+                        let dt = dt_of(self);
                         self.advance(dt);
-                        AutoReply::InputDone { window: w, frame: (self.now.get() * 1000.0).round() as u64 }
+                        AutoReply::InputDone { window: w, frame: self.auto.waits.frames }
                     }
-                    None => AutoReply::Error(crate::automation::AutoError::NoWindow),
+                    None => AutoReply::Error(AutoError::NoWindow),
                 },
                 AutoCmd::Screenshot { win, .. } => {
                     let c = AutoCmd::Screenshot { win: *win, source: ShotSource::Offscreen };
-                    answer_plain(&mut self.rt, &c, &|_| dpr, &|_| 0xffffffff).unwrap_or(AutoReply::Error(
-                        crate::automation::AutoError::Unsupported("screenshot"),
-                    ))
+                    answer_plain(&mut self.rt, &c, &|_| dpr, &bg_of).unwrap_or(AutoReply::Error(AutoError::Unsupported("screenshot")))
                 }
-                other => answer_plain(&mut self.rt, other, &|_| dpr, &|_| 0xffffffff)
-                    .unwrap_or(AutoReply::Error(crate::automation::AutoError::Unsupported("command"))),
+                other => answer_plain(&mut self.rt, other, &|_| dpr, &bg_of).unwrap_or(AutoReply::Error(AutoError::Unsupported("command"))),
             };
             let _ = reply.send(answer);
         }
+        n
+    }
+
+    /// The wake hint of the last `advance`.
+    pub fn last_wake(&self) -> crate::types::frame::Wake {
+        self.last.wake
     }
 
     /// The last published snapshot.
@@ -231,5 +285,106 @@ fn earliest(
         (Wake::At(x), Wake::At(y)) => Wake::At(if x.get() <= y.get() { x } else { y }),
         (Wake::At(x), Wake::Idle) | (Wake::Idle, Wake::At(x)) => Wake::At(x),
         (Wake::Idle, Wake::Idle) => Wake::Idle,
+    }
+}
+
+/// Run `app` live with no window and no display: a real-time loop on a
+/// [`HeadlessHost`] that serves `port` (feature `automation`, native
+/// only). Windows the app opens are auto-created at their spec size and
+/// `dpr`; frames paint into a recorder that is cleared each turn;
+/// screenshots are offscreen (tiny-skia). Returns when the app exits or
+/// its last window closes.
+#[cfg(all(feature = "automation", not(target_arch = "wasm32")))]
+pub fn run_headless<S: Spec, A: App<Spec = S>>(
+    app: A,
+    cfg: RuntimeConfig,
+    dpr: f64,
+    port: crate::automation::AutomationPort,
+) {
+    use crate::types::frame::Wake;
+    use std::sync::{Condvar, Mutex};
+    use std::time::{Duration, Instant};
+
+    #[derive(Default)]
+    struct Signal {
+        woken: Mutex<bool>,
+        cv: Condvar,
+    }
+    impl Signal {
+        fn wake(&self) {
+            *self.woken.lock().unwrap_or_else(|p| p.into_inner()) = true;
+            self.cv.notify_all();
+        }
+        /// Sleep up to `max` unless woken; true when woken.
+        fn wait(&self, max: Option<Duration>) -> bool {
+            let mut w = self.woken.lock().unwrap_or_else(|p| p.into_inner());
+            if !*w {
+                w = match max {
+                    Some(d) => self.cv.wait_timeout(w, d).unwrap_or_else(|p| p.into_inner()).0,
+                    None => self.cv.wait(w).unwrap_or_else(|p| p.into_inner()),
+                };
+            }
+            std::mem::replace(&mut *w, false)
+        }
+    }
+
+    // A paced frame: animations tick at most this often.
+    const FRAME: f64 = 1.0 / 60.0;
+    let sig = Arc::new(Signal::default());
+    let s1 = Arc::clone(&sig);
+    let (mut host, _handle) = HeadlessHost::with_waker(app, cfg, Waker::new(move || s1.wake()));
+    host.dpr = if dpr > 0.0 { dpr } else { 1.0 };
+    let s2 = Arc::clone(&sig);
+    port.set_waker(move || s2.wake());
+    let start = Instant::now();
+    let clock = move || start.elapsed().as_secs_f64();
+
+    host.advance(0.0);
+    host.ctx.ops.clear();
+    let mut had_window = !host.snapshot().windows.is_empty();
+    let mut last_tick = clock();
+    let mut due_now = true;
+    let mut want_more = false;
+    loop {
+        let now = clock();
+        let jobs = host.serve_jobs(&port, &mut |h: &HeadlessHost<S, A>| (now - h.now.get()).max(0.0));
+        if jobs > 0 {
+            last_tick = now;
+        }
+        let wake = host.last_wake();
+        let paint_more = std::mem::take(&mut want_more) || host.rt.take_paint_wants_tick();
+        let due = due_now
+            || paint_more
+            || match wake {
+                Wake::Immediate => now - last_tick >= FRAME,
+                Wake::At(t) => t.get() <= now,
+                Wake::Idle => false,
+            };
+        if due {
+            let dt = (now - host.now.get()).max(0.0);
+            host.advance(dt);
+            host.ctx.ops.clear();
+            last_tick = now;
+        }
+        due_now = false;
+        let windows = host.snapshot().windows.len();
+        had_window |= windows > 0;
+        if host.rt.should_exit() || (had_window && windows == 0) {
+            return;
+        }
+        let now = clock();
+        want_more = host.rt.take_paint_wants_tick();
+        let sleep = match host.last_wake() {
+            _ if want_more => Some((last_tick + FRAME - now).max(0.0)),
+            Wake::Immediate => Some((last_tick + FRAME - now).max(0.0)),
+            Wake::At(t) => Some((t.get() - now).max(0.0)),
+            Wake::Idle => None,
+        };
+        if sleep.is_some_and(|d| d <= 0.0) {
+            continue;
+        }
+        if sig.wait(sleep.map(Duration::from_secs_f64)) {
+            due_now = true;
+        }
     }
 }

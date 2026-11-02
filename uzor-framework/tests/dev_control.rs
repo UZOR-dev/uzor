@@ -1,7 +1,7 @@
 //! Dev control end to end over loopback (feature `dev-control`): a headless
 //! app, the real server, HTTP calls.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -12,7 +12,8 @@ use uzor_framework::dev_control::devtools::server::{http_call, Server};
 use uzor_framework::dev_control::devtools::token::Token;
 use uzor_framework::dev_control::Dispatcher;
 use uzor_framework::automation::{channel, AutomationPort};
-use uzor_framework::handle::{App, IntentCx, OverlayCx, PanelCx};
+use uzor_framework::handle::{App, InitCx, IntentCx, OverlayCx, PanelCx};
+use uzor_framework::Handle;
 use uzor_framework::types::command::{AppCommand, DockTarget, LayoutCmd};
 use uzor_framework::types::intent::Intent;
 use uzor_framework::types::overlay_model::OverlayModel;
@@ -48,9 +49,14 @@ impl Spec for TS {
 #[derive(Default)]
 struct Form {
     clicks: u32,
+    /// The app handle, for tests that run the app on another thread.
+    handle_out: Arc<Mutex<Option<Handle<TS>>>>,
 }
 impl App for Form {
     type Spec = TS;
+    fn init(&mut self, cx: &mut InitCx<'_, TS>) {
+        *self.handle_out.lock().unwrap() = Some(cx.handle());
+    }
     fn overlay_model(&self, _w: WindowId, id: Ov) -> OverlayModel {
         match id {}
     }
@@ -233,4 +239,138 @@ fn start_publishes_discovery() {
     drop(d);
     assert!(!file.exists());
     let _ = std::fs::remove_dir_all(&rt);
+}
+
+fn err_code(port: u16, m: &str, p: Value) -> String {
+    let v = rpc(port, m, p);
+    v["error"]["code"].as_str().unwrap_or_else(|| panic!("{m} did not fail: {v}")).to_string()
+}
+
+fn events(port: u16) -> Vec<Value> {
+    let auth = format!("Bearer {}", hex());
+    let host = format!("127.0.0.1:{port}");
+    let (_, ev) = http_call(port, "GET", "/events?since=0&wait_ms=10", &[("Host", &host), ("Authorization", &auth)], "").unwrap();
+    serde_json::from_str::<Value>(&ev).unwrap().as_array().unwrap().clone()
+}
+
+#[test]
+fn wait_for_and_settle() {
+    with_app(|port| {
+        let w = rpc(port, "wait-for", json!({"target": "#go"}));
+        assert_eq!(w["result"]["id"], "go", "{w}");
+        assert_eq!(rpc(port, "wait-for", json!({"target": "#nope", "state": "gone"}))["ok"], true);
+        assert_eq!(err_code(port, "wait-for", json!({"target": "#nope", "timeout_ms": 150})), "timeout");
+        assert_eq!(err_code(port, "wait-for", json!({"target": "[["})), "bad_selector");
+        assert_eq!(err_code(port, "wait-for", json!({})), "bad_request");
+        assert_eq!(err_code(port, "wait-for", json!({"target": "#go", "state": "odd"})), "bad_request");
+        assert_eq!(rpc(port, "wait-for", json!({"cond": {"clicks": 0}}))["ok"], true);
+        assert_eq!(err_code(port, "wait-for", json!({"cond": {"clicks": 5}, "timeout_ms": 100})), "timeout");
+        rpc(port, "click", json!({"selector": "#go"}));
+        assert_eq!(rpc(port, "wait-for", json!({"cond": {"clicks": 1}}))["ok"], true);
+        let s = rpc(port, "settle", json!({"idle_ms": 80}));
+        assert_eq!(s["ok"], true, "{s}");
+        assert!(s["result"]["waited_ms"].as_u64().unwrap() >= 80);
+        assert!(s["result"]["checks"].as_u64().unwrap() >= 2, "{s}");
+        assert_eq!(rpc(port, "type", json!({"selector": "#nick", "text": "ab"}))["ok"], true);
+        let v = rpc(port, "wait-for", json!({"target": "#nick", "value": "ab", "state": "focused"}));
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(err_code(port, "settle", json!({"idle_ms": "x"})), "bad_request");
+    });
+}
+
+#[test]
+fn record_and_replay() {
+    with_app(|port| {
+        assert_eq!(rpc(port, "record", json!({}))["result"]["recording"], false);
+        assert_eq!(rpc(port, "record", json!({"on": true}))["result"]["recording"], true);
+        rpc(port, "click", json!({"selector": "#go"}));
+        rpc(port, "type", json!({"selector": "#nick", "text": "abc"}));
+        rpc(port, "type", json!({"selector": "#token", "text": "s3cret"}));
+        rpc(port, "key", json!({"key": "Enter"}));
+        rpc(port, "scroll", json!({"selector": "#go", "dy": -40}));
+        rpc(port, "click", json!({"x": 390, "y": 290}));
+        let off = rpc(port, "record", json!({"on": false}));
+        let jsonl = off["result"]["jsonl"].as_str().unwrap().to_string();
+        assert!(!jsonl.contains("s3cret"), "secret recorded: {jsonl}");
+        let lines: Vec<Value> = jsonl.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let methods: Vec<&str> = lines.iter().map(|l| l["method"].as_str().unwrap()).collect();
+        assert_eq!(methods, ["click", "click", "type", "click", "type", "key", "scroll", "click"], "{jsonl}");
+        assert_eq!(lines[0]["params"]["selector"], "#go");
+        assert_eq!(lines[1]["params"]["selector"], "#nick");
+        assert_eq!(lines[2]["params"]["text"], "abc");
+        assert_eq!(lines[2]["params"]["into"], "nick");
+        assert_eq!(lines[4]["params"]["text"], "<masked>");
+        assert_eq!(lines[4]["params"]["into"], "token");
+        assert_eq!(lines[5]["params"]["key"], "Enter");
+        assert_eq!(lines[6]["params"]["selector"], "#go");
+        assert_eq!(lines[6]["params"]["dy"], -40.0);
+        assert!(lines[7]["params"]["selector"].is_null() && lines[7]["params"]["x"] == 390.0, "{}", lines[7]);
+        let ts: Vec<u64> = lines.iter().map(|l| l["t_ms"].as_u64().unwrap()).collect();
+        assert!(ts.windows(2).all(|w| w[0] <= w[1]));
+
+        // The log streams the lines too, never the secret.
+        let ev = events(port);
+        assert!(ev.iter().any(|e| e["type"] == "record" && e["event"]["method"] == "type"));
+        assert!(!Value::Array(ev.clone()).to_string().contains("s3cret"));
+
+        // Replay needs the secret, refuses what it cannot replay.
+        assert_eq!(err_code(port, "replay", json!({"events": jsonl.clone(), "speed": 0})), "bad_request");
+        assert_eq!(err_code(port, "replay", json!({"events": jsonl.clone(), "speed": 0, "secrets": {"other": "x"}})), "bad_request");
+        assert_eq!(err_code(port, "replay", json!({"events": [{"method": "screenshot"}]})), "bad_request");
+        assert_eq!(err_code(port, "replay", json!({"events": "not json"})), "bad_request");
+        let before = rpc(port, "state", json!({}))["result"]["clicks"].as_u64().unwrap();
+        let r = rpc(port, "replay", json!({"events": jsonl.clone(), "speed": 0, "secrets": {"token": "zz"}}));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["result"]["replayed"], 8);
+        assert_eq!(rpc(port, "state", json!({}))["result"]["clicks"].as_u64().unwrap(), before + 1);
+        let tree = rpc(port, "dump-tree", json!({})).to_string();
+        assert!(tree.contains("abcabc"), "{tree}");
+        // A list of secrets works in order; a speed replays with pauses.
+        let r = rpc(port, "replay", json!({"events": lines, "speed": 4, "secrets": ["q"]}));
+        assert_eq!(r["ok"], true, "{r}");
+        let ev = events(port);
+        assert!(ev.iter().any(|e| e["type"] == "replay" && e["ok"] == true));
+        assert!(!Value::Array(ev).to_string().contains("\"zz\""));
+        // A step whose selector never shows up fails with its index.
+        let bad = json!([{"method": "click", "params": {"selector": "#gone"}}]);
+        let v = rpc(port, "replay", json!({"events": bad, "speed": 0}));
+        assert_eq!(v["error"]["code"], "timeout", "{v}");
+        assert!(v["error"]["message"].as_str().unwrap().contains("event 0"));
+    });
+}
+
+/// `run_headless`: a live loop with no window, driven over the same RPC.
+#[test]
+fn live_headless_app() {
+    use uzor_framework::types::window::WindowSpec;
+    let (client, aport) = channel();
+    let slot: Arc<Mutex<Option<Handle<TS>>>> = Arc::default();
+    let form = Form { clicks: 0, handle_out: Arc::clone(&slot) };
+    let mut cfg = RuntimeConfig::default();
+    cfg.windows.push(WindowSpec::new("main", "live", SizePx::new(320, 200)));
+    let app = std::thread::spawn(move || uzor_framework::host::run_headless(form, cfg, 1.0, aport));
+    let server = Server::start(Arc::new(Dispatcher::new("live", client)), Token::from_bytes(TOKEN)).unwrap();
+    let port = server.port();
+    let w = rpc(port, "windows", json!({}));
+    let win = w["result"][0]["id"].as_u64().unwrap() as u32;
+    assert_eq!(w["result"][0]["viewport"]["w"], 320.0);
+    let handle = slot.lock().unwrap().clone().unwrap();
+    handle.dispatch(AppCommand::Layout(LayoutCmd::OpenPanel { win: WindowId(win), panel: P, at: DockTarget::Root })).unwrap();
+    // The dispatch wakes the loop; the panel shows up within frames.
+    let v = rpc(port, "wait-for", json!({"target": "#go", "timeout_ms": 3000}));
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(rpc(port, "click", json!({"selector": "#go"}))["ok"], true);
+    assert_eq!(rpc(port, "wait-for", json!({"cond": {"clicks": 1}, "timeout_ms": 2000}))["ok"], true);
+    let st = rpc(port, "settle", json!({"idle_ms": 100}));
+    assert_eq!(st["ok"], true, "{st}");
+    let shot = rpc(port, "screenshot", json!({}));
+    assert_eq!(shot["result"]["source"], "offscreen");
+    assert_eq!(shot["result"]["width"], 320);
+    handle.dispatch(AppCommand::Shutdown).unwrap();
+    let t0 = std::time::Instant::now();
+    while !app.is_finished() {
+        assert!(t0.elapsed() < Duration::from_secs(5), "headless loop did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    app.join().unwrap();
 }

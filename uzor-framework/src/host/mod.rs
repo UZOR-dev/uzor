@@ -10,6 +10,8 @@
 mod headless;
 
 pub use headless::HeadlessHost;
+#[cfg(all(feature = "automation", not(target_arch = "wasm32")))]
+pub use headless::run_headless;
 
 #[cfg(feature = "native")]
 pub mod native;

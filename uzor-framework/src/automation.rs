@@ -3,16 +3,27 @@
 //! inject input, take screenshots — without the host knowing any transport.
 //!
 //! A tool holds an [`AutomationClient`] and calls [`AutomationClient::call`]
-//! from its own thread; the host owns the matching [`AutomationPort`], is
-//! woken through the waker it installs, and answers every [`AutoCmd`] on the
-//! loop thread. Input replies come after the frame that follows the
-//! injection was painted, so a caller reading the tree next sees its effect.
+//! from its own thread (or awaits [`AutomationClient::call_async`], which is
+//! what the in-page web bridge does: no threads there); the host owns the
+//! matching [`AutomationPort`], is woken through the waker it installs, and
+//! answers every [`AutoCmd`] on the loop thread. Input replies come after the
+//! frame that follows the injection was painted, so a caller reading the tree
+//! next sees its effect. [`AutoCmd::Frame`] waits for the next painted frame,
+//! so callers check conditions once per drawn frame instead of sleeping.
+//!
+//! Hosts also report the input they push (from the user or injected) to an
+//! [input tap](AutomationPort::tap_on) when one is installed — the recorder
+//! of dev control uses it.
 //!
 //! The feature is off by default: release builds that do not name it carry
 //! none of this code.
 
-use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Condvar, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use uzor::a11y::A11yTree;
@@ -67,6 +78,15 @@ pub enum AutoCmd {
     },
     /// The app's own state report ([`App::automation_state`]).
     AppState,
+    /// The host's painted-frame counter, now (forces nothing).
+    Frames,
+    /// Answer once the host has painted a frame past `after` (its frame
+    /// counter is above it). Idle hosts paint nothing: callers bound the
+    /// wait with their own timeout.
+    Frame {
+        /// The last frame the caller saw.
+        after: u64,
+    },
 }
 
 /// One open window.
@@ -132,6 +152,11 @@ pub enum AutoReply {
     Shot(AutoShot),
     /// The app's state report (`None`: the app reports nothing).
     State(Option<String>),
+    /// The painted-frame counter (for [`AutoCmd::Frames`] / [`AutoCmd::Frame`]).
+    Frame {
+        /// Frames painted so far.
+        frame: u64,
+    },
     /// The command failed.
     Error(AutoError),
 }
@@ -179,7 +204,206 @@ impl core::fmt::Display for AutoError {
 impl std::error::Error for AutoError {}
 
 /// One queued request and where its answer goes.
-pub type AutoJob = (AutoCmd, SyncSender<AutoReply>);
+pub type AutoJob = (AutoCmd, AutoReplyTx);
+
+// ── Reply slot ───────────────────────────────────────────────────────────────
+
+#[derive(Default)]
+struct SlotState {
+    reply: Option<AutoReply>,
+    done: bool,
+    waker: Option<std::task::Waker>,
+}
+
+#[derive(Default)]
+struct Slot {
+    state: Mutex<SlotState>,
+    cv: Condvar,
+}
+
+impl Slot {
+    fn lock(&self) -> std::sync::MutexGuard<'_, SlotState> {
+        self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn finish(&self, reply: Option<AutoReply>) {
+        let waker = {
+            let mut st = self.lock();
+            if st.done {
+                return;
+            }
+            st.done = true;
+            st.reply = reply;
+            st.waker.take()
+        };
+        self.cv.notify_all();
+        if let Some(w) = waker {
+            w.wake();
+        }
+    }
+}
+
+/// Where the host sends one answer (a one-shot slot a caller can block on
+/// or await). Dropping it unanswered tells the caller the host is gone.
+pub struct AutoReplyTx(Arc<Slot>);
+
+impl core::fmt::Debug for AutoReplyTx {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("AutoReplyTx")
+    }
+}
+
+impl AutoReplyTx {
+    /// Deliver the answer. `Err` gives it back when the caller stopped
+    /// waiting (timed out or dropped its future).
+    pub fn send(self, reply: AutoReply) -> Result<(), AutoReply> {
+        if self.is_abandoned() {
+            return Err(reply);
+        }
+        self.0.finish(Some(reply));
+        Ok(())
+    }
+
+    /// The caller no longer waits for this answer.
+    pub fn is_abandoned(&self) -> bool {
+        Arc::strong_count(&self.0) == 1
+    }
+}
+
+impl Drop for AutoReplyTx {
+    fn drop(&mut self) {
+        self.0.finish(None);
+    }
+}
+
+/// Milliseconds on a monotonic clock (`performance`-free on the web: the
+/// wall clock there, which is enough for timeouts).
+pub fn now_ms() -> f64 {
+    #[cfg(all(target_arch = "wasm32", feature = "web"))]
+    {
+        js_sys::Date::now()
+    }
+    #[cfg(not(all(target_arch = "wasm32", feature = "web")))]
+    {
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 1000.0
+    }
+}
+
+/// The answer to one [`AutomationClient::call_async`]: resolves with the
+/// host's reply, or `Timeout` once the deadline passes when polled (the
+/// web bridge polls every animation frame), or `Closed`.
+pub struct ReplyFuture {
+    slot: Option<Arc<Slot>>,
+    early: Option<AutoError>,
+    deadline_ms: f64,
+}
+
+impl ReplyFuture {
+    /// The deadline on the [`now_ms`] clock.
+    pub fn deadline_ms(&self) -> f64 {
+        self.deadline_ms
+    }
+}
+
+impl Future for ReplyFuture {
+    type Output = Result<AutoReply, AutoError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if let Some(e) = self.early.take() {
+            return Poll::Ready(Err(e));
+        }
+        let Some(slot) = self.slot.clone() else { return Poll::Ready(Err(AutoError::Closed)) };
+        let mut st = slot.lock();
+        if st.done {
+            let out = match st.reply.take() {
+                Some(AutoReply::Error(e)) => Err(e),
+                Some(r) => Ok(r),
+                None => Err(AutoError::Closed),
+            };
+            drop(st);
+            self.slot = None;
+            return Poll::Ready(out);
+        }
+        if now_ms() >= self.deadline_ms {
+            drop(st);
+            self.slot = None;
+            return Poll::Ready(Err(AutoError::Timeout));
+        }
+        st.waker = Some(cx.waker().clone());
+        Poll::Pending
+    }
+}
+
+/// Resolves once [`now_ms`] reaches a deadline (checked when polled; the
+/// native [`block_on`] polls every few milliseconds, the web bridge every
+/// animation frame).
+pub struct Delay(f64);
+
+impl Delay {
+    /// Ready after `ms` milliseconds.
+    pub fn ms(ms: f64) -> Self {
+        Self(now_ms() + ms.max(0.0))
+    }
+}
+
+impl Future for Delay {
+    type Output = ();
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        if now_ms() >= self.0 {
+            Poll::Ready(())
+        } else {
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    }
+}
+
+/// Run a future to completion on this thread (native): parks between polls,
+/// woken by replies, and re-polls every 2 ms for deadlines.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn block_on<F: Future>(fut: F) -> F::Output {
+    struct Unpark(std::thread::Thread);
+    impl std::task::Wake for Unpark {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = std::task::Waker::from(Arc::new(Unpark(std::thread::current())));
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = std::pin::pin!(fut);
+    loop {
+        if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+            return v;
+        }
+        std::thread::park_timeout(Duration::from_millis(2));
+    }
+}
+
+// ── Input tap ────────────────────────────────────────────────────────────────
+
+/// One input event a host pushed into the runtime, with the window's
+/// widgets at the last composed frame (for turning points into selectors).
+#[derive(Clone, Debug)]
+pub struct TapEvent {
+    /// The window.
+    pub window: WindowId,
+    /// The event as pushed.
+    pub event: InputEvent,
+    /// The window's tree (pointer presses, wheels, keys and IME commits only).
+    pub tree: Option<AutoTree>,
+}
+
+type TapFn = Box<dyn Fn(TapEvent) + Send + Sync>;
+
+#[derive(Default)]
+struct Tap {
+    on: AtomicBool,
+    sink: Mutex<Option<TapFn>>,
+}
 
 type WakeFn = Box<dyn Fn() + Send + Sync>;
 type WakeSlot = Arc<Mutex<Option<WakeFn>>>;
@@ -189,6 +413,7 @@ type WakeSlot = Arc<Mutex<Option<WakeFn>>>;
 pub struct AutomationClient {
     tx: Sender<AutoJob>,
     wake: WakeSlot,
+    tap: Arc<Tap>,
 }
 
 impl core::fmt::Debug for AutomationClient {
@@ -199,18 +424,31 @@ impl core::fmt::Debug for AutomationClient {
 
 impl AutomationClient {
     /// Queue a command, wake the host and wait up to `timeout` for its answer.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn call(&self, cmd: AutoCmd, timeout: Duration) -> Result<AutoReply, AutoError> {
-        let (tx, rx) = mpsc::sync_channel(1);
-        self.tx.send((cmd, tx)).map_err(|_| AutoError::Closed)?;
+        block_on(self.call_async(cmd, timeout))
+    }
+
+    /// Queue a command and wake the host; the future resolves with its
+    /// answer, or `Timeout` after `timeout`.
+    pub fn call_async(&self, cmd: AutoCmd, timeout: Duration) -> ReplyFuture {
+        let deadline_ms = now_ms() + timeout.as_secs_f64() * 1000.0;
+        let slot = Arc::new(Slot::default());
+        if self.tx.send((cmd, AutoReplyTx(Arc::clone(&slot)))).is_err() {
+            return ReplyFuture { slot: None, early: Some(AutoError::Closed), deadline_ms };
+        }
         if let Some(wake) = self.wake.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
             wake();
         }
-        match rx.recv_timeout(timeout) {
-            Ok(AutoReply::Error(e)) => Err(e),
-            Ok(r) => Ok(r),
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(AutoError::Timeout),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(AutoError::Closed),
-        }
+        ReplyFuture { slot: Some(slot), early: None, deadline_ms }
+    }
+
+    /// Install (or with `None` remove) the input tap; while on, the host
+    /// reports every input it pushes (see [`TapEvent`]).
+    pub fn set_tap(&self, sink: Option<Box<dyn Fn(TapEvent) + Send + Sync>>) {
+        let on = sink.is_some();
+        *self.tap.sink.lock().unwrap_or_else(|p| p.into_inner()) = sink;
+        self.tap.on.store(on, Ordering::SeqCst);
     }
 }
 
@@ -219,6 +457,7 @@ impl AutomationClient {
 pub struct AutomationPort {
     rx: Arc<Mutex<Receiver<AutoJob>>>,
     wake: WakeSlot,
+    tap: Arc<Tap>,
 }
 
 impl core::fmt::Debug for AutomationPort {
@@ -242,16 +481,104 @@ impl AutomationPort {
         }
         out
     }
+
+    /// An input tap is installed: hosts report pushed input through
+    /// [`tap_input`].
+    pub fn tap_on(&self) -> bool {
+        self.tap.on.load(Ordering::Relaxed)
+    }
+
+    fn tap_send(&self, ev: TapEvent) {
+        if let Some(sink) = self.tap.sink.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+            sink(ev);
+        }
+    }
 }
 
 /// A connected client/port pair.
 pub fn channel() -> (AutomationClient, AutomationPort) {
     let (tx, rx) = mpsc::channel();
     let wake: WakeSlot = Arc::new(Mutex::new(None));
+    let tap = Arc::new(Tap::default());
     (
-        AutomationClient { tx, wake: Arc::clone(&wake) },
-        AutomationPort { rx: Arc::new(Mutex::new(rx)), wake },
+        AutomationClient { tx, wake: Arc::clone(&wake), tap: Arc::clone(&tap) },
+        AutomationPort { rx: Arc::new(Mutex::new(rx)), wake, tap },
     )
+}
+
+/// Report one pushed input event to the port's tap (a no-op unless a tap is
+/// on). Hosts call it for every event they push, user's or injected.
+pub(crate) fn tap_input<S: Spec, A: App<Spec = S>>(port: &AutomationPort, rt: &Runtime<S, A>, win: WindowId, event: &InputEvent) {
+    use crate::types::bus::{ImeInput, KeyState, PointerInput};
+    if !port.tap_on() {
+        return;
+    }
+    let wants_tree = match event {
+        InputEvent::Pointer(PointerInput::Down { .. } | PointerInput::Up { .. }) | InputEvent::Wheel(_) => true,
+        InputEvent::Key(k) => k.state == KeyState::Down,
+        InputEvent::Ime(ImeInput::Commit(_)) => true,
+        _ => false,
+    };
+    if !wants_tree {
+        return;
+    }
+    port.tap_send(TapEvent { window: win, event: event.clone(), tree: Some(tree(rt, win)) });
+}
+
+/// Painted-frame bookkeeping a host keeps for [`AutoCmd::Frames`] /
+/// [`AutoCmd::Frame`].
+#[derive(Default)]
+pub(crate) struct FrameWaits {
+    /// Frames painted so far.
+    pub frames: u64,
+    waiting: Vec<(u64, AutoReplyTx)>,
+}
+
+impl FrameWaits {
+    /// Answer `Frames` now, or `Frame` now or once a later frame is painted.
+    /// Returns the job back when it is neither.
+    pub fn take(&mut self, cmd: AutoCmd, reply: AutoReplyTx) -> Option<(AutoCmd, AutoReplyTx)> {
+        match cmd {
+            AutoCmd::Frames => {
+                let _ = reply.send(AutoReply::Frame { frame: self.frames });
+                None
+            }
+            AutoCmd::Frame { after } => {
+                if self.frames > after {
+                    let _ = reply.send(AutoReply::Frame { frame: self.frames });
+                } else {
+                    self.waiting.push((after, reply));
+                }
+                None
+            }
+            other => Some((other, reply)),
+        }
+    }
+
+    /// One more frame was painted.
+    pub fn painted(&mut self) {
+        self.frames += 1;
+        let frames = self.frames;
+        let mut keep = Vec::new();
+        for (after, tx) in std::mem::take(&mut self.waiting) {
+            if tx.is_abandoned() {
+                continue;
+            }
+            if frames > after {
+                let _ = tx.send(AutoReply::Frame { frame: frames });
+            } else {
+                keep.push((after, tx));
+            }
+        }
+        self.waiting = keep;
+    }
+
+    /// Someone waits for a frame (hosts that only paint on demand keep
+    /// time moving while this holds).
+    pub fn anyone_waiting(&mut self) -> bool {
+        self.waiting.retain(|(_, tx)| !tx.is_abandoned());
+        !self.waiting.is_empty()
+    }
 }
 
 // ── Host-side helpers shared by the native and headless hosts ────────────────
@@ -371,7 +698,7 @@ pub(crate) fn answer_plain<S: Spec, A: App<Spec = S>>(
             },
             None => AutoReply::Error(AutoError::NoWindow),
         },
-        AutoCmd::Screenshot { .. } | AutoCmd::Input { .. } => return None,
+        AutoCmd::Screenshot { .. } | AutoCmd::Input { .. } | AutoCmd::Frames | AutoCmd::Frame { .. } => return None,
     })
 }
 
