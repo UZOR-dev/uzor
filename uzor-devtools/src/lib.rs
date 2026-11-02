@@ -26,6 +26,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// The methods of protocol 1 (answered by `uzor_framework::dev_control::Dispatcher`).
 pub const METHODS: &[&str] = &[
     "ping", "windows", "dump-tree", "click", "hover", "focus", "type", "key", "scroll", "screenshot", "state",
+    "wait-for", "settle", "record", "replay",
 ];
 
 /// A transport-agnostic RPC core: one JSON request in, one JSON response

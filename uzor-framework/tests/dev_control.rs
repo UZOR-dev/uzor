@@ -374,3 +374,8 @@ fn live_headless_app() {
     }
     app.join().unwrap();
 }
+
+#[test]
+fn method_lists_agree_with_the_cli() {
+    assert_eq!(uzor_framework::dev_control::METHODS, uzor_devtools::METHODS);
+}
