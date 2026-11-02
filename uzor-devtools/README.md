@@ -5,7 +5,7 @@ loopback JSON RPC. Apps do not depend on this crate directly; they turn the
 whole thing on with one framework feature:
 
 ```toml
-uzor-framework = { version = "=1.5.23", features = ["native", "dev-control"] }
+uzor-framework = { version = "=1.5.24", features = ["native", "dev-control"] }
 ```
 
 ```rust
@@ -16,6 +16,11 @@ run_native(app, cfg, native)
 ```
 
 A build without `dev-control` contains none of it.
+
+`--headless` (implies `--dev`; or `MYAPP_DEV=headless`) runs the same app with
+no window and no display server: the framework's headless host ticks it in
+real time, screenshots are painted offscreen, and the RPC is the same. A
+build without the feature refuses `--headless` with an error.
 
 * `uzor_framework::dev_control::Dispatcher` (in the framework) is the RPC
   core: one JSON request in, one JSON response out, driving the app through
@@ -50,6 +55,48 @@ it.
 | `scroll` | `selector` or `x`,`y`; `dx?`, `dy`, `unit?` (`px`/`lines`) | `{x, y}` |
 | `screenshot` | `window?`, `source?` (`auto`/`window`/`offscreen`) | `{png_base64, width, height, source}` |
 | `state` | – | the app's whitelisted state report |
+| `wait-for` | `target` (selector) + `state?` (`present`/`gone`/`focused`/`enabled`), `value?`; or `cond` (a JSON subset of `state`); `timeout_ms?` (5000), `window?` | `{id?, checks, frame, waited_ms}` |
+| `settle` | `idle_ms?` (300), `timeout_ms?`, `window?` | `{frame, frames, checks, changes, waited_ms}` |
+| `record` | `on` (`true`/`false`/`"on"`/`"off"`); none: status | off: `{recording, events, jsonl}` |
+| `replay` | `events` (JSONL text or array), `speed?` (1; 0 = no pauses), `secrets?` | `{replayed, speed, ms}` |
+
+`wait-for` and `settle` are checked once per painted frame (and every 250 ms
+while nothing paints). `settle` waits until what the UI shows stopped
+changing: the accessibility tree (names, values, bounds, states), the widget
+rects, focus, hover and the state report. Pixel-only animation (a caret blink,
+a sprite) does not keep it from settling. Both fail with `timeout`.
+
+### Recording
+
+`record on` taps the input the app receives (from the OS or the RPC) and
+writes one JSON line per step, `{"t_ms", "method", "params"}`, with RPC
+methods and params, so a recording can be replayed or edited by hand:
+
+```jsonl
+{"t_ms":0,"method":"click","params":{"selector":"#lh-code"}}
+{"t_ms":420,"method":"type","params":{"into":"#lh-code","masked":true,"text":"<masked>"}}
+{"t_ms":1730,"method":"key","params":{"key":"Enter"}}
+```
+
+Clicks name the widget under the pointer (`selector`), coordinates only
+when there is none. Typing into one field and scrolls of one target merge
+into one line. Text typed into a masked field is never recorded: it is
+written as `"<masked>"`, and `replay` refuses such a line unless `secrets`
+supplies it (`{"lh-code": "…"}` by field id, or an array in order). A
+replayed step with a selector first waits (5 s) for its target. Recording
+and replay report progress in the event log (`record`, `record-state`,
+`replay` events).
+
+## In the browser
+
+With the feature on a wasm build, an app passes
+`WebOptions::default().dev_control(WebDevControl::new("my-app"))` to
+`run_web_with`. When the page URL has `?dev=1`, `window.__uzorDev` exposes the
+same RPC to page JavaScript (`await __uzorDev.call({method:"dump-tree"})`,
+`__uzorDev.events(since)`); an app can add aliases. Nothing listens on the
+network: tests reach it through whatever already drives the page (CDP
+`Runtime.evaluate`). Screenshots are offscreen. Ship production wasm without
+the feature.
 
 Selectors are `uzor::a11y::query` selectors: `#id`, `button[name="Save"]`,
 `textinput[name~=nick]`, `[id^=room-]:nth(0)`. `#id` also finds widgets
@@ -59,6 +106,11 @@ Errors are `{"ok":false,"error":{"code","message"}}` with stable English
 codes: `bad_request`, `unknown_method`, `bad_selector`, `not_found`,
 `ambiguous`, `not_focused`, `no_window`, `unsupported`, `timeout`, `host_closed`, `failed`.
 
-`GET /events?since=<seq>&wait_ms=<ms>` returns the calls after `seq`
-(`{seq, t_ms, type:"rpc", method, ok, error?}`), waiting up to `wait_ms`
-(at most 30 s) for the first one.
+`GET /events?since=<seq>&wait_ms=<ms>` returns the events after `seq`
+(calls: `{seq, t_ms, type:"rpc", method, ok, error?}`; recording and replay
+events too), waiting up to `wait_ms` (at most 30 s) for the first one.
+
+The CLI takes the new methods as `uzor-dev wait-for '#id' [state=gone]`,
+`uzor-dev settle 500`, `uzor-dev record on`, `uzor-dev record off --out
+s.jsonl`, `uzor-dev replay s.jsonl secrets=@secrets.json` (a `@PATH` value is
+read from the file, so secrets stay off the command line).

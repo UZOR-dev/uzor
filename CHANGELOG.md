@@ -2,6 +2,29 @@
 
 All crates in the workspace share one version.
 
+## 1.5.24
+
+### Dev control, stage 2 (uzor-framework feature `dev-control`)
+
+- `--headless` (implies `--dev`; or `<APP>_DEV=headless`): the app runs on the headless host,
+  ticked in real time, with no window and no display server; screenshots are offscreen and the
+  RPC is the same. `DevControlConfig::headless`; a build without the feature refuses it.
+  `host::run_headless` is the loop (feature `automation`).
+- `wait-for` (`target` selector with `state` present/gone/focused/enabled and `value`, or `cond`,
+  a JSON subset of the state report) and `settle` (`idle_ms`: the tree, widget rects, focus,
+  hover and state report unchanged), both checked once per painted frame; `timeout` on failure.
+- `record` / `replay`: input is recorded as JSONL of RPC calls (`{"t_ms","method","params"}`),
+  selectors preferred over coordinates, masked text written as `"<masked>"`; replay needs
+  `params.secrets` for such lines, waits for each selector, honours `speed`. Progress goes to
+  `GET /events`.
+- Browser bridge: `host::run_web_with` + `WebOptions::dev_control(WebDevControl)` installs
+  `window.__uzorDev` (`call(req) -> Promise`, `events(since)`, optional aliases) only when the page
+  URL has `?dev=1`; served once per RAF frame like the native host. No network listener.
+- The dev-control core (`Dispatcher`, `EventLog`) now builds for wasm too; the automation
+  client is async (`AutomationClient::call_async`, `ReplyFuture`); hosts count painted frames
+  (`AutoCmd::Frames` / `Frame`) and tap input for recording.
+- `uzor-dev`: the four methods with bare arguments, `@file` values, `record off --out FILE`.
+
 ## 1.5.23
 
 ### Dev control (uzor-framework feature `dev-control`, new crate uzor-devtools)
