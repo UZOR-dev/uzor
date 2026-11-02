@@ -9,7 +9,8 @@ All crates in the workspace share one version.
 - `--headless` (implies `--dev`; or `<APP>_DEV=headless`): the app runs on the headless host,
   ticked in real time, with no window and no display server; screenshots are offscreen and the
   RPC is the same. `DevControlConfig::headless`; a build without the feature refuses it.
-  `host::run_headless` is the loop (feature `automation`).
+  `host::run_headless` is the loop (feature `automation`); its frames paint into a 1x1 tiny-skia
+  context, so text measures with the real fonts (the same layout as the offscreen screenshots).
 - `wait-for` (`target` selector with `state` present/gone/focused/enabled and `value`, or `cond`,
   a JSON subset of the state report) and `settle` (`idle_ms`: the tree, widget rects, focus,
   hover and state report unchanged), both checked once per painted frame; `timeout` on failure.

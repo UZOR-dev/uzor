@@ -37,6 +37,10 @@ pub struct HeadlessHost<S: Spec, A: App<Spec = S>> {
     command_log: Vec<(WindowId, WindowCommand)>,
     #[cfg(feature = "automation")]
     auto: HeadlessAuto,
+    /// Paint target of `advance` instead of `ctx` (the live loop: real text
+    /// metrics, see [`run_headless`]).
+    #[cfg(feature = "automation")]
+    live_ctx: Option<Box<dyn uzor::render::RenderContext>>,
 }
 
 /// Automation bookkeeping of the headless host.
@@ -75,6 +79,8 @@ impl<S: Spec, A: App<Spec = S>> HeadlessHost<S, A> {
             command_log: Vec::new(),
             #[cfg(feature = "automation")]
             auto: HeadlessAuto::default(),
+            #[cfg(feature = "automation")]
+            live_ctx: None,
         };
         (host, handle)
     }
@@ -156,6 +162,12 @@ impl<S: Spec, A: App<Spec = S>> HeadlessHost<S, A> {
 
         let frames = std::mem::take(&mut out.frames);
         for req in &frames {
+            #[cfg(feature = "automation")]
+            match self.live_ctx.as_deref_mut() {
+                Some(ctx) => self.rt.paint(req, ctx),
+                None => self.rt.paint(req, &mut self.ctx),
+            }
+            #[cfg(not(feature = "automation"))]
             self.rt.paint(req, &mut self.ctx);
             #[cfg(feature = "automation")]
             {
@@ -334,6 +346,11 @@ pub fn run_headless<S: Spec, A: App<Spec = S>>(
     let s1 = Arc::clone(&sig);
     let (mut host, _handle) = HeadlessHost::with_waker(app, cfg, Waker::new(move || s1.wake()));
     host.dpr = if dpr > 0.0 { dpr } else { 1.0 };
+    // Frames paint into a 1x1 tiny-skia context: drawing is clipped away,
+    // but text measures with the real fonts, exactly as in the offscreen
+    // screenshots (the recorder's zero-wide text would leave layouts that
+    // apps cache, such as wrapped messages, collapsed).
+    host.live_ctx = Some(Box::new(uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1, 1, host.dpr)));
     let s2 = Arc::clone(&sig);
     port.set_waker(move || s2.wake());
     let start = Instant::now();
