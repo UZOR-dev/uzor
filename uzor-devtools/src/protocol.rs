@@ -33,6 +33,8 @@ pub const METHODS: &[&str] = &[
 const EVENT_CAP: usize = 1024;
 /// How long one host round trip may take.
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long `focus` / `type` wait for the clicked widget to take the focus.
+const FOCUS_WAIT: Duration = Duration::from_secs(2);
 
 /// An RPC failure: a stable code and an English message.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -285,19 +287,34 @@ impl Dispatcher {
         if p.get("selector").and_then(Value::as_str).is_none() {
             return Err(RpcError::bad("give \"selector\""));
         }
+        let (win, id) = self.click_and_focus(p)?;
+        Ok(json!({"id": id, "window": win.map(|w| w.get()), "focused": true}))
+    }
+
+    /// Click the selector's widget and wait until it holds the focus. Apps may move the focus
+    /// a frame or two after the click (a focus command), so this polls with empty input turns.
+    fn click_and_focus(&self, p: &Value) -> R<(Option<WindowId>, String)> {
         let (win, id, _) = self.target(p)?;
+        let id = id.unwrap_or_default();
         self.click(p)?;
-        let t = self.tree(win)?;
-        let focused = t.focused.as_ref().map(|f| f.as_str()) == id.as_deref();
-        Ok(json!({"id": id, "focused": focused}))
+        let deadline = Instant::now() + FOCUS_WAIT;
+        loop {
+            let t = self.tree(win)?;
+            if t.focused.as_ref().map(|f| f.as_str()) == Some(id.as_str()) {
+                return Ok((win, id));
+            }
+            if Instant::now() >= deadline {
+                return Err(RpcError::new("not_focused", format!("'{id}' did not take the focus after a click")));
+            }
+            std::thread::sleep(Duration::from_millis(16));
+            self.input(win, vec![])?;
+        }
     }
 
     fn type_text(&self, p: &Value) -> R<Value> {
         let text = p.get("text").and_then(Value::as_str).ok_or_else(|| RpcError::bad("give \"text\""))?;
         let win = if p.get("selector").is_some() {
-            let (win, _, _) = self.target(p)?;
-            self.click(p)?;
-            win
+            self.click_and_focus(p)?.0
         } else {
             window_param(p)?
         };

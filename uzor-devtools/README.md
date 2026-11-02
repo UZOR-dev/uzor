@@ -26,8 +26,8 @@ should not link it.
 | `dump-tree` | `window?`, `widgets?` | accessibility nodes (+ every registered widget) |
 | `click` | `selector` or `x`,`y`; `button?`, `count?` | `{id?, x, y}` |
 | `hover` | `selector` or `x`,`y` | `{id?, x, y}` |
-| `focus` | `selector` | `{id, focused}` |
-| `type` | `text`, `selector?` | `{chars}` |
+| `focus` | `selector` (clicks it, waits until it holds the focus) | `{id, window, focused}` |
+| `type` | `text`, `selector?` (focused first, like `focus`), `ime?` (one IME commit) | `{chars}` |
 | `key` | `key` (e.g. `Enter`, `Ctrl+A`), `repeat?` | `{key}` |
 | `scroll` | `selector` or `x`,`y`; `dx?`, `dy`, `unit?` (`px`/`lines`) | `{x, y}` |
 | `screenshot` | `window?`, `source?` (`auto`/`window`/`offscreen`) | `{png_base64, width, height, source}` |
@@ -39,4 +39,8 @@ without an accessibility role.
 
 Errors are `{"ok":false,"error":{"code","message"}}` with stable English
 codes: `bad_request`, `unknown_method`, `bad_selector`, `not_found`,
-`ambiguous`, `no_window`, `unsupported`, `timeout`, `host_closed`, `failed`.
+`ambiguous`, `not_focused`, `no_window`, `unsupported`, `timeout`, `host_closed`, `failed`.
+
+`GET /events?since=<seq>&wait_ms=<ms>` returns the calls after `seq`
+(`{seq, t_ms, type:"rpc", method, ok, error?}`), waiting up to `wait_ms`
+(at most 30 s) for the first one.
