@@ -10,6 +10,8 @@ members = [
     "uzor-framework-macros",
     # App engine: kernel + single-writer engines + handle + hosts
     "uzor-framework",
+    # Dev-time remote control over the framework's automation port (loopback RPC + uzor-dev CLI)
+    "uzor-devtools",
     "uzor-window-web",
     "uzor-window-mobile",
     "uzor-tui",
@@ -120,6 +122,7 @@ uzor-window-web = { version = "1.5.22", path = "./uzor-window-web" }
 uzor-window-mobile = { version = "1.5.22", path = "./uzor-window-mobile" }
 uzor-framework-macros = { version = "1.5.22", path = "./uzor-framework-macros" }
 uzor-framework = { version = "1.5.22", path = "./uzor-framework" }
+uzor-devtools = { version = "1.5.22", path = "./uzor-devtools" }
 uzor-graph = { version = "1.5.22", path = "./uzor-graph" }
 uzor-export = { version = "1.5.22", path = "./uzor-export" }
 uzor-figures = { version = "1.5.22", path = "./uzor-figures" }

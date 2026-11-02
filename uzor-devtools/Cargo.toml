@@ -1,0 +1,23 @@
+[package]
+name = "uzor-devtools"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Dev-time remote control for uzor apps: a loopback JSON RPC over the framework's automation port, and the uzor-dev CLI"
+readme = "README.md"
+
+[dependencies]
+uzor = { workspace = true }
+uzor-framework = { workspace = true, features = ["automation"] }
+serde_json = "1"
+base64 = "0.22"
+getrandom = "0.2"
+
+[[bin]]
+name = "uzor-dev"
+path = "src/bin/uzor-dev.rs"
