@@ -31,7 +31,7 @@ use uzor_devtools::server::http_call;
 
 fn usage() -> ExitCode {
     eprintln!("usage: uzor-dev [--app DIR] [--pid N] [--file PATH] <method> [ARGS...] [--out FILE]");
-    eprintln!("methods: {} events raw", uzor_devtools::protocol::METHODS.join(" "));
+    eprintln!("methods: {} events raw", uzor_devtools::METHODS.join(" "));
     ExitCode::from(2)
 }
 

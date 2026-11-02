@@ -1,4 +1,5 @@
-//! End to end over loopback: a headless app, the real server, HTTP calls.
+//! Dev control end to end over loopback (feature `dev-control`): a headless
+//! app, the real server, HTTP calls.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,9 +8,9 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 use uzor::layout::docking::DockPanel;
 use uzor::types::Rect;
-use uzor_devtools::protocol::Dispatcher;
-use uzor_devtools::server::{http_call, Server};
-use uzor_devtools::token::Token;
+use uzor_framework::dev_control::devtools::server::{http_call, Server};
+use uzor_framework::dev_control::devtools::token::Token;
+use uzor_framework::dev_control::Dispatcher;
 use uzor_framework::automation::{channel, AutomationPort};
 use uzor_framework::handle::{App, IntentCx, OverlayCx, PanelCx};
 use uzor_framework::types::command::{AppCommand, DockTarget, LayoutCmd};
@@ -203,4 +204,33 @@ fn malformed_requests() {
     assert_eq!(v["error"]["code"], "bad_request");
     let v: Value = serde_json::from_str(&d.handle_json(r#"{"method":"ping","params":[1]}"#)).unwrap();
     assert_eq!(v["error"]["code"], "bad_request");
+}
+
+/// `dev_control::start`: the discovery file (0600 in a 0700 directory) has
+/// the port and the token, and goes away with the endpoint.
+#[cfg(unix)]
+#[test]
+fn start_publishes_discovery() {
+    use std::os::unix::fs::PermissionsExt;
+    let rt = std::env::temp_dir().join(format!("uzor-devctl-test-{}", std::process::id()));
+    std::fs::create_dir_all(&rt).unwrap();
+    std::env::set_var("XDG_RUNTIME_DIR", &rt);
+    let (client, _port) = channel();
+    let d = uzor_framework::dev_control::start("uzor-test", "t", client).unwrap();
+    let file = d.discovery_path().to_path_buf();
+    assert!(file.starts_with(rt.join("uzor-test")));
+    assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(std::fs::metadata(file.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+    let info: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(info["port"].as_u64(), Some(u64::from(d.port())));
+    let token = info["token"].as_str().unwrap().to_string();
+    assert_eq!(token.len(), 64);
+    let host = format!("127.0.0.1:{}", d.port());
+    let auth = format!("Bearer {token}");
+    let (status, text) = http_call(d.port(), "POST", "/rpc", &[("Host", &host), ("Authorization", &auth)], r#"{"id":1,"method":"ping"}"#).unwrap();
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains(r#""app":"t""#), "{text}");
+    drop(d);
+    assert!(!file.exists());
+    let _ = std::fs::remove_dir_all(&rt);
 }

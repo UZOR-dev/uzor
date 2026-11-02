@@ -26,7 +26,7 @@ mod window;
 mod window_create;
 
 pub use app_handler::{
-    run_native, run_native_default, HostWake, NativeHost, NativeOptions, RenderPreference,
+    run_native, run_native_default, DevControlConfig, HostWake, NativeHost, NativeOptions, RenderPreference,
 };
 pub use clipboard::NativeClipboard;
 pub use executor::{execute, ExecutorFollowUp, OsWindow, RecordingWindow};

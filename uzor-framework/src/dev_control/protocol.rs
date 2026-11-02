@@ -6,8 +6,6 @@
 //! Codes and messages are plain English and stable; they are not
 //! translated.
 
-use std::collections::VecDeque;
-use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -15,22 +13,16 @@ use serde_json::{json, Map, Value};
 use uzor::a11y::{query::role_name, A11yNode, QueryError, Selector};
 use uzor::input::{ModifierKeys, MouseButton};
 use uzor::types::Rect;
-use uzor_framework::automation::{AutoCmd, AutoError, AutoReply, AutoTree, AutomationClient, ShotSource};
-use uzor_framework::types::ids::WindowId;
-use uzor_framework::{ImeInput, InputEvent, KeyInput, KeyState, Point, PointerInput, WheelDelta, WheelInput};
+use crate::automation::{AutoCmd, AutoError, AutoReply, AutoTree, AutomationClient, ShotSource};
+use crate::types::ids::WindowId;
+use crate::{ImeInput, InputEvent, KeyInput, KeyState, Point, PointerInput, WheelDelta, WheelInput};
 
-use crate::keys;
+use super::keys;
+use uzor_devtools::events::EventLog;
 
-/// Protocol revision reported by `ping` and the discovery file.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub use uzor_devtools::{METHODS, PROTOCOL_VERSION};
 
-/// Every method `handle_json` understands.
-pub const METHODS: &[&str] = &[
-    "ping", "windows", "dump-tree", "click", "hover", "focus", "type", "key", "scroll", "screenshot", "state",
-];
 
-/// Events kept for `events_since` (oldest dropped first).
-const EVENT_CAP: usize = 1024;
 /// How long one host round trip may take.
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long `focus` / `type` wait for the clicked widget to take the focus.
@@ -73,19 +65,12 @@ impl From<QueryError> for RpcError {
 
 type R<T> = Result<T, RpcError>;
 
-struct Events {
-    next: u64,
-    log: VecDeque<Value>,
-}
-
 /// The RPC core: decodes requests, drives the app through its automation
 /// client, encodes responses, and records an event per call.
 pub struct Dispatcher {
     app: String,
     client: AutomationClient,
-    events: Mutex<Events>,
-    events_cv: Condvar,
-    started: Instant,
+    events: EventLog,
 }
 
 impl Dispatcher {
@@ -94,9 +79,7 @@ impl Dispatcher {
         Self {
             app: app.to_string(),
             client,
-            events: Mutex::new(Events { next: 1, log: VecDeque::new() }),
-            events_cv: Condvar::new(),
-            started: Instant::now(),
+            events: EventLog::new(),
         }
     }
 
@@ -136,36 +119,13 @@ impl Dispatcher {
     }
 
     /// Append an event (`seq` and `t_ms` are filled in).
-    pub fn emit(&self, mut event: Value) {
-        let mut ev = self.events.lock().unwrap_or_else(|p| p.into_inner());
-        event["seq"] = json!(ev.next);
-        event["t_ms"] = json!(self.started.elapsed().as_millis() as u64);
-        ev.next += 1;
-        ev.log.push_back(event);
-        while ev.log.len() > EVENT_CAP {
-            ev.log.pop_front();
-        }
-        drop(ev);
-        self.events_cv.notify_all();
+    pub fn emit(&self, event: Value) {
+        self.events.emit(event);
     }
 
     /// Events with `seq > since`, waiting up to `wait` for the first one.
     pub fn events_since(&self, since: u64, wait: Duration) -> Vec<Value> {
-        let deadline = Instant::now() + wait;
-        let mut ev = self.events.lock().unwrap_or_else(|p| p.into_inner());
-        loop {
-            let out: Vec<Value> = ev
-                .log
-                .iter()
-                .filter(|e| e.get("seq").and_then(Value::as_u64).is_some_and(|s| s > since))
-                .cloned()
-                .collect();
-            let now = Instant::now();
-            if !out.is_empty() || now >= deadline {
-                return out;
-            }
-            ev = self.events_cv.wait_timeout(ev, deadline - now).unwrap_or_else(|p| p.into_inner()).0;
-        }
+        self.events.since(since, wait)
     }
 
     fn call(&self, method: &str, p: &Value) -> R<Value> {
@@ -448,4 +408,13 @@ fn node_json(n: &A11yNode) -> Value {
         v["children"] = Value::Array(n.children.iter().map(|c| json!(c.as_str())).collect());
     }
     v
+}
+
+impl uzor_devtools::Rpc for Dispatcher {
+    fn handle_json(&self, request: &str) -> String {
+        Dispatcher::handle_json(self, request)
+    }
+    fn events_since(&self, since: u64, wait: Duration) -> Vec<Value> {
+        Dispatcher::events_since(self, since, wait)
+    }
 }

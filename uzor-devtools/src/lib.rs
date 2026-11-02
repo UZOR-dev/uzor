@@ -1,36 +1,50 @@
-//! Dev-time remote control for uzor apps (see the crate README).
+//! The transport side of uzor's dev control (see the crate README): a
+//! loopback HTTP server with token access checks, the discovery file, the
+//! event log and the `uzor-dev` CLI.
 //!
-//! The core ([`Dispatcher`]) is transport-agnostic: one JSON request string
-//! in, one JSON response string out, plus an event log. [`server`] is a thin
-//! loopback HTTP wrapper over it; [`start`] wires the server, a fresh
-//! token and the discovery file for an app in one call.
+//! This crate does not know the framework. The RPC core lives in
+//! `uzor-framework` (feature `dev-control`, module `dev_control`) and plugs in
+//! through [`Rpc`]; apps turn it on with that one feature.
 
 #![deny(missing_docs)]
 
 pub mod discovery;
-pub mod keys;
-pub mod protocol;
+pub mod events;
 pub mod server;
 pub mod token;
 
 pub use discovery::{Discovery, DiscoveryInfo};
-pub use protocol::{Dispatcher, PROTOCOL_VERSION};
 pub use server::Server;
 pub use token::Token;
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use uzor_framework::automation::AutomationClient;
+/// Protocol revision reported by `ping` and the discovery file.
+pub const PROTOCOL_VERSION: u32 = 1;
 
-/// A running dev-control endpoint: the server plus its discovery file.
-/// Dropping it stops serving and removes the file.
-pub struct DevControl {
-    server: Server,
-    discovery: Discovery,
-    dispatcher: Arc<Dispatcher>,
+/// The methods of protocol 1 (answered by `uzor_framework::dev_control::Dispatcher`).
+pub const METHODS: &[&str] = &[
+    "ping", "windows", "dump-tree", "click", "hover", "focus", "type", "key", "scroll", "screenshot", "state",
+];
+
+/// A transport-agnostic RPC core: one JSON request in, one JSON response
+/// out, plus the event log a transport streams.
+pub trait Rpc: Send + Sync + 'static {
+    /// Answer one request (never panics on input).
+    fn handle_json(&self, request: &str) -> String;
+    /// Events with `seq > since`, waiting up to `wait` for the first one.
+    fn events_since(&self, since: u64, wait: Duration) -> Vec<serde_json::Value>;
 }
 
-impl DevControl {
+/// A running endpoint: the server plus its discovery file. Dropping it
+/// stops serving and removes the file.
+pub struct Endpoint {
+    server: Server,
+    discovery: Discovery,
+}
+
+impl Endpoint {
     /// The loopback port.
     pub fn port(&self) -> u16 {
         self.server.port()
@@ -40,20 +54,14 @@ impl DevControl {
     pub fn discovery_path(&self) -> &std::path::Path {
         self.discovery.path()
     }
-
-    /// The transport-agnostic core (for other transports in the same process).
-    pub fn dispatcher(&self) -> &Arc<Dispatcher> {
-        &self.dispatcher
-    }
 }
 
-/// Start serving `client` on `127.0.0.1:<random port>` with a fresh token
+/// Serve `rpc` on `127.0.0.1:<random port>` behind a fresh 32-byte token
 /// and publish the discovery file under the app directory `app_dir`
-/// (e.g. `"hatchery-hq"`). `app` names the app in `ping`.
-pub fn start(app_dir: &str, app: &str, client: AutomationClient) -> std::io::Result<DevControl> {
+/// (e.g. `"hatchery-hq"`). `app` names the app in the file.
+pub fn serve(app_dir: &str, app: &str, rpc: Arc<dyn Rpc>) -> std::io::Result<Endpoint> {
     let token = Token::generate()?;
-    let dispatcher = Arc::new(Dispatcher::new(app, client));
-    let server = Server::start(Arc::clone(&dispatcher), token.clone())?;
+    let server = Server::start(rpc, token.clone())?;
     let info = DiscoveryInfo {
         app: app.to_string(),
         pid: std::process::id(),
@@ -62,5 +70,5 @@ pub fn start(app_dir: &str, app: &str, client: AutomationClient) -> std::io::Res
         protocol: PROTOCOL_VERSION,
     };
     let discovery = Discovery::publish(app_dir, &info)?;
-    Ok(DevControl { server, discovery, dispatcher })
+    Ok(Endpoint { server, discovery })
 }

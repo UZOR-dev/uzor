@@ -46,6 +46,8 @@
 
 #[cfg(feature = "automation")]
 pub mod automation;
+#[cfg(all(feature = "dev-control", not(target_arch = "wasm32")))]
+pub mod dev_control;
 pub(crate) mod engine;
 pub mod flex;
 pub mod handle;

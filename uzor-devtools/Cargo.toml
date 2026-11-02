@@ -8,12 +8,10 @@ repository.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Dev-time remote control for uzor apps: a loopback JSON RPC over the framework's automation port, and the uzor-dev CLI"
+description = "Transport for uzor's dev control: loopback HTTP with token checks, the discovery file, the event log and the uzor-dev CLI (apps enable it with uzor-framework's dev-control feature)"
 readme = "README.md"
 
 [dependencies]
-uzor = { workspace = true }
-uzor-framework = { workspace = true, features = ["automation"] }
 serde_json = "1"
 base64 = "0.22"
 getrandom = "0.2"

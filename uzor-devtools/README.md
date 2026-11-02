@@ -1,21 +1,39 @@
 # uzor-devtools
 
-Dev-time remote control for apps on `uzor-framework`. It is meant for
-debug and test builds behind an app's own opt-in feature; release builds
-should not link it.
+The transport of uzor's dev control: another process drives a uzor app over a
+loopback JSON RPC. Apps do not depend on this crate directly; they turn the
+whole thing on with one framework feature:
 
-* `Dispatcher` — the transport-agnostic core: one JSON request in, one
-  JSON response out, plus an event log a transport can stream. It talks to
-  the app through `uzor_framework::automation` (feature `automation`).
-* `server` — a std-only HTTP/1.1 wrapper bound to `127.0.0.1` on a random
+```toml
+uzor-framework = { version = "=1.5.23", features = ["native", "dev-control"] }
+```
+
+```rust
+let mut native = NativeOptions::default();
+// `--dev` or MYAPP_DEV=1; without the feature the option is ignored (one stderr line).
+native.dev_control = DevControlConfig::from_args_env("my-app", "my-app", "MYAPP_DEV");
+run_native(app, cfg, native)
+```
+
+A build without `dev-control` contains none of it.
+
+* `uzor_framework::dev_control::Dispatcher` (in the framework) is the RPC
+  core: one JSON request in, one JSON response out, driving the app through
+  the framework's automation port. It plugs into this crate through the `Rpc` trait.
+* `server` — a std-only HTTP/1.1 server bound to `127.0.0.1` on a random
   port: `POST /rpc`, `GET /events`. A request needs the exact loopback
-  `Host`, must not carry an `Origin` (browsers are refused with 403), and
-  needs `Authorization: Bearer <token>` (401 otherwise, compared in
-  constant time). The 32-byte token is random per run.
+  `Host` (421 otherwise), must not carry an `Origin` (browsers are refused
+  with 403), and needs `Authorization: Bearer <token>` (401 otherwise,
+  compared in constant time). The 32-byte token is random per run.
 * `discovery` — the port and token are published in a `0600` file
   `dev-<pid>.json` under `$XDG_RUNTIME_DIR/<app>/` (else
-  `~/.config/<app>/`), removed when the server stops.
-* `uzor-dev` — a CLI that finds that file and calls the RPC.
+  `~/.config/<app>/`, directory `0700`), removed when the server stops.
+* `events` — the bounded event log `GET /events` long-polls.
+* `uzor-dev` — a CLI that finds that file and calls the RPC
+  (`cargo install uzor-devtools`, then `uzor-dev --app my-app ping`).
+
+This crate does not depend on the framework, so the framework can depend on
+it.
 
 ## Methods
 

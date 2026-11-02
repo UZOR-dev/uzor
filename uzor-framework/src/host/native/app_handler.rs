@@ -611,6 +611,33 @@ pub struct RenderPreference {
     pub backend: Option<RenderBackend>,
 }
 
+/// Dev control at run time: which app directory the discovery file goes in
+/// and the app name `ping` reports. Served only by a build with the
+/// `dev-control` feature; any other build prints one line and ignores it, so
+/// an app sets it without a `cfg`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DevControlConfig {
+    /// Directory name under `$XDG_RUNTIME_DIR` (else `~/.config`), e.g. `"hatchery-hq"`.
+    pub app_dir: String,
+    /// App name in `ping` and the discovery file.
+    pub app: String,
+}
+
+impl DevControlConfig {
+    /// A config for `app_dir` / `app`.
+    pub fn new(app_dir: &str, app: &str) -> Self {
+        Self { app_dir: app_dir.to_string(), app: app.to_string() }
+    }
+
+    /// `Some` when the process was started with `--dev`, or `env_var` is set
+    /// to anything but empty or `0` (e.g. `HQ_DEV=1`).
+    pub fn from_args_env(app_dir: &str, app: &str, env_var: &str) -> Option<Self> {
+        let flag = std::env::args().skip(1).any(|a| a == "--dev");
+        let env = std::env::var(env_var).is_ok_and(|v| !v.is_empty() && v != "0");
+        (flag || env).then(|| Self::new(app_dir, app))
+    }
+}
+
 /// Extra native-only startup options (design §6.1).
 #[derive(Clone, Debug, Default)]
 pub struct NativeOptions {
@@ -624,6 +651,8 @@ pub struct NativeOptions {
     /// [`crate::automation::channel`].
     #[cfg(feature = "automation")]
     pub automation: Option<crate::automation::AutomationPort>,
+    /// Serve dev control (feature `dev-control`; ignored without it).
+    pub dev_control: Option<DevControlConfig>,
 }
 
 /// Run the app on the native host (feature `native`).
@@ -640,6 +669,31 @@ where
         .single_instance
         .as_deref()
         .map(single_instance::single_instance);
+
+    #[cfg(feature = "dev-control")]
+    let mut native = native;
+    // Kept for the whole run: dropping it stops the server and removes the
+    // discovery file.
+    #[cfg(feature = "dev-control")]
+    let _dev = native.dev_control.clone().and_then(|c| {
+        let (client, port) = crate::automation::channel();
+        match crate::dev_control::start(&c.app_dir, &c.app, client) {
+            Ok(d) => {
+                // The token is only in the discovery file, never printed.
+                eprintln!("{}: dev control on 127.0.0.1:{} (discovery file {})", c.app, d.port(), d.discovery_path().display());
+                native.automation = Some(port);
+                Some(d)
+            }
+            Err(e) => {
+                eprintln!("{}: dev control did not start: {e}", c.app);
+                None
+            }
+        }
+    });
+    #[cfg(not(feature = "dev-control"))]
+    if let Some(c) = native.dev_control.as_ref() {
+        eprintln!("{}: this build cannot be driven remotely; ignored", c.app);
+    }
 
     let event_loop = EventLoop::<HostWake>::with_user_event()
         .build()

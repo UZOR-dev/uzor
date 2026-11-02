@@ -80,8 +80,15 @@ web-sys = { version = "0.3", optional = true, features = [
 ] }
 uzor-render-canvas2d = { workspace = true, optional = true }
 uzor-window-web = { workspace = true, optional = true }
-# Observe monitor example only. The framework itself does not parse JSON.
+# Observe monitor example, and the dev-control RPC (feature `dev-control`).
 serde_json = { version = "1", optional = true }
+# Dev control (feature `dev-control`): screenshots as base64 in the RPC.
+base64 = { version = "0.22", optional = true }
+
+# Dev control transport (feature `dev-control`): loopback HTTP, token, discovery
+# file. Native only; uzor-devtools does not depend on the framework.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+uzor-devtools = { workspace = true, optional = true }
 
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 arboard = { version = "3", optional = true }
@@ -133,6 +140,11 @@ web = [
 # accessibility tree, injected input and screenshots. Off by default; a build
 # without it carries none of that code.
 automation = ["dep:uzor-render-tiny-skia", "dep:png"]
+# Dev control: the one switch a builder turns on (`features = ["dev-control"]`).
+# The native host then serves `NativeOptions::dev_control` on loopback (see
+# `dev_control`); the RPC core, uzor-devtools and the automation port come with
+# it. Without it none of that is compiled. Native only (on wasm it is inert).
+dev-control = ["automation", "dep:uzor-devtools", "dep:serde_json", "dep:base64"]
 # HQ observe monitor (`examples/monitor`). Not part of the framework surface.
 monitor = ["web", "dep:serde_json"]
 
@@ -147,6 +159,10 @@ tiny-skia = "0.11"
 uzor = { workspace = true, features = ["testing", "flow-flex", "flow-grid"] }
 
 # Pixel goldens of the demo window, chrome strip included.
+[[test]]
+name = "dev_control"
+required-features = ["dev-control"]
+
 [[test]]
 name = "f11_demo"
 required-features = ["chrome"]

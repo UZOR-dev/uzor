@@ -5,7 +5,7 @@
 //! * any `Origin` header is refused with 403 (no browser page may call it);
 //! * `Authorization: Bearer <token>` is required (401), compared in constant time.
 //!
-//! Routes: `POST /rpc` (body: one request, see [`crate::protocol`]) and
+//! Routes: `POST /rpc` (body: one request, answered by an [`Rpc`]) and
 //! `GET /events?since=<seq>&wait_ms=<ms>` (a JSON array, long-polled).
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::protocol::Dispatcher;
+use crate::Rpc;
 use crate::token::Token;
 
 const MAX_HEADER: usize = 16 * 1024;
@@ -31,7 +31,7 @@ pub struct Server {
 
 impl Server {
     /// Bind `127.0.0.1:0` and serve `dispatcher` behind `token`.
-    pub fn start(dispatcher: Arc<Dispatcher>, token: Token) -> std::io::Result<Self> {
+    pub fn start(dispatcher: Arc<dyn Rpc>, token: Token) -> std::io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         let port = listener.local_addr()?.port();
         let stop = Arc::new(AtomicBool::new(false));
@@ -47,7 +47,7 @@ impl Server {
                 let t = Arc::clone(&token);
                 let _ = std::thread::Builder::new()
                     .name("uzor-devtools-conn".into())
-                    .spawn(move || serve(stream, &d, &t, port));
+                    .spawn(move || serve(stream, &*d, &t, port));
             }
         })?;
         Ok(Self { port, stop, accept: Some(accept) })
@@ -153,7 +153,7 @@ pub fn check_access(req: &Request, token: &Token, port: u16) -> Result<(), (u16,
     }
 }
 
-fn serve(stream: TcpStream, d: &Dispatcher, token: &Token, port: u16) {
+fn serve(stream: TcpStream, d: &dyn Rpc, token: &Token, port: u16) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
     let (status, body) = match read_request(&stream) {
@@ -190,7 +190,7 @@ fn serve(stream: TcpStream, d: &Dispatcher, token: &Token, port: u16) {
     let _ = s.shutdown(Shutdown::Both);
 }
 
-fn route(req: &Request, d: &Dispatcher) -> (u16, String) {
+fn route(req: &Request, d: &dyn Rpc) -> (u16, String) {
     let (path, query) = req.target.split_once('?').unwrap_or((req.target.as_str(), ""));
     match (req.method.as_str(), path) {
         ("POST", "/rpc") => match std::str::from_utf8(&req.body) {
