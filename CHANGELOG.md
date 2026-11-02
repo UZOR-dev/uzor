@@ -2,6 +2,47 @@
 
 All crates in the workspace share one version.
 
+## 1.5.23
+
+### Dev control (uzor-framework feature `dev-control`, new crate uzor-devtools)
+
+- One switch: `uzor-framework = { version = "=1.5.23", features = ["dev-control"] }`. At run
+  time an app sets `NativeOptions::dev_control` (`DevControlConfig::from_args_env(app_dir, app,
+  "MYAPP_DEV")` is `Some` for `--dev` or `MYAPP_DEV=1`); the native host then serves a loopback
+  JSON RPC for the whole run. A build without the feature compiles none of it, and a config set
+  there is ignored with one line on stderr, so apps need no `cfg`.
+- Methods: `ping`, `windows`, `dump-tree`, `click`, `hover`, `focus`, `type`, `key`, `scroll`,
+  `screenshot`, `state`; `GET /events` streams the calls. Stable English error codes.
+  `focus` and `type` with a selector wait until the clicked widget holds the focus.
+- Access: `127.0.0.1` on a random port; exact loopback `Host` (421), no `Origin` (403), a
+  32-byte bearer token compared in constant time (401). The token is only in the discovery file
+  `$XDG_RUNTIME_DIR/<app>/dev-<pid>.json` (else `~/.config/<app>/`), directory 0700, file 0600,
+  removed when the app exits.
+- `uzor-devtools`: the transport (server, token, discovery file, event log, the `Rpc` trait) and
+  the `uzor-dev` CLI. It does not depend on the framework; the RPC core is
+  `uzor_framework::dev_control::Dispatcher`, the transport is re-exported as
+  `dev_control::devtools`.
+
+### Automation port (uzor-framework feature `automation`)
+
+- `automation::channel()` gives a tool thread an `AutomationClient` (windows, tree, injected
+  pointer / key / wheel / IME input, screenshots, app state); the native host answers on its loop
+  thread after the frame paints, `HeadlessHost::serve_automation` does the same for tests.
+- `App::automation_state` lets an app report a whitelisted state (never secrets).
+- Screenshots: the presented window read back (GPU, or the software surface through
+  `WindowRenderState::software_readback`), or an offscreen tiny-skia render
+  (`ShotSource::{Auto, Window, Offscreen}`).
+- `dev-control` turns this feature on; it is internal plumbing for most apps.
+
+### Accessibility (uzor)
+
+- Nodes carry `value` (a text field's text, bullets when masked), `masked`, `disabled` and the
+  widget `kind`. `set_a11y_masked` / `set_a11y_disabled` on the coordinator; a kit field drawn
+  masked marks itself secret.
+- `a11y::query`: CSS-like selectors (`#id`, role, `[attr=|~=|^=value]` on id, name, value, kind,
+  role, focused, disabled, masked, `:nth(n)`) resolving to exactly one node, with not-found and
+  ambiguous errors.
+
 ## 1.5.22
 
 ### Examples (uzor-examples, uzor-framework/examples)
