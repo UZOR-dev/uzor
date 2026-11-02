@@ -69,6 +69,14 @@ pub trait App: 'static {
     /// The runtime is shutting down (last window closed or
     /// `AppCommand::Shutdown`).
     fn shutdown(&mut self) {}
+
+    /// A JSON report of the app's own state for automation tools (feature
+    /// `automation`). Must never carry secrets (tokens, keys, handles):
+    /// report a whitelist of fields. `None` = the app reports nothing.
+    #[cfg(feature = "automation")]
+    fn automation_state(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Startup door: commands only.

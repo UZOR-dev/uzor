@@ -160,6 +160,38 @@ impl<S: Spec, A: App<Spec = S>> HeadlessHost<S, A> {
         Some((vp.width, vp.height))
     }
 
+    /// Answer every job queued on `port` (feature `automation`): input is
+    /// fed and followed by one `advance(dt)` before its reply; screenshots
+    /// are offscreen (there is no window to read back).
+    #[cfg(feature = "automation")]
+    pub fn serve_automation(&mut self, port: &crate::automation::AutomationPort, dt: f64) {
+        use crate::automation::{answer_plain, resolve_window, AutoCmd, AutoReply, ShotSource};
+        for (cmd, reply) in port.drain() {
+            let dpr = self.dpr;
+            let answer = match &cmd {
+                AutoCmd::Input { win, events } => match resolve_window(&self.rt, *win) {
+                    Some(w) => {
+                        for ev in events.clone() {
+                            self.input(w, ev);
+                        }
+                        self.advance(dt);
+                        AutoReply::InputDone { window: w, frame: (self.now.get() * 1000.0).round() as u64 }
+                    }
+                    None => AutoReply::Error(crate::automation::AutoError::NoWindow),
+                },
+                AutoCmd::Screenshot { win, .. } => {
+                    let c = AutoCmd::Screenshot { win: *win, source: ShotSource::Offscreen };
+                    answer_plain(&mut self.rt, &c, &|_| dpr, &|_| 0xffffffff).unwrap_or(AutoReply::Error(
+                        crate::automation::AutoError::Unsupported("screenshot"),
+                    ))
+                }
+                other => answer_plain(&mut self.rt, other, &|_| dpr, &|_| 0xffffffff)
+                    .unwrap_or(AutoReply::Error(crate::automation::AutoError::Unsupported("command"))),
+            };
+            let _ = reply.send(answer);
+        }
+    }
+
     /// The last published snapshot.
     pub fn snapshot(&self) -> Arc<VisualSnapshot<S>> {
         self.rt.snapshot()

@@ -44,6 +44,8 @@
 
 #![deny(missing_docs)]
 
+#[cfg(feature = "automation")]
+pub mod automation;
 pub(crate) mod engine;
 pub mod flex;
 pub mod handle;

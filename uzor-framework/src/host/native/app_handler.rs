@@ -37,6 +37,9 @@ use crate::{App, Spec, Waker};
 pub enum HostWake {
     /// A handle dispatch arrived; run a tick.
     Wake,
+    /// An automation command is queued (feature `automation`).
+    #[cfg(feature = "automation")]
+    Automation,
 }
 
 /// Native host: one runtime, a map of OS windows, a render hub.
@@ -55,6 +58,24 @@ pub struct NativeHost<S: Spec, A: App<Spec = S>> {
     exit: bool,
     /// Cursor locked: device mouse motion becomes RawDelta.
     raw_delta: bool,
+    /// Automation port and its in-flight work (feature `automation`).
+    #[cfg(feature = "automation")]
+    auto: AutoState,
+}
+
+/// The native host's automation bookkeeping.
+#[cfg(feature = "automation")]
+#[derive(Default)]
+struct AutoState {
+    port: Option<crate::automation::AutomationPort>,
+    /// Input replies owed after this loop turn's paint.
+    after_paint: Vec<(std::sync::mpsc::SyncSender<crate::automation::AutoReply>, WindowId)>,
+    /// Queries answered after this loop turn's paint (they read the new frame).
+    queries: Vec<crate::automation::AutoJob>,
+    /// Frames painted since start.
+    frames: u64,
+    /// Last clear colour per window (offscreen screenshots reuse it).
+    background: HashMap<WindowId, u32>,
 }
 
 impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
@@ -225,6 +246,89 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
         );
     }
 
+    /// Take queued automation jobs: input goes into this turn's tick, its
+    /// reply and every query wait for the paint.
+    #[cfg(feature = "automation")]
+    fn automation_intake(&mut self) {
+        use crate::automation::{resolve_window, AutoCmd, AutoError, AutoReply};
+        let Some(port) = self.auto.port.clone() else {
+            return;
+        };
+        for (cmd, reply) in port.drain() {
+            match cmd {
+                AutoCmd::Input { win, events } => match resolve_window(&self.runtime, win) {
+                    Some(w) => {
+                        for ev in events {
+                            self.push(w, ev);
+                        }
+                        self.auto.after_paint.push((reply, w));
+                    }
+                    None => {
+                        let _ = reply.send(AutoReply::Error(AutoError::NoWindow));
+                    }
+                },
+                other => self.auto.queries.push((other, reply)),
+            }
+        }
+    }
+
+    /// Answer what waited for this turn's paint. True when work is left
+    /// that needs another turn right away.
+    #[cfg(feature = "automation")]
+    fn automation_answer(&mut self) -> bool {
+        use crate::automation::{answer_plain, resolve_window, AutoCmd, AutoError, AutoReply, ShotSource};
+        let frame = self.auto.frames;
+        for (reply, window) in std::mem::take(&mut self.auto.after_paint) {
+            let _ = reply.send(AutoReply::InputDone { window, frame });
+        }
+        let dprs: HashMap<WindowId, f64> = self
+            .by_id
+            .iter()
+            .filter_map(|(id, wid)| self.windows.get(wid).map(|nw| (*id, nw.window.scale_factor())))
+            .collect();
+        let backgrounds = self.auto.background.clone();
+        let dpr_of = |w: WindowId| dprs.get(&w).copied().unwrap_or(1.0);
+        let bg_of = |w: WindowId| backgrounds.get(&w).copied().unwrap_or(0xffffffff);
+        for (cmd, reply) in std::mem::take(&mut self.auto.queries) {
+            let answer = match cmd {
+                AutoCmd::Screenshot { win, source } if source != ShotSource::Offscreen => {
+                    match resolve_window(&self.runtime, win) {
+                        None => AutoReply::Error(AutoError::NoWindow),
+                        Some(w) => match (self.window_readback(w), source) {
+                            (Some(shot), _) => AutoReply::Shot(shot),
+                            (None, ShotSource::Window) => {
+                                AutoReply::Error(AutoError::Unsupported("window readback on this surface"))
+                            }
+                            (None, _) => {
+                                let c = AutoCmd::Screenshot { win: Some(w), source: ShotSource::Offscreen };
+                                answer_plain(&mut self.runtime, &c, &dpr_of, &bg_of)
+                                    .unwrap_or(AutoReply::Error(AutoError::Unsupported("screenshot")))
+                            }
+                        },
+                    }
+                }
+                other => answer_plain(&mut self.runtime, &other, &dpr_of, &bg_of)
+                    .unwrap_or(AutoReply::Error(AutoError::Unsupported("command"))),
+            };
+            let _ = reply.send(answer);
+        }
+        false
+    }
+
+    /// What window `id` last presented, read back from its surface.
+    #[cfg(feature = "automation")]
+    fn window_readback(&mut self, id: WindowId) -> Option<crate::automation::AutoShot> {
+        let wid = *self.by_id.get(&id)?;
+        let nw = self.windows.get_mut(&wid)?;
+        let (pixels, w, h) = if let Some((device, queue, surface)) = nw.render_state.gpu_handles() {
+            capture_screenshot(device, queue, surface, None)?
+        } else {
+            nw.render_state.software_readback()?
+        };
+        let png = encode_png(&pixels, w, h)?;
+        Some(crate::automation::AutoShot { window: id, png, width: w, height: h, source: "window" })
+    }
+
     fn drain_tray(&mut self) {
         let mut events = Vec::new();
         if let Some(tray) = self.tray.as_ref() {
@@ -256,6 +360,11 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
             let mut req = req;
             if nw.transparent {
                 req.background = 0;
+            }
+            #[cfg(feature = "automation")]
+            {
+                self.auto.frames += 1;
+                self.auto.background.insert(req.window, req.background);
             }
             if let Err(e) = paint_frame(&mut self.runtime, &mut self.hub, &mut nw.render_state, &req)
             {
@@ -387,6 +496,8 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         self.drain_tray();
+        #[cfg(feature = "automation")]
+        self.automation_intake();
         let (moved, dnd) = dnd_moves(self.windows.values_mut());
         for (id, p) in moved {
             self.push(id, InputEvent::Pointer(PointerInput::Moved { pos: crate::Point::new(p.0, p.1), mods: Default::default() }));
@@ -412,6 +523,10 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
             eprintln!("[tick] frames {} wake {:?}", out.frames.len(), out.wake);
         }
         self.paint_due(out.frames);
+        #[cfg(feature = "automation")]
+        let auto_busy = self.automation_answer();
+        #[cfg(not(feature = "automation"))]
+        let auto_busy = false;
 
         if self.exit || self.runtime.should_exit() {
             el.exit();
@@ -420,7 +535,7 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
 
         // A paint that asked for another frame (or declared commands) must not
         // park the loop on the pre-paint wake.
-        let wake = if self.runtime.take_paint_wants_tick() { Wake::Immediate } else { out.wake };
+        let wake = if self.runtime.take_paint_wants_tick() || auto_busy { Wake::Immediate } else { out.wake };
         el.set_control_flow(match wake {
             Wake::Idle => ControlFlow::Wait,
             Wake::Immediate => ControlFlow::Poll,
@@ -505,6 +620,10 @@ pub struct NativeOptions {
     pub tray: Option<TraySpec>,
     /// Render backend preference.
     pub render: RenderPreference,
+    /// Serve this automation port (feature `automation`); see
+    /// [`crate::automation::channel`].
+    #[cfg(feature = "automation")]
+    pub automation: Option<crate::automation::AutomationPort>,
 }
 
 /// Run the app on the native host (feature `native`).
@@ -526,6 +645,13 @@ where
         .build()
         .map_err(|e| FrameworkError::Host(format!("event loop: {e}")))?;
     let proxy = event_loop.create_proxy();
+    #[cfg(feature = "automation")]
+    if let Some(port) = native.automation.as_ref() {
+        let proxy = proxy.clone();
+        port.set_waker(move || {
+            let _ = proxy.send_event(HostWake::Automation);
+        });
+    }
     let waker = Waker::new(move || {
         let _ = proxy.send_event(HostWake::Wake);
     });
@@ -545,6 +671,8 @@ where
         start: Instant::now(),
         exit: false,
         raw_delta: false,
+        #[cfg(feature = "automation")]
+        auto: AutoState { port: native.automation.clone(), ..Default::default() },
     };
 
     // The first tick drains Open commands into Spawn follow-ups. Run it

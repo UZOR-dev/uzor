@@ -858,6 +858,40 @@ impl WindowRenderState {
         }
     }
 
+    /// The pixels a software-presented window (`SurfaceMode::Software`, a
+    /// GPU-less machine) last showed, as RGBA8 with its size: TinySkia hands
+    /// its pixmap back, VelloCpu re-rasterises the frame it recorded. `None`
+    /// for GPU surfaces (use [`Self::gpu_handles`]) or other backends.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn software_readback(&mut self) -> Option<(Vec<u8>, u32, u32)> {
+        let SurfaceMode::Software { width, height, .. } = self.surface else {
+            return None;
+        };
+        if width == 0 || height == 0 {
+            return None;
+        }
+        match self.active {
+            #[cfg(feature = "tiny-skia")]
+            RenderBackend::TinySkia => {
+                let ctx = self.tiny_skia_ctx.as_ref()?;
+                (ctx.width() == width && ctx.height() == height && !ctx.pixels().is_empty())
+                    .then(|| (ctx.pixels().to_vec(), width, height))
+            }
+            #[cfg(feature = "vello-cpu")]
+            RenderBackend::VelloCpu => {
+                let ctx = self.vello_cpu_ctx.as_mut()?;
+                let mut rgba = vec![0u8; (width as usize) * (height as usize) * 4];
+                ctx.render_to_pixmap_rgba8(
+                    &mut rgba,
+                    width.min(u16::MAX as u32) as u16,
+                    height.min(u16::MAX as u32) as u16,
+                );
+                Some((rgba, width, height))
+            }
+            _ => None,
+        }
+    }
+
     /// Mutable variant of [`gpu_handles`] — returns the surface as
     /// `&mut` so callers can patch its texture (e.g. add COPY_SRC for
     /// screenshots).

@@ -226,6 +226,11 @@ impl<S: Spec, A: App<Spec = S>> Runtime<S, A> {
         self.kernel.a11y_tree(win)
     }
 
+    /// Every widget registered in `win`'s last composed frame.
+    pub fn widget_snapshot(&self, win: crate::types::ids::WindowId) -> Vec<uzor::input::core::WidgetInfo> {
+        self.kernel.widget_snapshot(win)
+    }
+
     /// The published revision.
     pub fn revision(&self) -> Revision {
         self.snap.load().revision

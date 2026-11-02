@@ -49,6 +49,11 @@ impl<S: Spec> Kernel<S> {
         t
     }
 
+    /// Every widget registered in `win`'s last composed frame.
+    pub(crate) fn widget_snapshot(&self, win: WindowId) -> Vec<uzor::input::core::WidgetInfo> {
+        self.input.view().coordinator(win).map(|c| c.widget_snapshot()).unwrap_or_default()
+    }
+
     /// Phases 5-6 for one window. `render` paints at the window's own
     /// scale; time comes from the runtime, never from a clock.
     pub(crate) fn compose(

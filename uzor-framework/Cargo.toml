@@ -32,6 +32,8 @@ winit = { version = "0.30", optional = true }
 uzor-window-desktop = { workspace = true, optional = true }
 uzor-render-hub = { workspace = true, optional = true }
 png = { version = "0.17", optional = true }
+# Offscreen screenshots for feature `automation`.
+uzor-render-tiny-skia = { workspace = true, optional = true }
 log = { version = "0.4", optional = true }
 # `SubmitParams::base_color` type (same as hub).
 color = { version = "0.3", optional = true }
@@ -127,6 +129,10 @@ web = [
     "dep:uzor-window-web",
     "dep:log",
 ]
+# Automation port (`automation`): a tool drives the app through the
+# accessibility tree, injected input and screenshots. Off by default; a build
+# without it carries none of that code.
+automation = ["dep:uzor-render-tiny-skia", "dep:png"]
 # HQ observe monitor (`examples/monitor`). Not part of the framework surface.
 monitor = ["web", "dep:serde_json"]
 
