@@ -7,6 +7,7 @@
 
 mod action;
 mod node;
+pub mod query;
 mod role;
 mod tree;
 
@@ -14,3 +15,4 @@ pub use action::A11yAction;
 pub use node::A11yNode;
 pub use role::A11yRole;
 pub use tree::A11yTree;
+pub use query::{query, query_all, QueryError, Selector};

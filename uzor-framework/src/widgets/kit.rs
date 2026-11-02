@@ -489,6 +489,9 @@ impl<'a> FieldBuilder<'a> {
                 coord.set_widget_parent(&id, p);
             }
             coord.set_a11y(&id, if name.is_empty() { placeholder } else { name }, None);
+            if masked {
+                coord.set_a11y_masked(&id);
+            }
             coord.set_default_layer(None);
             if let Some(t) = set {
                 let fields = coord.text_fields_mut();

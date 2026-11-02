@@ -18,6 +18,12 @@ pub struct A11yNode {
     pub checked: Option<bool>,
     pub value: Option<String>,
     pub disabled: bool,
+    /// The value is secret (password, token): `value` holds bullets, never
+    /// the text. Set from the field's config or [`crate::input::InputCoordinator::set_a11y_masked`].
+    pub masked: bool,
+    /// The widget kind the node was built from (`None` for text inputs and
+    /// hand-built nodes).
+    pub kind: Option<crate::input::WidgetKind>,
     pub focused: bool,
     pub children: Vec<WidgetId>,
 }
@@ -36,6 +42,8 @@ impl A11yNode {
             checked: None,
             value: None,
             disabled: false,
+            masked: false,
+            kind: None,
             focused: false,
             children: Vec::new(),
         }
@@ -49,6 +57,11 @@ impl A11yNode {
 
     pub fn with_disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    pub fn with_masked(mut self, masked: bool) -> Self {
+        self.masked = masked;
         self
     }
 

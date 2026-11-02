@@ -198,6 +198,10 @@ pub struct InputCoordinator {
     /// Accessible names and checked states declared this frame
     /// ([`Self::set_a11y`]); read by [`Self::a11y_tree`].
     a11y: Vec<(WidgetId, String, Option<bool>)>,
+    /// Widgets declared secret or disabled for accessibility this frame
+    /// ([`Self::set_a11y_masked`], [`Self::set_a11y_disabled`]).
+    a11y_masked: Vec<WidgetId>,
+    a11y_disabled: Vec<WidgetId>,
     /// Per-frame corner radius of a widget's focus ring ([`Self::set_focus_radius`]).
     focus_radius: Vec<(WidgetId, f64)>,
     /// This frame's focus trap root (`set_focus_trap`): Tab / Shift+Tab
@@ -231,6 +235,8 @@ impl InputCoordinator {
             cook_drag_release: None,
             tab_indices: Vec::new(),
             a11y: Vec::new(),
+            a11y_masked: Vec::new(),
+            a11y_disabled: Vec::new(),
             focus_radius: Vec::new(),
             focus_trap: None,
             occluders: Vec::new(),
@@ -265,6 +271,8 @@ impl InputCoordinator {
 
         self.widgets.clear();
         self.a11y.clear();
+        self.a11y_masked.clear();
+        self.a11y_disabled.clear();
         self.focus_radius.clear();
         self.layers.clear();
         self.default_layer = None;
@@ -952,6 +960,19 @@ impl InputCoordinator {
         self.a11y.push((id.clone(), name.into(), checked));
     }
 
+    /// Declare `id`'s value secret (a token or password drawn in clear or as
+    /// bullets): the accessibility tree reports bullets instead of its text.
+    /// Per frame, like registration.
+    pub fn set_a11y_masked(&mut self, id: &WidgetId) {
+        self.a11y_masked.push(id.clone());
+    }
+
+    /// Declare `id` disabled for accessibility (drawn but not actionable).
+    /// Per frame, like registration.
+    pub fn set_a11y_disabled(&mut self, id: &WidgetId) {
+        self.a11y_disabled.push(id.clone());
+    }
+
     /// Declare the corner radius of `id`'s focus ring, like CSS `border-radius`
     /// shaping `outline`: a round button passes half its size. Per frame, like
     /// registration; widgets that declare nothing get a square ring.
@@ -978,9 +999,17 @@ impl InputCoordinator {
                 continue;
             }
             let mut n = A11yNode::new(w.id.clone(), role, "", w.rect).with_focused(focus == Some(&w.id));
+            n.kind = Some(w.kind);
             if let Some((_, name, checked)) = self.a11y.iter().rev().find(|a| a.0 == w.id) {
                 n.name = name.clone();
                 n.checked = *checked;
+            }
+            n.disabled = self.a11y_disabled.contains(&w.id);
+            if let Some(st) = self.text_fields().field_state(&w.id) {
+                n.masked = st.config.masked || self.a11y_masked.contains(&w.id);
+                n.value = Some(if n.masked { "\u{2022}".repeat(st.text.chars().count()) } else { st.text.clone() });
+            } else {
+                n.masked = self.a11y_masked.contains(&w.id);
             }
             n.children = self.widgets.iter().filter(|c| c.parent.as_ref() == Some(&w.id)).map(|c| c.id.clone()).collect();
             t.push(n);
@@ -1319,6 +1348,8 @@ impl crate::input::driver::CoordinatorDriver for InputCoordinator {
 
         self.widgets.clear();
         self.a11y.clear();
+        self.a11y_masked.clear();
+        self.a11y_disabled.clear();
         self.focus_radius.clear();
         self.layers.clear();
         self.default_layer = None;
@@ -1766,6 +1797,37 @@ mod tests {
     use crate::input::pointer::state::MouseButton;
     use crate::types::{Rect, WidgetState};
 
+
+    #[test]
+    fn a11y_tree_reports_value_masking_kind_and_disabled() {
+        use crate::a11y::A11yRole;
+        let mut coord = InputCoordinator::new();
+        coord.begin_frame(InputState::default());
+        let plain = WidgetId::new("nick");
+        let token = WidgetId::new("token");
+        let pw = WidgetId::new("pw");
+        coord.register_text_field(plain.clone(), Rect::new(0.0, 0.0, 100.0, 20.0), TextFieldConfig::text());
+        coord.register_text_field(token.clone(), Rect::new(0.0, 30.0, 100.0, 20.0), TextFieldConfig::text());
+        coord.register_text_field(pw.clone(), Rect::new(0.0, 60.0, 100.0, 20.0), TextFieldConfig::password());
+        coord.text_fields_mut().set_text(&plain, "lavr");
+        coord.text_fields_mut().set_text(&token, "s3cret");
+        coord.text_fields_mut().set_text(&pw, "hunter2");
+        coord.set_a11y(&token, "Token", None);
+        coord.set_a11y_masked(&token);
+        coord.set_a11y_disabled(&pw);
+        let t = coord.a11y_tree();
+        let n = t.get(&plain).expect("nick node");
+        assert_eq!(n.role, A11yRole::TextInput);
+        assert_eq!(n.value.as_deref(), Some("lavr"));
+        assert!(!n.masked && !n.disabled);
+        assert!(n.kind.is_some());
+        let n = t.get(&token).expect("token node");
+        assert!(n.masked);
+        assert_eq!(n.value.as_deref(), Some("\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}"));
+        let n = t.get(&pw).expect("password node");
+        assert!(n.masked && n.disabled);
+        assert!(!format!("{t:?}").contains("s3cret") && !format!("{t:?}").contains("hunter2"));
+    }
     fn make_coordinator() -> InputCoordinator {
         InputCoordinator::new()
     }
