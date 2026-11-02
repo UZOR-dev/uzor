@@ -78,8 +78,8 @@ methods and params, so a recording can be replayed or edited by hand:
 {"t_ms":1730,"method":"key","params":{"key":"Enter"}}
 ```
 
-Clicks name the widget under the pointer (`selector`), coordinates only
-when there is none. Typing into one field and scrolls of one target merge
+Clicks name the widget under the pointer (`selector`: `#id`, or `[id="row:42"]`
+when the id has selector syntax in it), coordinates only when there is none. Typing into one field and scrolls of one target merge
 into one line; a typing line holds what the field ended up with and
 replays with `clear`, so a field that already holds something (a remembered
 name) comes out as recorded. Text typed into a masked field is never recorded: it is

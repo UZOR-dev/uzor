@@ -240,15 +240,24 @@ pub(crate) fn target_at(t: &AutoTree, pos: Point) -> Value {
     );
     cands.sort_by(|a, b| a.0.total_cmp(&b.0));
     for (_, id) in cands {
-        if id.contains(['[', ':', ' ', ']', '#']) {
-            continue;
-        }
-        let sel = format!("#{id}");
+        let Some(sel) = id_selector(&id) else { continue };
         if resolve(t, &sel).is_ok_and(|(_, r)| contains(&r)) {
             return json!({"selector": sel});
         }
     }
     json!({"x": pos.x, "y": pos.y})
+}
+
+/// The selector naming `id`: `#id`, or `[id="…"]` when the id has selector
+/// syntax in it (`row:42`). None for ids the grammar cannot carry.
+pub(crate) fn id_selector(id: &str) -> Option<String> {
+    if id.is_empty() || id.contains(['"', '~', '^', '\\']) {
+        None
+    } else if id.contains(['[', ']', ':', ' ', '#', '=']) {
+        Some(format!("[id=\"{id}\"]"))
+    } else {
+        Some(format!("#{id}"))
+    }
 }
 
 /// A selector to (id, rect): the accessibility tree first; a bare `#id`
@@ -258,12 +267,44 @@ pub(crate) fn resolve(t: &AutoTree, sel: &str) -> Result<(String, Rect), QueryEr
     match parsed.find_one(&t.a11y) {
         Ok(n) => Ok((n.id.as_str().to_string(), n.bounds)),
         Err(QueryError::NotFound) => {
-            let bare = sel.strip_prefix('#').filter(|s| !s.contains(['[', ':', ' ']));
+            let bare = sel
+                .strip_prefix('#')
+                .filter(|s| !s.contains(['[', ':', ' ']))
+                .or_else(|| sel.strip_prefix("[id=\"").and_then(|r| r.strip_suffix("\"]")).filter(|s| !s.contains('"')));
             match bare.and_then(|id| t.widgets.iter().rev().find(|w| w.id.as_str() == id)) {
                 Some(w) => Ok((w.id.as_str().to_string(), w.rect)),
                 None => Err(QueryError::NotFound),
             }
         }
         Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uzor::a11y::{A11yNode, A11yRole, A11yTree};
+    use uzor::input::core::WidgetInfo;
+    use uzor::input::WidgetKind;
+    use crate::types::window::Point;
+
+    fn tree() -> AutoTree {
+        let mut a11y = A11yTree::new();
+        a11y.push(A11yNode::new("row:8", A11yRole::Button, "general", Rect::new(0.0, 0.0, 100.0, 20.0)));
+        let widgets = vec![WidgetInfo { id: "chip:7".into(), rect: Rect::new(0.0, 40.0, 50.0, 20.0), kind: WidgetKind::Button, parent: None }];
+        AutoTree { window: WindowId(1), a11y, widgets, hovered: None, focused: None }
+    }
+
+    #[test]
+    fn ids_with_selector_syntax_are_quoted() {
+        assert_eq!(id_selector("go").as_deref(), Some("#go"));
+        assert_eq!(id_selector("row:8").as_deref(), Some("[id=\"row:8\"]"));
+        assert_eq!(id_selector("a\"b"), None);
+        let t = tree();
+        // An a11y node and a role-less widget, both named by their quoted id.
+        assert_eq!(target_at(&t, Point::new(10.0, 10.0)), json!({"selector": "[id=\"row:8\"]"}));
+        assert_eq!(target_at(&t, Point::new(10.0, 50.0)), json!({"selector": "[id=\"chip:7\"]"}));
+        assert_eq!(resolve(&t, "[id=\"chip:7\"]").unwrap().0, "chip:7");
+        assert_eq!(target_at(&t, Point::new(300.0, 300.0)), json!({"x": 300.0, "y": 300.0}));
     }
 }
