@@ -298,9 +298,10 @@ fn record_and_replay() {
         assert_eq!(lines[0]["params"]["selector"], "#go");
         assert_eq!(lines[1]["params"]["selector"], "#nick");
         assert_eq!(lines[2]["params"]["text"], "abc");
-        assert_eq!(lines[2]["params"]["into"], "nick");
+        assert_eq!(lines[2]["params"]["into"], "#nick");
+        assert_eq!(lines[2]["params"]["clear"], true);
         assert_eq!(lines[4]["params"]["text"], "<masked>");
-        assert_eq!(lines[4]["params"]["into"], "token");
+        assert_eq!(lines[4]["params"]["into"], "#token");
         assert_eq!(lines[5]["params"]["key"], "Enter");
         assert_eq!(lines[6]["params"]["selector"], "#go");
         assert_eq!(lines[6]["params"]["dy"], -40.0);
@@ -324,7 +325,8 @@ fn record_and_replay() {
         assert_eq!(r["result"]["replayed"], 8);
         assert_eq!(rpc(port, "state", json!({}))["result"]["clicks"].as_u64().unwrap(), before + 1);
         let tree = rpc(port, "dump-tree", json!({})).to_string();
-        assert!(tree.contains("abcabc"), "{tree}");
+        // Typing replays with `clear`: the field ends up as recorded, not doubled.
+        assert!(tree.contains("\"abc\"") && !tree.contains("abcabc"), "{tree}");
         // A list of secrets works in order; a speed replays with pauses.
         let r = rpc(port, "replay", json!({"events": lines, "speed": 4, "secrets": ["q"]}));
         assert_eq!(r["ok"], true, "{r}");

@@ -166,8 +166,22 @@ impl Recorder {
                 return;
             }
         }
+        // A typing run records what the field holds after it, and replays
+        // with `clear` so a field that already holds something (a remembered
+        // nick, a draft) ends up the same as when it was recorded.
+        let prefix = if ime || masked {
+            String::new()
+        } else {
+            into.as_deref()
+                .and_then(|id| tree.a11y.nodes().iter().find(|n| n.id.as_str() == id))
+                .and_then(|n| n.value.clone())
+                .unwrap_or_default()
+        };
         let mut params = Map::new();
-        params.insert("text".into(), json!(if masked { MASKED } else { text }));
+        params.insert("text".into(), json!(if masked { MASKED.to_string() } else { format!("{prefix}{text}") }));
+        if !ime && into.is_some() {
+            params.insert("clear".into(), json!(true));
+        }
         if masked {
             params.insert("masked".into(), json!(true));
         }
@@ -175,7 +189,7 @@ impl Recorder {
             params.insert("ime".into(), json!(true));
         }
         if let Some(id) = into {
-            params.insert("into".into(), json!(id));
+            params.insert("into".into(), json!(format!("#{id}")));
         }
         self.push(st, "type", Value::Object(params), if ime { Tail::Other } else { tail });
     }

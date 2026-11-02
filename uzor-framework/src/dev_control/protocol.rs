@@ -339,6 +339,14 @@ impl Dispatcher {
             window_param(p)?
         };
         let mut events = Vec::new();
+        if p.get("clear").and_then(Value::as_bool).unwrap_or(false) {
+            // Replace what the field holds: select all, delete, then type.
+            for spec in ["Ctrl+A", "Backspace"] {
+                let chord = keys::parse(spec).map_err(RpcError::bad)?;
+                events.push(InputEvent::Key(KeyInput { code: chord.code, text: chord.text.clone(), state: KeyState::Down, mods: chord.mods }));
+                events.push(InputEvent::Key(KeyInput { code: chord.code, text: None, state: KeyState::Up, mods: chord.mods }));
+            }
+        }
         if p.get("ime").and_then(Value::as_bool).unwrap_or(false) {
             events.push(InputEvent::Ime(ImeInput::Commit(text.to_string())));
         } else {
@@ -594,8 +602,9 @@ impl Dispatcher {
             if masked {
                 masked_n += 1;
                 let into = params.get("into").and_then(Value::as_str).unwrap_or("").to_string();
+                let bare = into.strip_prefix('#').unwrap_or(&into).to_string();
                 let secret = match secrets {
-                    Some(Value::Object(m)) => m.get(&into).or_else(|| m.get(&format!("#{into}"))).and_then(Value::as_str).map(str::to_string),
+                    Some(Value::Object(m)) => m.get(&bare).or_else(|| m.get(&format!("#{bare}"))).and_then(Value::as_str).map(str::to_string),
                     Some(Value::Array(a)) => {
                         let s = a.get(list_i).and_then(Value::as_str).map(str::to_string);
                         list_i += 1;

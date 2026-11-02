@@ -14,7 +14,8 @@ All crates in the workspace share one version.
   a JSON subset of the state report) and `settle` (`idle_ms`: the tree, widget rects, focus,
   hover and state report unchanged), both checked once per painted frame; `timeout` on failure.
 - `record` / `replay`: input is recorded as JSONL of RPC calls (`{"t_ms","method","params"}`),
-  selectors preferred over coordinates, masked text written as `"<masked>"`; replay needs
+  selectors preferred over coordinates, masked text written as `"<masked>"`, typing lines hold
+  the field's final text and replay with `type`'s new `clear` (select all, delete); replay needs
   `params.secrets` for such lines, waits for each selector, honours `speed`. Progress goes to
   `GET /events`.
 - Browser bridge: `host::run_web_with` + `WebOptions::dev_control(WebDevControl)` installs

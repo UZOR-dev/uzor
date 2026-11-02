@@ -50,7 +50,7 @@ it.
 | `click` | `selector` or `x`,`y`; `button?`, `count?` | `{id?, x, y}` |
 | `hover` | `selector` or `x`,`y` | `{id?, x, y}` |
 | `focus` | `selector` (clicks it, waits until it holds the focus) | `{id, window, focused}` |
-| `type` | `text`, `selector?` (focused first, like `focus`), `ime?` (one IME commit) | `{chars}` |
+| `type` | `text`, `selector?` (focused first, like `focus`), `clear?` (replace what the field holds), `ime?` (one IME commit) | `{chars}` |
 | `key` | `key` (e.g. `Enter`, `Ctrl+A`), `repeat?` | `{key}` |
 | `scroll` | `selector` or `x`,`y`; `dx?`, `dy`, `unit?` (`px`/`lines`) | `{x, y}` |
 | `screenshot` | `window?`, `source?` (`auto`/`window`/`offscreen`) | `{png_base64, width, height, source}` |
@@ -74,13 +74,15 @@ methods and params, so a recording can be replayed or edited by hand:
 
 ```jsonl
 {"t_ms":0,"method":"click","params":{"selector":"#lh-code"}}
-{"t_ms":420,"method":"type","params":{"into":"#lh-code","masked":true,"text":"<masked>"}}
+{"t_ms":420,"method":"type","params":{"clear":true,"into":"#lh-code","masked":true,"text":"<masked>"}}
 {"t_ms":1730,"method":"key","params":{"key":"Enter"}}
 ```
 
 Clicks name the widget under the pointer (`selector`), coordinates only
 when there is none. Typing into one field and scrolls of one target merge
-into one line. Text typed into a masked field is never recorded: it is
+into one line; a typing line holds what the field ended up with and
+replays with `clear`, so a field that already holds something (a remembered
+name) comes out as recorded. Text typed into a masked field is never recorded: it is
 written as `"<masked>"`, and `replay` refuses such a line unless `secrets`
 supplies it (`{"lh-code": "…"}` by field id, or an array in order). A
 replayed step with a selector first waits (5 s) for its target. Recording
