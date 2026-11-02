@@ -62,6 +62,7 @@ impl EventLog {
     /// (no waiting on wasm: there is one thread).
     pub fn since(&self, since: u64, wait: Duration) -> Vec<Value> {
         let deadline = now_ms() + wait.as_secs_f64() * 1000.0;
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut ev = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         loop {
             let out: Vec<Value> = ev

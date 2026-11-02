@@ -12,6 +12,8 @@
 
 #[cfg(feature = "a11y-dom")]
 mod aria;
+#[cfg(feature = "dev-control")]
+mod dev_bridge;
 mod executor;
 mod ime;
 mod listeners;
@@ -19,7 +21,9 @@ mod paint;
 mod raf;
 mod translate;
 
-pub use raf::{run_web, start_web};
+pub use raf::{run_web, run_web_with, start_web, WebOptions};
+#[cfg(feature = "dev-control")]
+pub use dev_bridge::{dev_requested, WebDevControl};
 
 /// Colour-emoji fallback for canvas text: the font families every `set_font` gets, and the
 /// lazy loader of the bundled subset (a separate asset, not in the wasm).

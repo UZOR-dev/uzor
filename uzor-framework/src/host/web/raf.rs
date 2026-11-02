@@ -58,7 +58,29 @@ struct RafDriver<S: Spec, A: App<Spec = S>> {
     ime: Option<super::ime::Ime>,
     #[cfg(feature = "a11y-dom")]
     aria: Option<super::aria::Aria>,
+    /// The `?dev=1` bridge (feature `dev-control`).
+    #[cfg(feature = "dev-control")]
+    dev: Option<super::dev_bridge::Bridge>,
     _listeners: Option<listeners::Listeners>,
+}
+
+/// Options for [`run_web_with`].
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct WebOptions {
+    /// The dev-control bridge, installed when the page URL has `?dev=1`
+    /// (feature `dev-control`; see [`WebDevControl`](super::WebDevControl)).
+    #[cfg(feature = "dev-control")]
+    pub dev_control: Option<super::dev_bridge::WebDevControl>,
+}
+
+impl WebOptions {
+    /// Offer the dev-control bridge (installed only with `?dev=1`).
+    #[cfg(feature = "dev-control")]
+    pub fn dev_control(mut self, dev: super::dev_bridge::WebDevControl) -> Self {
+        self.dev_control = Some(dev);
+        self
+    }
 }
 
 /// Monotonic page clock, seconds. Same origin as the RAF timestamp.
@@ -79,6 +101,17 @@ where
     S: Spec,
     A: App<Spec = S>,
 {
+    run_web_with(canvas_id, app, cfg, WebOptions::default())
+}
+
+/// [`run_web`] with [`WebOptions`].
+pub fn run_web_with<S, A>(canvas_id: &str, app: A, cfg: RuntimeConfig, opts: WebOptions) -> Result<(), FrameworkError>
+where
+    S: Spec,
+    A: App<Spec = S>,
+{
+    #[cfg(not(feature = "dev-control"))]
+    let _ = opts;
     let window =
         web_sys::window().ok_or_else(|| FrameworkError::Host("no window object".into()))?;
     let document = window
@@ -138,6 +171,8 @@ where
         ime,
         #[cfg(feature = "a11y-dom")]
         aria,
+        #[cfg(feature = "dev-control")]
+        dev: None,
         _listeners: None,
     }));
 
@@ -187,6 +222,12 @@ where
         }
     }) as Rc<dyn Fn()>);
     driver.borrow_mut().wake = Some(wake.clone());
+    #[cfg(feature = "dev-control")]
+    if let Some(dev) = opts.dev_control.as_ref() {
+        let w = wake.clone();
+        let bridge = super::dev_bridge::install(dev, Rc::new(move || w.request()));
+        driver.borrow_mut().dev = bridge;
+    }
 
     let listeners = listeners::install(&canvas, queue, wake).map_err(FrameworkError::from)?;
     driver.borrow_mut()._listeners = Some(listeners);
@@ -215,7 +256,16 @@ impl<S: Spec, A: App<Spec = S>> RafDriver<S, A> {
         } else {
             now_seconds()
         };
+        #[cfg(feature = "dev-control")]
+        if let Some(b) = self.dev.as_mut() {
+            b.poll();
+            b.intake(&mut self.runtime, now);
+        }
         while let Some(env) = self.queue.pop() {
+            #[cfg(feature = "dev-control")]
+            if let Some(b) = &self.dev {
+                b.tap(&self.runtime, &env);
+            }
             self.runtime.push_input(env);
         }
         let out = self.runtime.tick(now);
@@ -224,11 +274,26 @@ impl<S: Spec, A: App<Spec = S>> RafDriver<S, A> {
             if let Err(err) = paint_frame(&mut self.runtime, &self.canvas, req) {
                 log::warn!("paint: {err}");
             }
+            #[cfg(feature = "dev-control")]
+            if let Some(b) = self.dev.as_mut() {
+                b.painted(req.window, req.background);
+            }
             #[cfg(feature = "a11y-dom")]
             if let Some(a) = &mut self.aria {
                 a.sync(&self.runtime.a11y_tree(req.window));
             }
         }
+        #[cfg(feature = "dev-control")]
+        let dev_busy = match self.dev.as_mut() {
+            Some(b) => {
+                b.answer(&mut self.runtime, device_pixel_ratio());
+                b.poll();
+                b.busy()
+            }
+            None => false,
+        };
+        #[cfg(not(feature = "dev-control"))]
+        let dev_busy = false;
         let kicked = {
             // Drop the in-frame flag before reading `kicked`, so a waker that
             // runs after this point schedules the RAF itself.
@@ -239,7 +304,7 @@ impl<S: Spec, A: App<Spec = S>> RafDriver<S, A> {
             self.stop();
             return;
         }
-        let force = self.needs_tick || kicked || self.runtime.take_paint_wants_tick();
+        let force = self.needs_tick || kicked || dev_busy || self.runtime.take_paint_wants_tick();
         self.needs_tick = false;
         if force {
             self.ensure_scheduled();

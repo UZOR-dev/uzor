@@ -25,7 +25,9 @@ pub use native::{
 pub mod web;
 
 #[cfg(feature = "web")]
-pub use web::{run_web, start_web};
+pub use web::{run_web, run_web_with, start_web, WebOptions};
+#[cfg(all(feature = "web", feature = "dev-control"))]
+pub use web::{dev_requested, WebDevControl};
 
 #[cfg(test)]
 mod tests;
