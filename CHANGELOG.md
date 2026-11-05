@@ -2,6 +2,13 @@
 
 All crates in the workspace share one version.
 
+## 1.5.25
+
+### PDF text and images keep the full transform
+
+- `PdfRenderContext` text `Tm` and image `cm` carry the current transform: rotation, shear, and independent horizontal and vertical scale. Font size stays the em size. Stroke width, dash, and radial-gradient radius still use the uniform scale factor. Paragraph `PdfTextRun`s stay axis-aligned.
+- `PdfPageSpec` takes optional `trim` and `bleed` boxes in top-left, y-down points. Unset boxes are omitted from the page dict.
+
 ## 1.5.24
 
 ### Dev control, stage 2 (uzor-framework feature `dev-control`)

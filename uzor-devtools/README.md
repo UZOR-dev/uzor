@@ -5,7 +5,7 @@ loopback JSON RPC. Apps do not depend on this crate directly; they turn the
 whole thing on with one framework feature:
 
 ```toml
-uzor-framework = { version = "=1.5.24", features = ["native", "dev-control"] }
+uzor-framework = { version = "=1.5.25", features = ["native", "dev-control"] }
 ```
 
 ```rust
