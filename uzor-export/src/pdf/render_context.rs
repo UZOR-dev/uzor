@@ -10,14 +10,17 @@
 //! Same "bake transforms into coordinates, don't emit a nested operator per
 //! `save`/`translate`/`scale`" discipline [`crate::pdf::render_context`]'s
 //! sibling `uzor-render-svg::SvgRenderContext` already uses (see that
-//! crate's own module doc for the "why"): every path/text/image position
-//! this backend records is already the FINAL, absolute page-point
-//! coordinate (in this crate's own top-left-origin, y-down convention —
-//! same as [`super::PdfTextRun`]/[`super::PdfPageSpec`] already use), with
+//! crate's own module doc for the "why"): every path position this
+//! backend records is already the FINAL, absolute page-point coordinate
+//! (in this crate's own top-left-origin, y-down convention — same as
+//! [`super::PdfTextRun`]/[`super::PdfPageSpec`] already use), with
 //! [`Transform`] (a private, self-contained 2D affine — the SAME matrix
 //! shape `uzor-render-svg::transform::Transform` uses, reimplemented here
 //! rather than reached across a crate boundary for an internal type) baked
-//! in at `move_to`/`line_to`/`fill_text`/etc. call time.
+//! in at `move_to`/`line_to`/etc. call time. Text and images keep the full
+//! CTM: `fill_text` stores the unscaled em size plus the linear matrix and
+//! the page-space pen (`Tm` at emit), and `draw_image_rgba` stores the
+//! page-space image matrix (`cm` at emit).
 //!
 //! The ONE thing this backend genuinely CANNOT resolve at draw-call time:
 //! [`super::pdf::mod`]'s font subsetting only knows a font's FULL used-glyph
@@ -36,11 +39,13 @@
 //! space (the SAME convention every other coordinate in this crate uses) —
 //! the y-axis flip into PDF's native bottom-left, y-up space happens in
 //! EXACTLY ONE place, [`emit_ops`] (called from [`super::write_page`]),
-//! applying `y' = page_height_pt - y` to every emitted y-coordinate
-//! uniformly (paths, text anchors, image rects, gradient axes) — the SAME
-//! flip formula `super::write_page`'s own pre-existing `PdfTextRun` path
-//! already applies, just now shared by every content kind instead of text
-//! runs alone. This is a per-point translation-composed-with-reflection,
+//! applying `y' = page_height_pt - y` to every emitted path and gradient
+//! y-coordinate. Text `Tm` and image `cm` flip the stored page-space
+//! matrix in that same function (`f = page_height_pt - ty_pen` for text;
+//! image `cm` negates the y basis and the translation the same way) — the
+//! SAME flip formula `super::write_page`'s own pre-existing `PdfTextRun`
+//! path already applies to an axis-aligned run. This is a per-point
+//! translation-composed-with-reflection,
 //! not a handedness-flipping transform on shape geometry: an existing,
 //! visually-verified convention (see this crate's own Cyrillic/table/list
 //! proof PDFs), not new territory.
@@ -79,14 +84,11 @@
 //!   color-alpha component is dropped after being folded into `global_alpha`
 //!   at most once (the first stop's). Every stop's RGB color is preserved
 //!   exactly.
-//! - Rotated/non-uniformly-scaled text — **documented scope limit, not
-//!   exercised by any current caller** (verified: no `uzor-figures`/
-//!   `uzor-typeset` call site calls `Painter::rotate` before `fill_text`,
-//!   this backend's whole reason for existing this pass). `fill_text`
-//!   bakes the transform's TRANSLATION into the anchor position and its
-//!   own [`Transform::scale_factor`] into the font size, but always emits
-//!   an axis-aligned (non-rotated) text matrix — a real gap for a
-//!   hypothetical future rotated-label caller, inert today.
+//! - Text `Tm` and image `cm` carry the full CTM (scale, rotation, shear).
+//!   Font size stays the em size — it is not multiplied by
+//!   [`Transform::scale_factor`]. Stroke width, dash, and radial-gradient
+//!   radius still use that uniform factor. Paragraph [`super::PdfTextRun`]s
+//!   stay axis-aligned.
 //! - Backdrop blur / shadow / blend modes ([`UiEffectHelpers`]/
 //!   [`Effects`]) — no vector-PDF equivalent attempted, same documented
 //!   absence `SvgRenderContext` already carries for the identical reason.
@@ -158,11 +160,10 @@ impl Transform {
     }
 
     /// Approximate uniform scale factor (average of the two basis-vector
-    /// lengths) — used to scale stroke width / dash arrays / gradient
-    /// radii / font size, since those aren't baked into path COORDINATES
-    /// the way fill/stroke geometry is. Exact for uniform scale-only
-    /// matrices (the only shape any current caller of this backend ever
-    /// produces — see this module's own doc comment).
+    /// lengths). Stroke width, dash arrays, and radial-gradient radius
+    /// use this — they are scalars, not a full affine. Text size and
+    /// image placement do not: those go through `Tm` / `cm`. Exact for a
+    /// uniform scale-only matrix.
     fn scale_factor(&self) -> f64 {
         let x_len = (self.sx * self.sx + self.ky * self.ky).sqrt();
         let y_len = (self.kx * self.kx + self.sy * self.sy).sqrt();
@@ -251,9 +252,18 @@ pub(crate) enum PdfOp {
     },
     Text {
         font: FontId,
+        /// Em size in unscaled font pixels. Scale, rotation, and shear
+        /// live in the text matrix, not in this size.
         size_pt: f64,
-        x_pt: f64,
-        y_pt: f64,
+        /// Linear CTM at draw time. Translation is `tx_pen`/`ty_pen`.
+        sx: f64,
+        ky: f64,
+        kx: f64,
+        sy: f64,
+        /// Pen origin (after align and baseline) already through
+        /// [`Transform::apply`], still top-left y-down.
+        tx_pen: f64,
+        ty_pen: f64,
         rgb: (f32, f32, f32),
         alpha: f32,
         /// `(original glyph id in the FULL, pre-subsetting font, source
@@ -264,10 +274,14 @@ pub(crate) enum PdfOp {
         glyphs: Vec<(u16, char)>,
     },
     Image {
-        x_pt: f64,
-        y_pt: f64,
-        w_pt: f64,
-        h_pt: f64,
+        /// Page-space image matrix, column vector, `v` up from the bottom
+        /// of the destination rect. [`emit_ops`] writes the PDF `cm`.
+        a_p: f64,
+        b_p: f64,
+        c_p: f64,
+        d_p: f64,
+        e_p: f64,
+        f_p: f64,
         /// Tightly packed RGB8, alpha dropped (present in `alpha_mask`
         /// instead when the source data carries real transparency).
         rgb: Vec<u8>,
@@ -908,15 +922,16 @@ impl ImagePainter for PdfRenderContext<'_> {
             return;
         }
 
-        // Axis-aligned destination rect (see this module's own doc
-        // comment: rotated image placement is a documented, inert scope
-        // limit — no current caller rotates before drawing an image).
-        let (p0x, p0y) = self.apply(x, y);
-        let (p1x, p1y) = self.apply(x + width, y + height);
-        let rx = p0x.min(p1x);
-        let ry = p0y.min(p1y);
-        let rw = (p1x - p0x).abs();
-        let rh = (p1y - p0y).abs();
+        // Page-space map of image (u, v), v up from the bottom of the
+        // dest rect, using the CTM at this call. Arguments stay in the
+        // current user space — corners are not pre-transformed.
+        let t = self.transform;
+        let a_p = t.sx * width;
+        let b_p = t.ky * width;
+        let c_p = -t.kx * height;
+        let d_p = -t.sy * height;
+        let e_p = t.sx * x + t.kx * (y + height) + t.tx;
+        let f_p = t.ky * x + t.sy * (y + height) + t.ty;
 
         let has_alpha = data.chunks_exact(4).any(|px| px[3] != 255);
         let pixel_count = img_width as usize * img_height as usize;
@@ -930,7 +945,7 @@ impl ImagePainter for PdfRenderContext<'_> {
         }
 
         let alpha = self.global_alpha.clamp(0.0, 1.0) as f32;
-        self.ops.push(PdfOp::Image { x_pt: rx, y_pt: ry, w_pt: rw, h_pt: rh, rgb, alpha_mask, px_w: img_width, px_h: img_height, alpha });
+        self.ops.push(PdfOp::Image { a_p, b_p, c_p, d_p, e_p, f_p, rgb, alpha_mask, px_w: img_width, px_h: img_height, alpha });
     }
 }
 
@@ -981,8 +996,8 @@ impl TextRenderer for PdfRenderContext<'_> {
 
         let pen_x = x + x_off;
         let pen_y = y + y_off;
-        let (abs_x, abs_y) = self.apply(pen_x, pen_y);
-        let scaled_size = font_size * self.transform.scale_factor();
+        let (tx_pen, ty_pen) = self.apply(pen_x, pen_y);
+        let t = self.transform;
 
         let font_id = self.fonts.id_for(font_info.family, font_info.bold, font_info.italic, self.builder);
         let glyphs: Vec<(u16, char)> = {
@@ -991,7 +1006,19 @@ impl TextRenderer for PdfRenderContext<'_> {
         };
 
         let (rgb, alpha) = self.fill_paint();
-        self.ops.push(PdfOp::Text { font: font_id, size_pt: scaled_size, x_pt: abs_x, y_pt: abs_y, rgb, alpha, glyphs });
+        self.ops.push(PdfOp::Text {
+            font: font_id,
+            size_pt: font_size,
+            sx: t.sx,
+            ky: t.ky,
+            kx: t.kx,
+            sy: t.sy,
+            tx_pen,
+            ty_pen,
+            rgb,
+            alpha,
+            glyphs,
+        });
     }
 
     /// Same "solid fill of the stroke color" approximation every other
@@ -1074,10 +1101,10 @@ pub(crate) struct PageOpResources {
 
 /// Emit every op in `ops` (in RECORDED order — z-order matters: a figure's
 /// axis line, then its bars, then its labels, must paint in that order)
-/// into `content`, flipping every y-coordinate via `page_height_pt - y`
-/// (this module's own doc comment: the ONE place this crate's top-left,
-/// y-down convention converts to PDF's native bottom-left, y-up space —
-/// shared by every content kind, not just text runs).
+/// into `content`, flipping y into PDF space (`page_height_pt - y` for
+/// path and gradient points; text `Tm` and image `cm` use the formulas in
+/// those match arms). This is the ONE place this crate's top-left, y-down
+/// convention converts to PDF's native bottom-left, y-up space.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_ops(
     pdf: &mut Pdf,
@@ -1181,28 +1208,33 @@ pub(crate) fn emit_ops(
                     content.fill_nonzero();
                 }
             }
-            PdfOp::Text { font, size_pt, x_pt, y_pt, rgb, alpha, glyphs } => {
-                let fx = *x_pt as f32;
-                let fy = (page_height_pt - y_pt) as f32;
+            PdfOp::Text { font, size_pt, sx, ky, kx, sy, tx_pen, ty_pen, rgb, alpha, glyphs } => {
+                // Local +y is PDF text up (negative page y). See the
+                // module doc: font size stays the em size.
+                let a = *sx as f32;
+                let b = -*ky as f32;
+                let c = -*kx as f32;
+                let d = *sy as f32;
+                let e = *tx_pen as f32;
+                let f = (page_height_pt - ty_pen) as f32;
                 apply_alpha_gstate(pdf, refs, content, &mut resources, &mut gstate_cache, *alpha);
                 content.begin_text();
                 content.set_fill_rgb(rgb.0, rgb.1, rgb.2);
                 content.set_font(Name(font_names[font.0 as usize].as_bytes()), *size_pt as f32);
-                content.set_text_matrix([1.0, 0.0, 0.0, 1.0, fx, fy]);
+                content.set_text_matrix([a, b, c, d, e, f]);
                 let orig_to_new = &font_data[font.0 as usize].orig_to_new;
                 content.show(Str(&cid_bytes(glyphs, orig_to_new)));
                 content.end_text();
             }
-            PdfOp::Image { x_pt, y_pt, w_pt, h_pt, rgb, alpha_mask, px_w, px_h, alpha } => {
+            PdfOp::Image { a_p, b_p, c_p, d_p, e_p, f_p, rgb, alpha_mask, px_w, px_h, alpha } => {
                 let name = format!("CImg{image_idx}");
                 image_idx += 1;
                 let img_ref = image_cache.resolve(pdf, refs, rgb, alpha_mask.as_deref(), *px_w, *px_h);
                 resources.images.push((name.clone(), img_ref));
 
                 apply_alpha_gstate(pdf, refs, content, &mut resources, &mut gstate_cache, *alpha);
-                let flip_y = page_height_pt - y_pt - h_pt;
                 content.save_state();
-                content.transform([*w_pt as f32, 0.0, 0.0, *h_pt as f32, *x_pt as f32, flip_y as f32]);
+                content.transform([*a_p as f32, -*b_p as f32, *c_p as f32, -*d_p as f32, *e_p as f32, (page_height_pt - f_p) as f32]);
                 content.x_object(Name(name.as_bytes()));
                 content.restore_state();
             }
@@ -1511,9 +1543,8 @@ mod tests {
     use crate::pdf::{PdfBuilder, PdfPageSpec};
 
     /// Build a single-page PDF from whatever `draw` issues against a
-    /// fresh 200x150pt [`PdfRenderContext`], returning the finished byte
-    /// buffer — the shared harness every test below drives.
-    fn build_pdf(draw: impl FnOnce(&mut PdfRenderContext<'_>)) -> Vec<u8> {
+    /// fresh [`PdfRenderContext`] of the given size.
+    fn build_pdf_sized(width_pt: f64, height_pt: f64, draw: impl FnOnce(&mut PdfRenderContext<'_>)) -> Vec<u8> {
         let mut builder = PdfBuilder::new();
         let mut fonts = PdfFontCache::new();
         let content = {
@@ -1522,9 +1553,14 @@ mod tests {
             ctx.finish()
         };
         builder
-            .add_page(PdfPageSpec { width_pt: 200.0, height_pt: 150.0, raster: None, raster_px: (0, 0), text_runs: Vec::new(), links: Vec::new(), content })
+            .add_page(PdfPageSpec { width_pt, height_pt, raster: None, raster_px: (0, 0), text_runs: Vec::new(), links: Vec::new(), content, trim: None, bleed: None })
             .expect("add_page should succeed");
         builder.finish()
+    }
+
+    /// 200x150pt — the shared harness every pre-existing test below drives.
+    fn build_pdf(draw: impl FnOnce(&mut PdfRenderContext<'_>)) -> Vec<u8> {
+        build_pdf_sized(200.0, 150.0, draw)
     }
 
     fn decompressed_content(bytes: &[u8]) -> String {
@@ -1652,7 +1688,7 @@ mod tests {
         assert_eq!(font, via_cache, "PdfFontCache must resolve the SAME FontId across both call sites");
 
         builder
-            .add_page(PdfPageSpec { width_pt: 200.0, height_pt: 150.0, raster: None, raster_px: (0, 0), text_runs: Vec::new(), links: Vec::new(), content })
+            .add_page(PdfPageSpec { width_pt: 200.0, height_pt: 150.0, raster: None, raster_px: (0, 0), text_runs: Vec::new(), links: Vec::new(), content, trim: None, bleed: None })
             .expect("add_page should succeed");
         let bytes = builder.finish();
 
@@ -1775,5 +1811,180 @@ mod tests {
         let content = decompressed_content(&bytes);
         // (0,0) -> (10,20); page height 150 -> PDF y = 150-20 = 130.
         assert!(content.contains("10 130"), "expected the baked+flipped moveto at (10,130), got: {content}");
+    }
+
+    fn operands_before(content: &str, op: &str) -> [f64; 6] {
+        let toks = tokens(content);
+        let idx = toks.iter().position(|t| *t == op).unwrap_or_else(|| panic!("missing {op} in {content}"));
+        assert!(idx >= 6, "{op} at token {idx} has fewer than 6 operands: {content}");
+        let mut out = [0.0; 6];
+        for (i, tok) in toks[idx - 6..idx].iter().enumerate() {
+            out[i] = tok.parse::<f64>().unwrap_or_else(|_| panic!("operand {tok:?} before {op} is not a number in {content}"));
+        }
+        out
+    }
+
+    fn assert_matrix_close(got: [f64; 6], expect: [f64; 6], tol: f64, content: &str) {
+        for (i, (g, e)) in got.iter().zip(expect).enumerate() {
+            assert!((g - e).abs() <= tol, "component {i}: got {g} expected {e} (tol {tol}) in {content}");
+        }
+    }
+
+    fn font_size_operand(content: &str) -> f64 {
+        let toks = tokens(content);
+        let idx = toks.iter().position(|t| *t == "Tf").unwrap_or_else(|| panic!("missing Tf in {content}"));
+        toks[idx - 1].parse::<f64>().unwrap_or_else(|_| panic!("Tf size operand is not a number in {content}"))
+    }
+
+    fn paint_em_text(ctx: &mut PdfRenderContext<'_>, text: &str, x: f64, y: f64) {
+        ctx.set_font("10px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Alphabetic);
+        ctx.fill_text(text, x, y);
+    }
+
+    #[test]
+    fn fill_text_identity_matrix_keeps_em_size_and_upright_tm() {
+        let bytes = build_pdf_sized(200.0, 160.0, |ctx| {
+            paint_em_text(ctx, "A", 30.0, 40.0);
+        });
+        let content = decompressed_content(&bytes);
+        let tm = operands_before(&content, "Tm");
+        assert_matrix_close(tm, [1.0, 0.0, 0.0, 1.0, 30.0, 120.0], 0.01, &content);
+        let size = font_size_operand(&content);
+        assert!((size - 10.0).abs() < 0.01, "font size operand must stay the em size 10, got {size} in {content}");
+    }
+
+    #[test]
+    fn fill_text_nonuniform_scale_stays_in_the_text_matrix() {
+        let bytes = build_pdf_sized(200.0, 160.0, |ctx| {
+            ctx.scale(1.8, 0.7);
+            paint_em_text(ctx, "A", 30.0, 40.0);
+        });
+        let content = decompressed_content(&bytes);
+        let tm = operands_before(&content, "Tm");
+        // apply(30, 40) = (54, 28); PDF y = 160 - 28 = 132. Em size stays 10.
+        assert_matrix_close(tm, [1.8, 0.0, 0.0, 0.7, 54.0, 132.0], 0.1, &content);
+        let size = font_size_operand(&content);
+        assert!((size - 10.0).abs() < 0.01, "font size operand must stay 10, not scale_factor*size, got {size} in {content}");
+    }
+
+    #[test]
+    fn fill_text_rotation_is_a_real_tm_and_cyrillic_extracts() {
+        let angle = 2.5_f64.to_radians();
+        let bytes = build_pdf_sized(200.0, 160.0, |ctx| {
+            ctx.rotate(angle);
+            paint_em_text(ctx, "Привет", 30.0, 40.0);
+        });
+        let content = decompressed_content(&bytes);
+        let (sin, cos) = angle.sin_cos();
+        let tm = operands_before(&content, "Tm");
+        assert_matrix_close([tm[0], tm[1], tm[2], tm[3], 0.0, 0.0], [cos, -sin, sin, cos, 0.0, 0.0], 0.1, &content);
+
+        let doc = lopdf::Document::load_mem(&bytes).expect("lopdf parse");
+        let page_numbers: Vec<u32> = doc.get_pages().keys().copied().collect();
+        let extracted = doc.extract_text(&page_numbers).expect("lopdf text extraction");
+        assert!(extracted.contains("Привет"), "rotated Cyrillic must extract, got {extracted:?}");
+
+        let angle_neg = (-12.0_f64).to_radians();
+        let bytes_neg = build_pdf_sized(200.0, 160.0, |ctx| {
+            ctx.rotate(angle_neg);
+            paint_em_text(ctx, "A", 30.0, 40.0);
+        });
+        let content_neg = decompressed_content(&bytes_neg);
+        let (sin_neg, cos_neg) = angle_neg.sin_cos();
+        let tm_neg = operands_before(&content_neg, "Tm");
+        // a = cos(-12°), b = -sin(-12°) = sin(12°), c = sin(-12°), d = cos(-12°).
+        assert_matrix_close([tm_neg[0], tm_neg[1], tm_neg[2], tm_neg[3], 0.0, 0.0], [cos_neg, -sin_neg, sin_neg, cos_neg, 0.0, 0.0], 0.1, &content_neg);
+        let sin_12 = 12.0_f64.to_radians().sin();
+        assert!((tm_neg[1] - sin_12).abs() <= 0.1, "b must be sin(12°), got {} in {content_neg}", tm_neg[1]);
+    }
+
+    #[test]
+    fn draw_image_rgba_rotation_and_scale_keep_a_full_cm() {
+        #[rustfmt::skip]
+        let rgba: [u8; 16] = [
+            255, 0, 0, 128,   0, 255, 0, 255,
+              0, 0, 255, 255, 255, 255, 0, 255,
+        ];
+        let scaled = build_pdf_sized(200.0, 160.0, |ctx| {
+            ctx.scale(1.8, 0.7);
+            ctx.save();
+            ctx.begin_path();
+            ctx.rect(0.0, 0.0, 100.0, 80.0);
+            ctx.clip();
+            ctx.draw_image_rgba(&rgba, 2, 2, 10.0, 20.0, 40.0, 10.0);
+            ctx.restore();
+        });
+        let content = decompressed_content(&scaled);
+        let cm = operands_before(&content, "cm");
+        assert_matrix_close(cm, [72.0, 0.0, 0.0, 7.0, 18.0, 139.0], 0.1, &content);
+        let toks = tokens(&content);
+        assert!(toks.contains(&"W"), "scaled image inside a clip must emit W, got: {content}");
+        assert!(toks.contains(&"Q"), "save/restore around the image must emit Q, got: {content}");
+
+        let rotated = build_pdf_sized(200.0, 160.0, |ctx| {
+            ctx.rotate(std::f64::consts::FRAC_PI_2);
+            ctx.draw_image_rgba(&rgba, 2, 2, 10.0, 20.0, 40.0, 10.0);
+        });
+        let rotated_content = decompressed_content(&rotated);
+        let rotated_cm = operands_before(&rotated_content, "cm");
+        assert_matrix_close(rotated_cm, [0.0, -40.0, 10.0, 0.0, -30.0, 150.0], 0.1, &rotated_content);
+    }
+
+    fn box_components(obj: &lopdf::Object) -> [f64; 4] {
+        let arr = obj.as_array().expect("page box is an array");
+        assert_eq!(arr.len(), 4, "page box must have 4 components, got {arr:?}");
+        let mut out = [0.0; 4];
+        for (i, item) in arr.iter().enumerate() {
+            if let Ok(v) = item.as_float() {
+                out[i] = v as f64;
+            } else if let Ok(v) = item.as_i64() {
+                out[i] = v as f64;
+            } else {
+                panic!("box component {item:?} is not a number");
+            }
+        }
+        out
+    }
+
+    fn page_object_dict<'a>(doc: &'a lopdf::Document) -> &'a lopdf::Dictionary {
+        let page_id = *doc.get_pages().values().next().expect("one page");
+        doc.get_object(page_id).expect("page object").as_dict().expect("page dict")
+    }
+
+    #[test]
+    fn page_trim_and_bleed_boxes_round_trip() {
+        let mut builder = PdfBuilder::new();
+        builder
+            .add_page(PdfPageSpec {
+                width_pt: 200.0,
+                height_pt: 160.0,
+                raster: None,
+                raster_px: (0, 0),
+                text_runs: Vec::new(),
+                links: Vec::new(),
+                content: PdfContentStream::empty(),
+                trim: Some((10.0, 20.0, 100.0, 50.0)),
+                bleed: Some((0.0, 0.0, 200.0, 160.0)),
+            })
+            .expect("add_page should succeed");
+        let bytes = builder.finish();
+        let doc = lopdf::Document::load_mem(&bytes).expect("lopdf parse");
+        let dict = page_object_dict(&doc);
+        let trim = box_components(dict.get(b"TrimBox").expect("TrimBox"));
+        let bleed = box_components(dict.get(b"BleedBox").expect("BleedBox"));
+        for (i, (g, e)) in trim.iter().zip([10.0, 90.0, 110.0, 140.0]).enumerate() {
+            assert!((g - e).abs() <= 0.1, "TrimBox[{i}] got {g} expected {e}");
+        }
+        for (i, (g, e)) in bleed.iter().zip([0.0, 0.0, 200.0, 160.0]).enumerate() {
+            assert!((g - e).abs() <= 0.1, "BleedBox[{i}] got {g} expected {e}");
+        }
+
+        let absent = build_pdf_sized(200.0, 160.0, |_| {});
+        let absent_doc = lopdf::Document::load_mem(&absent).expect("lopdf parse");
+        let absent_dict = page_object_dict(&absent_doc);
+        assert!(!absent_dict.has(b"TrimBox"), "None trim must not write /TrimBox");
+        assert!(!absent_dict.has(b"BleedBox"), "None bleed must not write /BleedBox");
     }
 }

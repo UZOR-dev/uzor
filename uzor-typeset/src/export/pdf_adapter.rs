@@ -371,7 +371,7 @@ pub fn pages_to_pdf(pages: &[Page<'_>], master: &PageMaster<'_>, theme: &Theme, 
             .collect();
 
         builder
-            .add_page(PdfPageSpec { width_pt: master.width, height_pt: master.height, raster: None, raster_px: (0, 0), text_runs, links, content })
+            .add_page(PdfPageSpec { width_pt: master.width, height_pt: master.height, raster: None, raster_px: (0, 0), text_runs, links, content, trim: None, bleed: None })
             .unwrap_or_else(|e| {
                 panic!(
                     "pages_to_pdf: assembling page {} failed unexpectedly (this adapter never \
