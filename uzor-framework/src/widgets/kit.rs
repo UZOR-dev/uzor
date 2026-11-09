@@ -353,6 +353,7 @@ pub struct FieldBuilder<'a> {
     placeholder: &'a str,
     masked: bool,
     clip: bool,
+    within: Option<Rect>,
     px: f64,
     family: &'a str,
     color: Option<&'a str>,
@@ -374,6 +375,11 @@ pub struct FieldResponse {
 /// input): the kit registers it at `rect`, names it, draws text, placeholder, selection,
 /// a blinking caret and composition, and feeds caret geometry and the IME area back to the text store. The
 /// edit state lives in the store; seed or clear it there before `build`.
+///
+/// Like an `<input>`, the text is clipped to its rect and scrolls sideways with the
+/// caret while focused (back to the start when not). A field inside a scrolling box
+/// (a dialog body) gets that box with [`FieldBuilder::clip_to`]: what scrolls out of
+/// it is neither painted nor hit.
 pub fn field<'a>(id: impl Into<WidgetId>, rect: Rect) -> FieldBuilder<'a> {
     FieldBuilder {
         id: id.into(),
@@ -383,7 +389,8 @@ pub fn field<'a>(id: impl Into<WidgetId>, rect: Rect) -> FieldBuilder<'a> {
         name: "",
         placeholder: "",
         masked: false,
-        clip: false,
+        clip: true,
+        within: None,
         px: 13.0,
         family: "sans-serif",
         color: None,
@@ -440,9 +447,17 @@ impl<'a> FieldBuilder<'a> {
         self.text_rect = Some(r);
         self
     }
-    /// Clip the text to its rect.
+    /// Clip the text to its rect and scroll it with the caret (on by default; `false`
+    /// lets it run past the rect).
     pub fn clip(mut self, on: bool) -> Self {
         self.clip = on;
+        self
+    }
+    /// Clip paint and hits to `r` as well: the scroll viewport (or other `overflow:
+    /// hidden` box) the field sits in. A field scrolled out of `r` keeps its text but
+    /// is neither painted nor hit; one half out shows and hits only its visible part.
+    pub fn clip_to(mut self, r: Rect) -> Self {
+        self.within = Some(r);
         self
     }
     /// Font size and CSS family.
@@ -479,12 +494,13 @@ impl<'a> FieldBuilder<'a> {
         let color = self.color.map_or_else(|| css_hex(theme.text_normal()), str::to_owned);
         let ph_color = self.placeholder_color.map_or_else(|| css_hex(theme.placeholder()), str::to_owned);
         let sel_color = css_hex(theme.selection());
-        let FieldBuilder { id, rect, text_rect, config, name, placeholder, masked, clip, px, family, set, parent, .. } = self;
+        let FieldBuilder { id, rect, text_rect, config, name, placeholder, masked, clip, within, px, family, set, parent, .. } = self;
         let fr = text_rect.unwrap_or(rect);
+        let hit = within.map_or(rect, |w| w.intersect(rect));
         let (out, ime) = cx.with_paint(|render, widgets, v, _| {
             let (coord, _, layer) = parts(widgets);
             coord.set_default_layer(Some(layer.clone()));
-            coord.register_text_field(id.clone(), rect, config);
+            coord.register_text_field(id.clone(), hit, config);
             if let Some(p) = &parent {
                 coord.set_widget_parent(&id, p);
             }
@@ -501,33 +517,66 @@ impl<'a> FieldBuilder<'a> {
                 }
             }
             let focused = v.is_focused(&id);
-            let (text, caret, preedit, engaged, selection) = {
+            let (text, caret, preedit, engaged, selection, prev) = {
                 let fields = coord.text_fields();
                 match fields.field_state(&id) {
                     Some(s) => {
                         let (text, caret, preedit) = s.display();
                         let selection = preedit.is_none().then(|| s.selection_range()).flatten();
-                        (text, caret, preedit, s.engaged, selection)
+                        // Last frame's sideways scroll: its rect's left less its text origin.
+                        let prev = match (s.last_rect, s.last_char_positions.first()) {
+                            (Some(r), Some(&x0)) => (r.0 - x0).max(0.0),
+                            _ => 0.0,
+                        };
+                        (text, caret, preedit, s.engaged, selection, prev)
                     }
-                    None => (String::new(), 0, None, false, None),
+                    None => (String::new(), 0, None, false, None, 0.0),
                 }
             };
             let shown = if masked { "\u{2022}".repeat(text.chars().count()) } else { text.clone() };
             let blink = focused && engaged && coord.text_fields().cursor_visible(now_ms);
-            if clip {
-                render.save();
-                render.begin_path();
-                render.rect(fr.x, fr.y, fr.width, fr.height);
-                render.clip();
+            render.set_font(&format!("400 {px}px {family}"));
+            let scroll = if clip && focused && !shown.is_empty() {
+                let at: String = shown.chars().take(caret).collect();
+                field_scroll(prev, render.measure_text(&at), render.measure_text(&shown), fr.width)
+            } else {
+                0.0
+            };
+            // The text runs from `fr.x - scroll`; the clip keeps it inside `fr` (over the
+            // hit rect's full height, so tall glyphs keep their tops) and inside `within`.
+            let tr = Rect::new(fr.x - scroll, fr.y, fr.width + scroll, fr.height);
+            let mut cut = clip.then(|| {
+                let (top, bot) = (fr.y.min(rect.y), (fr.y + fr.height).max(rect.y + rect.height));
+                Rect::new(fr.x, top, fr.width, bot - top)
+            });
+            if let Some(w) = within {
+                cut = Some(cut.map_or(w, |c| c.intersect(w)));
             }
-            if let Some(range) = selection {
-                render.set_font(&format!("400 {px}px {family}"));
-                paint_field_selection(render, fr.x, fr.y, fr.height, &shown, range, &sel_color);
-            }
-            let pos = draw_field_text_ime(render, fr, &shown, placeholder, blink.then_some(caret), preedit, px, &color, &ph_color, family);
-            if clip {
-                render.restore();
-            }
+            let pos = if cut.is_some_and(|c| c.width <= 0.0 || c.height <= 0.0) {
+                // Scrolled out of sight: the store still gets the geometry, nothing is painted.
+                let mut pos = vec![tr.x];
+                let mut acc = String::new();
+                for ch in shown.chars() {
+                    acc.push(ch);
+                    pos.push(tr.x + render.measure_text(&acc));
+                }
+                pos
+            } else {
+                if let Some(c) = cut {
+                    render.save();
+                    render.begin_path();
+                    render.rect(c.x, c.y, c.width, c.height);
+                    render.clip();
+                }
+                if let Some(range) = selection {
+                    paint_field_selection(render, tr.x, fr.y, fr.height, &shown, range, &sel_color);
+                }
+                let pos = draw_field_text_ime(render, tr, &shown, placeholder, blink.then_some(caret), preedit, px, &color, &ph_color, family);
+                if cut.is_some() {
+                    render.restore();
+                }
+                pos
+            };
             let ime = (focused && caret < pos.len()).then(|| Rect::new(pos[caret], fr.y, 1.0, fr.height));
             let fields = coord.text_fields_mut();
             let pos = match fields.field_state(&id) {
@@ -541,6 +590,21 @@ impl<'a> FieldBuilder<'a> {
             cx.ime_area(at);
         }
         out
+    }
+}
+
+/// A field's sideways scroll (px) so the caret at `caret_x` (from the text start) stays
+/// in a box `width` wide: last frame's `prev` kept while the caret is in view, moved
+/// just enough when it is not, never past the text's end (`text_w`).
+pub(crate) fn field_scroll(prev: f64, caret_x: f64, text_w: f64, width: f64) -> f64 {
+    let room = (width - 1.0).max(0.0);
+    let s = prev.clamp(0.0, (text_w - room).max(0.0));
+    if caret_x < s {
+        caret_x
+    } else if caret_x > s + room {
+        caret_x - room
+    } else {
+        s
     }
 }
 

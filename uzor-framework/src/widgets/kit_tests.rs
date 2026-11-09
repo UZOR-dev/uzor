@@ -43,6 +43,8 @@ struct Harness {
     coord: InputCoordinator,
     /// Keep the coordinator (and its text store) across frames, as the kernel does.
     keep_coord: bool,
+    /// Paint into this recorder instead of a null context.
+    record: Option<uzor::testing::RecordingRenderContext>,
 }
 
 impl Harness {
@@ -53,7 +55,11 @@ impl Harness {
         } else {
             self.coord = InputCoordinator::new();
         }
-        let mut render = NullRenderContext::default();
+        let mut null = NullRenderContext::default();
+        let render: &mut dyn uzor::render::RenderContext = match self.record.as_mut() {
+            Some(r) => r,
+            None => &mut null,
+        };
         let mut hooks = HookOps::<K>::default();
         let mut cx = PanelCx {
             window: WindowId(1),
@@ -63,7 +69,7 @@ impl Harness {
             rect: Rect::new(0.0, 0.0, 800.0, 600.0),
             dpr: 1.0,
             tokens: tokens.as_ref(),
-            render: &mut render,
+            render,
             widgets: Widgets {
                 coord: &mut self.coord,
                 states: &mut self.states,
@@ -305,6 +311,81 @@ fn field_registers_names_masks_and_feeds_the_store() {
     assert_eq!(r.text, "xy");
     let r = h.frame(&v, |cx| pw().set(Some("")).build(cx));
     assert_eq!(r.text, "");
+}
+
+/// Each `fill_text` / `fill_rect` with the clip in force when it ran (the intersection of
+/// every `rect` + `clip` under the open `save`s; `None` = unclipped).
+fn painted_with_clips(ops: &[uzor::testing::DrawOp]) -> Vec<(String, f64, Option<Rect>)> {
+    use uzor::testing::DrawOp as D;
+    let (mut stack, mut cur, mut path, mut out) = (Vec::new(), None::<Rect>, None::<Rect>, Vec::new());
+    for op in ops {
+        match op {
+            D::Save => stack.push(cur),
+            D::Restore => cur = stack.pop().flatten(),
+            D::BeginPath => path = None,
+            D::Rect { x, y, w, h } => path = Some(Rect::new(*x, *y, *w, *h)),
+            D::Clip => cur = path.map(|p| cur.map_or(p, |c: Rect| c.intersect(p))),
+            D::FillText { text, x, .. } => out.push((text.clone(), *x, cur)),
+            D::FillRect { x, .. } => out.push(("<rect>".into(), *x, cur)),
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn field_clips_scrolls_with_the_caret_and_stays_inside_its_viewport() {
+    // 10 px a char: 60 chars of a pasted token in a 200 px field.
+    let rect = Rect::new(10.0, 100.0, 200.0, 28.0);
+    let id = WidgetId::from("tok");
+    let long = format!("hsreq1.{}", "x".repeat(53));
+    let mut h = Harness { keep_coord: true, record: Some(uzor::testing::RecordingRenderContext::with_char_width(10.0)), ..Default::default() };
+    let mut v = idle();
+    v.focused = Some(id.clone());
+    h.frame(&idle(), |cx| field("tok", rect).placeholder("hsreq1.…").set(Some(&long)).build(cx));
+    h.coord.text_fields_mut().focus(id.clone());
+    let viewport = Rect::new(0.0, 0.0, 400.0, 300.0);
+    let frame = |h: &mut Harness, v: &VisualView<K>, r: Rect, vp: Rect| {
+        h.record.as_mut().unwrap().ops.clear();
+        h.frame(v, |cx| field("tok", r).placeholder("hsreq1.…").clip_to(vp).build(cx));
+        painted_with_clips(&h.record.as_ref().unwrap().ops)
+    };
+    // Focused, caret at the end: the text scrolls left so the caret shows, all inside the field.
+    let p = frame(&mut h, &v, rect, viewport);
+    let (t, x, clip) = p.iter().find(|(t, ..)| t == &long).cloned().expect("text painted");
+    assert_eq!(clip, Some(rect), "text clipped to the field: {t}");
+    assert_eq!(x, rect.x - (600.0 - 199.0), "scrolled so the end shows");
+    let caret = p.iter().find(|(t, ..)| t == "<rect>").map(|c| (c.1, c.2));
+    if let Some((cx, Some(c))) = caret {
+        assert!(cx >= c.x && cx < c.x + c.width, "caret {cx} inside {c:?}");
+    }
+    // Caret home: back to the start.
+    h.coord.text_fields_mut().field_state_mut(&id).unwrap().cursor = 0;
+    let p = frame(&mut h, &v, rect, viewport);
+    assert_eq!(p.iter().find(|(t, ..)| t == &long).unwrap().1, rect.x);
+    // Not focused: from the start, still clipped.
+    let p = frame(&mut h, &idle(), rect, viewport);
+    assert_eq!(p.iter().find(|(t, ..)| t == &long).map(|e| (e.1, e.2)), Some((rect.x, Some(rect))));
+    // Scrolled half under a footer: clipped to the viewport, and hit only there.
+    let half = Rect::new(0.0, 0.0, 400.0, 114.0);
+    let p = frame(&mut h, &idle(), rect, half);
+    assert_eq!(p.iter().find(|(t, ..)| t == &long).unwrap().2, Some(Rect::new(10.0, 100.0, 200.0, 14.0)));
+    assert_eq!(h.coord.widget_rect(&id), Some(Rect::new(10.0, 100.0, 200.0, 14.0)));
+    // Scrolled out of the viewport: nothing painted (no placeholder or text under the footer).
+    h.coord.text_fields_mut().clear(&id);
+    let p = frame(&mut h, &idle(), rect, Rect::new(0.0, 0.0, 400.0, 90.0));
+    assert!(p.is_empty(), "{p:?}");
+    let p = frame(&mut h, &idle(), rect, viewport);
+    assert_eq!(p.iter().find(|(t, ..)| t == "hsreq1.…").unwrap().2, Some(rect), "placeholder clipped too");
+}
+
+#[test]
+fn field_scroll_keeps_the_caret_in_view() {
+    assert_eq!(field_scroll(0.0, 50.0, 100.0, 200.0), 0.0);
+    assert_eq!(field_scroll(0.0, 600.0, 600.0, 200.0), 401.0);
+    assert_eq!(field_scroll(401.0, 500.0, 600.0, 200.0), 401.0, "caret still in view: no jump");
+    assert_eq!(field_scroll(401.0, 300.0, 600.0, 200.0), 300.0);
+    assert_eq!(field_scroll(401.0, 100.0, 100.0, 200.0), 0.0, "text shrank: back to the start");
 }
 
 fn key(code: uzor::input::keyboard::KeyCode, text: Option<&str>) -> crate::KeyInput {
