@@ -91,6 +91,8 @@ pub struct El {
     /// An embed slot ([`El::slot`]): the app paints something else (a kit widget, a
     /// canvas) into the element's content box, found with [`Dom::slots`].
     pub slot: Option<String>,
+    /// Vertical scroll offset of an overflow container ([`El::scroll_top`]).
+    pub scroll_top: f64,
 }
 
 /// Built-in control content of an element, painted into its content box after the
@@ -420,6 +422,15 @@ impl El {
         self
     }
     /// Append `c` when `cond` (conditional markup).
+    /// Scroll the element's content up by `y` px, as CSS `scrollTop`: its descendants
+    /// (in flow and positioned, not `fixed`) move, the element itself does not. With
+    /// `overflow: hidden | auto | scroll` they are clipped to its padding box, so
+    /// nothing scrolled out paints or hits outside it; [`Placed::scroll_height`]
+    /// gives the content height to clamp `y` against.
+    pub fn scroll_top(mut self, y: f64) -> Self {
+        self.scroll_top = y;
+        self
+    }
     pub fn child_if(self, cond: bool, c: impl FnOnce() -> El) -> Self {
         if cond {
             self.child(c())
@@ -456,6 +467,10 @@ pub struct Placed {
     /// A text input's char boundaries: x of each boundary of [`Edit::display`] from the
     /// text start (`chars + 1` values).
     pub bounds: Vec<f64>,
+    /// An overflow container's content height (CSS `scrollHeight`): from its padding
+    /// box top to the lowest descendant's bottom plus its bottom padding, at least its
+    /// padding box height. `0` for other boxes.
+    pub scroll_height: f64,
 }
 
 impl Default for Placed {
@@ -476,6 +491,7 @@ impl Default for Placed {
             fixed: false,
             clip: None,
             bounds: Vec::new(),
+            scroll_height: 0.0,
         }
     }
 }
@@ -698,6 +714,7 @@ struct Resolved {
     slot: Option<String>,
     /// A text input's display char boundaries.
     bounds: Vec<f64>,
+    scroll_top: f64,
     children: Vec<Resolved>,
 }
 
@@ -1016,6 +1033,7 @@ fn resolve<'e>(
         control: el.control.clone(),
         slot: el.slot.clone(),
         bounds,
+        scroll_top: el.scroll_top,
         children,
     })
 }
@@ -1137,6 +1155,18 @@ fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(bool, i
     };
     let a = alpha * style.opacity.unwrap_or(1.0);
     style.opacity = (a < 1.0).then_some(a);
+    let scroll_height = if style.clips() {
+        let e = style.border_edges();
+        let top = l.rect.y + e[0];
+        let pad = style.padding.unwrap_or([0.0; 4])[2];
+        let inner_h = (l.rect.height - e[0] - e[2]).max(0.0);
+        (deepest(&l.children, top) + pad - top).max(inner_h)
+    } else {
+        0.0
+    };
+    // `scrollTop`: the descendants are placed `scroll_top` higher (the box stays put).
+    let shifted: Option<Vec<Laid>> = (r.scroll_top != 0.0).then(|| l.children.iter().map(|c| shift_laid(c, -r.scroll_top)).collect());
+    let kids: &[Laid] = shifted.as_deref().unwrap_or(&l.children);
     let inline = r.runs.map(|m| {
         let c = content_rect(&style, l.rect);
         let mut lines = wrap_runs(&m, Some(c.width));
@@ -1174,8 +1204,9 @@ fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(bool, i
         fixed,
         clip,
         bounds: r.bounds,
+        scroll_height,
     });
-    for (c, cl) in r.children.into_iter().zip(&l.children) {
+    for (c, cl) in r.children.into_iter().zip(kids) {
         if c.style.positioned() {
             let z = c.style.z_index.unwrap_or(0);
             let f = fixed || c.style.fixed();
@@ -1191,6 +1222,16 @@ fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(bool, i
             place(c, cl, out, layers, a, fixed, inner);
         }
     }
+}
+
+/// The lowest bottom edge in `ls` and their descendants (`floor` when empty).
+fn deepest(ls: &[Laid], floor: f64) -> f64 {
+    ls.iter().fold(floor, |m, c| deepest(&c.children, m.max(c.rect.y + c.rect.height)))
+}
+
+/// `l` and its descendants moved down by `dy`.
+fn shift_laid(l: &Laid, dy: f64) -> Laid {
+    Laid { rect: Rect::new(l.rect.x, l.rect.y + dy, l.rect.width, l.rect.height), children: l.children.iter().map(|c| shift_laid(c, dy)).collect() }
 }
 
 /// Lay out `root` at `(x, y)` in a containing block `w` wide, without painting.
@@ -1240,8 +1281,14 @@ pub fn lay_out_in(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64,
     Dom { boxes, root: laid.rect }
 }
 
-/// Paint one placed box: shadow, background, border, text, kind content.
+/// Paint one placed box: shadow, background, border, text, kind content, inside the
+/// clip of its `overflow` ancestors ([`Placed::clip`]): a box painted on its own stays
+/// inside its scroll container as it does in [`paint`].
 pub fn paint_box(ctx: &mut dyn RenderContext, b: &Placed) {
+    with_clip(ctx, b, |ctx| paint_box_unclipped(ctx, b));
+}
+
+fn paint_box_unclipped(ctx: &mut dyn RenderContext, b: &Placed) {
     let s = &b.style;
     if let Some(a) = s.opacity {
         ctx.set_global_alpha(a);
@@ -1521,7 +1568,7 @@ pub fn paint(ctx: &mut dyn RenderContext, dom: &Dom) {
 pub fn paint_slots(ctx: &mut dyn RenderContext, dom: &Dom, slot: &mut dyn FnMut(&mut dyn RenderContext, &str, Rect)) {
     for b in &dom.boxes {
         with_clip(ctx, b, |ctx| {
-            paint_box(ctx, b);
+            paint_box_unclipped(ctx, b);
             if let Some(k) = &b.slot {
                 slot(ctx, k, content_box(b));
             }
@@ -1529,7 +1576,10 @@ pub fn paint_slots(ctx: &mut dyn RenderContext, dom: &Dom, slot: &mut dyn FnMut(
     }
 }
 
-fn with_clip(ctx: &mut dyn RenderContext, b: &Placed, f: impl FnOnce(&mut dyn RenderContext)) {
+/// Run `f` inside `b`'s overflow clip ([`Placed::clip`]): for what a host paints in a
+/// box itself (an embed, an animation), so it stays in the box's scroll container like
+/// the box does. Nothing runs when the clip is empty (scrolled out of sight).
+pub fn with_clip(ctx: &mut dyn RenderContext, b: &Placed, f: impl FnOnce(&mut dyn RenderContext)) {
     match b.clip {
         Some(c) => {
             if c.width <= 0.0 || c.height <= 0.0 {
@@ -1819,7 +1869,7 @@ pub fn paint_with(ctx: &mut dyn RenderContext, dom: &Dom, reg: &mut AnimRegistry
     let mut report = AnimReport::default();
     for b in &dom.boxes {
         with_clip(ctx, b, |ctx| {
-            paint_box(ctx, b);
+            paint_box_unclipped(ctx, b);
             paint_anim(ctx, b, reg, frame, &mut report);
         });
     }
@@ -2206,6 +2256,93 @@ mod tests {
         ctx.ops.clear();
         path_border_box(&mut ctx, &d.boxes[0]);
         assert!(format!("{:?}", ctx.ops).contains("MoveTo { x: 12.0, y: 0.0 }"));
+    }
+
+    /// Each `fill_text` with the clip in force when it ran (every `rect` + `clip` under
+    /// the open `save`s intersected; `None` = unclipped).
+    fn texts_with_clips(ops: &[crate::testing::DrawOp]) -> Vec<(String, f64, Option<Rect>)> {
+        use crate::testing::DrawOp as D;
+        let (mut stack, mut cur, mut path, mut out) = (Vec::new(), None::<Rect>, None::<Rect>, Vec::new());
+        for op in ops {
+            match op {
+                D::Save => stack.push(cur),
+                D::Restore => cur = stack.pop().flatten(),
+                D::BeginPath => path = None,
+                D::Rect { x, y, w, h } => path = Some(Rect::new(*x, *y, *w, *h)),
+                D::Clip => cur = path.map(|p| cur.map_or(p, |c: Rect| c.intersect(p))),
+                D::FillText { text, x, .. } => out.push((text.clone(), *x, cur)),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn scroll_container_clips_text_placeholders_and_inputs_painted_box_by_box() {
+        // A dialog: a scrolling body over a footer. The body is scrolled so the second input
+        // sits under the footer; a long value runs past the first input's right edge.
+        let sh = Sheet::parse(
+            "div.card { width: 200px; height: 120px; display: flex; flex-direction: column } \
+             div.body { flex-grow: 1; min-height: 0; overflow: auto; padding-bottom: 4px; display: flex; flex-direction: column } \
+             div.foot { height: 30px; flex-shrink: 0 } input { height: 24px; padding: 0 6px; font-size: 10px; line-height: 14px; flex-shrink: 0 } \
+             div.t { height: 40px; flex-shrink: 0; font-size: 10px; line-height: 14px }",
+        )
+        .unwrap();
+        let mut ctx = crate::testing::RecordingRenderContext::with_char_width(6.0);
+        let long = "hsreq1.".to_string() + &"x".repeat(60);
+        let tree = |y: f64| {
+            El::new("div.card")
+                .child(
+                    El::new("div.body")
+                        .id("body")
+                        .scroll_top(y)
+                        .child(El::new("div.t").text("Paste the block"))
+                        .child(El::new("input").id("a").control(Control::input(Edit { caret: Some(67), ..Edit::new(long.clone()) })))
+                        .child(El::new("div.t").text("Paste the request"))
+                        .child(El::new("input").id("b").control(Control::input(Edit { placeholder: "hsreq1.…".into(), ..Edit::new("") }))),
+                )
+                .child(El::new("div.foot").id("foot").text("Refresh"))
+        };
+        let d0 = lay_out(&mut ctx, &sh, &tree(0.0), 0.0, 0.0, 400.0, &|_| State::NONE);
+        let body = d0.get("body").unwrap();
+        assert_eq!(body.rect, Rect::new(0.0, 0.0, 200.0, 90.0));
+        assert_eq!(body.scroll_height, 40.0 + 24.0 + 40.0 + 24.0 + 4.0, "scrollHeight: content plus bottom padding");
+        // scrollTop moves the descendants, not the container; the clip stays its padding box.
+        let d = lay_out(&mut ctx, &sh, &tree(30.0), 0.0, 0.0, 400.0, &|_| State::NONE);
+        assert_eq!(d.get("body").unwrap().rect, body.rect);
+        let (b0, b) = (d0.get("b").unwrap().rect, d.get("b").unwrap().rect);
+        assert_eq!(b.y, b0.y - 30.0);
+        assert!(b.y < 90.0 && b.y + b.height > 90.0, "«b» straddles the footer's top: {b:?}");
+        assert_eq!(d.get("b").unwrap().clip, Some(Rect::new(0.0, 0.0, 200.0, 90.0)));
+        assert_eq!(d.get("foot").unwrap().clip, None, "the footer is not in the scroller");
+        assert_eq!(d.hit(20.0, 100.0), Some("foot"), "the scrolled input does not take the footer's clicks");
+        // Painted one box at a time (as a host that does its own per-box work): every text
+        // inside the body stays in its clip, the input's own text inside its content box too.
+        ctx.ops.clear();
+        for p in &d.boxes {
+            paint_box(&mut ctx, p);
+        }
+        let texts = texts_with_clips(&ctx.ops);
+        for (t, _, c) in texts.iter().filter(|(t, ..)| t != "Refresh") {
+            let c = c.unwrap_or_else(|| panic!("{t:?} painted unclipped"));
+            assert!(c.y >= 0.0 && c.y + c.height <= 90.0 + 1e-9, "{t:?} leaks out of the body: {c:?}");
+        }
+        let (_, x, c) = texts.iter().find(|(t, ..)| *t == long).unwrap();
+        let a = content_box(d.get("a").unwrap());
+        assert!(c.unwrap().x >= a.x && c.unwrap().x + c.unwrap().width <= a.x + a.width, "the value is clipped to the input");
+        assert!(*x < a.x, "scrolled left so the caret at the end shows");
+        let caret = d.get("a").unwrap().caret_rect().unwrap();
+        assert!(caret.x >= a.x && caret.x < a.x + a.width, "caret in view: {caret:?} in {a:?}");
+        let (_, _, pc) = texts.iter().find(|(t, ..)| t == "hsreq1.…").unwrap();
+        assert!(pc.unwrap().y + pc.unwrap().height <= 90.0, "placeholder cut at the footer");
+        // Scrolled further, «b» is wholly under the footer: none of it paints.
+        let d = lay_out(&mut ctx, &sh, &tree(38.0 + 40.0), 0.0, 0.0, 400.0, &|_| State::NONE);
+        ctx.ops.clear();
+        for p in &d.boxes {
+            paint_box(&mut ctx, p);
+        }
+        let texts = texts_with_clips(&ctx.ops);
+        assert!(texts.iter().filter(|(t, ..)| t == "hsreq1.…").all(|(_, _, c)| c.is_some_and(|c| c.height > 0.0 && c.y + c.height <= 90.0)), "{texts:?}");
     }
 
     #[test]
