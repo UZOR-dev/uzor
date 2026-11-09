@@ -13,3 +13,4 @@ pub mod catalog;
 pub use dashboard::DashboardApp;
 pub use kit_gallery::Gallery;
 pub mod dom_gallery;
+pub mod dom_widgets;

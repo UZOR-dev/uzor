@@ -101,6 +101,7 @@ pub struct El {
 /// | [`Control::Switch`] | a round knob in the content box, left (off) to right (on) | `--knob` (`#fff`), `:checked` on the element when on |
 /// | [`Control::Checkbox`] | a tick (or a dash when mixed) | `--check` (default `color`), `--check-width` (2px), `:checked` |
 /// | [`Control::Spinner`] | a rotating 270° arc | `color`, `--spin-track`, `--spin-width`, `--spin-speed` (turns/s, 1) |
+/// | [`Control::Ring`] | a meter ring: the full track, then a `frac` arc clockwise from 12 o'clock | `--ring-color` (else `color`) for the arc, `--ring-track`, `--ring-width` |
 /// | [`Control::Input`] | value or placeholder, selection, caret, IME composition | `color`, `font-*`, `--placeholder`, `--selection`, `--caret`, `:focus` while it has a caret |
 #[derive(Clone, Debug, PartialEq)]
 pub enum Control {
@@ -110,6 +111,8 @@ pub enum Control {
     Checkbox { on: bool, mixed: bool },
     /// A busy spinner at time `t` (seconds).
     Spinner { t: f64 },
+    /// A meter ring filled to `frac` (0 … 1), e.g. a limit or quota.
+    Ring { frac: f64 },
     /// A single-line text input showing the edit state (the app or the framework's text
     /// store owns editing; the DOM lays it out and paints it).
     Input(Box<Edit>),
@@ -126,6 +129,10 @@ impl Control {
     pub fn spinner(t: f64) -> Self {
         Control::Spinner { t }
     }
+    /// A meter ring filled to `frac`, clamped to 0 … 1.
+    pub fn ring(frac: f64) -> Self {
+        Control::Ring { frac: if frac.is_finite() { frac.clamp(0.0, 1.0) } else { 0.0 } }
+    }
     pub fn input(e: Edit) -> Self {
         Control::Input(Box::new(e))
     }
@@ -135,6 +142,7 @@ impl Control {
             Control::Switch { .. } => "switch",
             Control::Checkbox { .. } => "checkbox",
             Control::Spinner { .. } => "progressbar",
+            Control::Ring { .. } => "meter",
             Control::Input(_) => "textbox",
         }
     }
@@ -1239,6 +1247,9 @@ pub fn paint_box(ctx: &mut dyn RenderContext, b: &Placed) {
         ctx.set_global_alpha(a);
     }
     let r = b.rect;
+    if let Some(blur) = s.backdrop_blur {
+        ctx.blur_backdrop(r.x, r.y, r.width, r.height, blur, s.border_radius.unwrap_or(0.0));
+    }
     let shadow: Option<Shadow> = s.box_shadow.as_deref().and_then(<Option<Shadow>>::from_css).flatten();
     let bg = s.background.as_deref().filter(|b| *b != "transparent" && *b != "none");
     if s.border_radii.is_some() || s.border_widths.is_some() || s.border_colors.is_some() {
@@ -1423,6 +1434,25 @@ fn paint_control(ctx: &mut dyn RenderContext, b: &Placed, ctl: &Control, c: Rect
             ctx.arc(cx, cy, rr, a, a + std::f64::consts::PI * 1.5);
             ctx.stroke();
             ctx.set_line_cap("butt");
+        }
+        Control::Ring { frac } => {
+            let r = c.width.min(c.height) / 2.0;
+            let w = num("--ring-width", (r / 6.0).clamp(1.5, 6.0));
+            let (cx, cy, rr) = (c.x + c.width / 2.0, c.y + c.height / 2.0, (r - w / 2.0).max(0.5));
+            ctx.set_stroke_width(w);
+            ctx.set_stroke_color(s.custom("--ring-track").unwrap_or("rgba(255,255,255,0.08)"));
+            ctx.begin_path();
+            ctx.arc(cx, cy, rr, 0.0, std::f64::consts::TAU);
+            ctx.stroke();
+            if *frac > 0.0 {
+                let a = -std::f64::consts::FRAC_PI_2;
+                ctx.set_stroke_color(s.custom("--ring-color").unwrap_or(fg));
+                ctx.set_line_cap("round");
+                ctx.begin_path();
+                ctx.arc(cx, cy, rr, a, a + std::f64::consts::TAU * frac.min(1.0));
+                ctx.stroke();
+                ctx.set_line_cap("butt");
+            }
         }
         Control::Input(e) => {
             let (_, px, lh, _) = font_of(s);

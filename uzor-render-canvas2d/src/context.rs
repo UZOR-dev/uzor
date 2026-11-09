@@ -457,7 +457,43 @@ impl GradientPainter for Canvas2dRenderContext {
 // UiEffectHelpers — all defaults (no blur support)
 // ---------------------------------------------------------------------------
 
-impl uzor::render::UiEffectHelpers for Canvas2dRenderContext {}
+impl uzor::render::UiEffectHelpers for Canvas2dRenderContext {
+    /// `filter: blur()` over a copy of the canvas region, clipped to the rounded rect.
+    /// Root canvas only: an offscreen recording has no backdrop to read.
+    fn blur_backdrop(&mut self, x: f64, y: f64, width: f64, height: f64, blur: f64, corner: f64) {
+        let Canvas2dCtx::Root(c) = &self.ctx else { return };
+        let Some(cv) = c.canvas() else { return };
+        if blur <= 0.0 || width < 1.0 || height < 1.0 {
+            return;
+        }
+        let Ok(m) = c.get_transform() else { return };
+        let (sx, sy) = (m.a(), m.d());
+        c.save();
+        c.begin_path();
+        let r = corner.min(width / 2.0).min(height / 2.0).max(0.0);
+        c.move_to(x + r, y);
+        let _ = c.arc_to(x + width, y, x + width, y + height, r);
+        let _ = c.arc_to(x + width, y + height, x, y + height, r);
+        let _ = c.arc_to(x, y + height, x, y, r);
+        let _ = c.arc_to(x, y, x + width, y, r);
+        c.close_path();
+        c.clip();
+        let _ = c.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+        let sigma = blur * sx.abs().max(sy.abs());
+        let pad = (sigma * 3.0).ceil();
+        let (dx, dy) = (x * sx + m.e() - pad, y * sy + m.f() - pad);
+        let (dw, dh) = (width * sx + 2.0 * pad, height * sy + 2.0 * pad);
+        let (dx, dy) = (dx.max(0.0), dy.max(0.0));
+        let dw = dw.min(cv.width() as f64 - dx);
+        let dh = dh.min(cv.height() as f64 - dy);
+        if dw >= 1.0 && dh >= 1.0 {
+            c.set_filter(&format!("blur({sigma}px)"));
+            let _ = c.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(&cv, dx, dy, dw, dh, dx, dy, dw, dh);
+            c.set_filter("none");
+        }
+        c.restore();
+    }
+}
 
 // ---------------------------------------------------------------------------
 // BatchPainter — default impl (JS bridge call cost dominates; no batching win)

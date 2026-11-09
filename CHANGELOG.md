@@ -2,6 +2,30 @@
 
 All crates in the workspace share one version.
 
+## Unreleased
+
+### Dashboard widgets (`uzor::ui::dash`)
+
+- Generic DOM widgets fed by plain data, monochrome (`--d-*` variables, one green live dot):
+  space switcher and its menu, summary tiles with mini histograms, live agents by space and
+  node, task rows with trees (`TaskNode`, `build_tree` from parent links, `flatten_tree`,
+  `toggle_fold`, progress over all descendants), limit rings, task card, mini board, 24h
+  activity, titled `section`, mini panels (`MiniPanel` in `PanelMode::Widget` / `Collapsed` /
+  `Rail`, `PanelMode::after` for the collapse / expand hits) and monochrome provider glyphs
+  (`provider_glyph`, `glyph`: claude, codex, grok, kimi, opencode, gemini, cursor, qwen,
+  deepseek, human; an unknown provider shows its letter).
+- Overlay glass: `glass(el)` wraps popovers, menus, select popovers and dialogs in
+  `--k-glass-bg`, `--k-glass-line`, `--k-glass-blur` (`glass_vars` retunes them); embedded
+  widgets stay opaque.
+- CSS `backdrop-filter: blur(N)` (`Style::backdrop_blur`), painted through the new
+  `UiEffectHelpers::blur_backdrop` (tiny-skia: box blur under rounded corners, through the
+  current scale; canvas2d: `filter: blur()` over the canvas region, root canvas only; other
+  backends: no-op, the translucent fill alone).
+- `Control::Ring { frac }` (`role="meter"`): a track and a clockwise arc, `--ring-color`,
+  `--ring-track`, `--ring-width`.
+- Examples: `dom_widgets` page (EN/RU through `uzor::ui::i18n`), bins `dom-widgets` (native)
+  and `dom-widgets-frames` (PNG shots).
+
 ## 1.5.24
 
 ### Dev control, stage 2 (uzor-framework feature `dev-control`)

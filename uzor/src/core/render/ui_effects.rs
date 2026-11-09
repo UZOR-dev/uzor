@@ -37,6 +37,16 @@ pub trait UiEffectHelpers: ShapeHelpers {
         let _ = (x, y, width, height);
     }
 
+    /// Blur the pixels already painted under the rect `(x, y, width, height)` (in the
+    /// current user space) with a `blur`-px radius, inside rounded corners of radius
+    /// `corner`: the backdrop of a CSS `backdrop-filter: blur()` box. The caller paints
+    /// a translucent fill over it.
+    ///
+    /// Default: no-op (the translucent fill alone). CPU and canvas backends override.
+    fn blur_backdrop(&mut self, x: f64, y: f64, width: f64, height: f64, blur: f64, corner: f64) {
+        let _ = (x, y, width, height, blur, corner);
+    }
+
     /// Returns `true` when a blur image is loaded and ready for drawing.
     ///
     /// Default: `false`. Override in backends that support blur.

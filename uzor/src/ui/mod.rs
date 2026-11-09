@@ -3,6 +3,7 @@ pub mod assets;
 pub mod css_box;
 pub mod css_text;
 pub mod dom;
+pub mod dash;
 pub mod domkit;
 pub mod effects;
 pub mod i18n;

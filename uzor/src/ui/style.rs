@@ -206,6 +206,11 @@ pub struct Style {
     /// `border-style` (`solid` when unset): `dashed` and `dotted` stroke the border with a
     /// dash pattern, `none` / `hidden` draw no border.
     pub border_style: Option<String>,
+    /// `backdrop-filter: blur(N)` (or `-webkit-backdrop-filter`): the pixels already
+    /// painted under the box are blurred with this radius (px) before its background,
+    /// so a translucent background reads as frosted glass. Backends without a readable
+    /// backdrop leave the pixels as they are (the translucent fill alone).
+    pub backdrop_blur: Option<f64>,
 }
 
 impl Style {
@@ -298,6 +303,15 @@ impl Style {
             _ => None,
         }
     }
+}
+
+/// The radius of a `blur(N)` in a `backdrop-filter` value (`none` and other filters: `None`).
+fn backdrop_blur(v: &str) -> Option<f64> {
+    let i = v.find("blur(")?;
+    let rest = &v[i + 5..];
+    let n = rest[..rest.find(')')?].trim();
+    let n = n.strip_suffix("px").unwrap_or(n).trim();
+    n.parse::<f64>().ok().filter(|r| r.is_finite() && *r > 0.0).map(|r| r.min(200.0))
 }
 
 /// A string with `'static` lifetime for the `&'static str` fields of widget style
@@ -1011,6 +1025,7 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         }
         "grid-template-columns" => s.grid_template_columns = Some(v.into()),
         "box-shadow" => s.box_shadow = Some(v.into()),
+        "backdrop-filter" | "-webkit-backdrop-filter" => s.backdrop_blur = backdrop_blur(v),
         "cursor" => s.cursor = Some(v.into()),
         "text-align" => s.text_align = Some(v.into()),
         "white-space" => s.white_space = Some(v.into()),

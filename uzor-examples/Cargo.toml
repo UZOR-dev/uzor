@@ -37,6 +37,16 @@ path = "src/bin/dom_gallery_frames.rs"
 required-features = ["png"]
 
 [[bin]]
+name = "dom-widgets-frames"
+path = "src/bin/dom_widgets_frames.rs"
+required-features = ["png"]
+
+[[bin]]
+name = "dom-widgets"
+path = "src/bin/dom_widgets.rs"
+required-features = ["native"]
+
+[[bin]]
 name = "kit-gallery"
 path = "src/bin/kit_gallery.rs"
 required-features = ["native"]

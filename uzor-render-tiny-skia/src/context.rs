@@ -685,6 +685,50 @@ fn blit_region(dst: &mut Pixmap, scratch: &Pixmap, dst_x: i32, dst_y: i32, w: u3
     }
 }
 
+/// [`blit_region`] inside a rounded rect of corner radius `rad`: pixels outside a
+/// corner arc keep their value, the arc edge blends by coverage.
+#[allow(clippy::too_many_arguments)]
+fn blit_region_rounded(dst: &mut Pixmap, scratch: &Pixmap, dst_x: i32, dst_y: i32, w: u32, h: u32, margin: i32, rad: f64) {
+    if rad < 0.5 {
+        return blit_region(dst, scratch, dst_x, dst_y, w, h, margin);
+    }
+    let dw = dst.width() as i32;
+    let dh = dst.height() as i32;
+    let sw = scratch.width() as i32;
+    let shh = scratch.height() as i32;
+    let src = scratch.data();
+    let out = dst.data_mut();
+    let (fw, fh) = (w as f64, h as f64);
+    for row in 0..h as i32 {
+        for col in 0..w as i32 {
+            let (dx, dy) = (dst_x + col, dst_y + row);
+            if dx < 0 || dy < 0 || dx >= dw || dy >= dh {
+                continue;
+            }
+            let (sx, sy) = (margin + col, margin + row);
+            if sx < 0 || sy < 0 || sx >= sw || sy >= shh {
+                continue;
+            }
+            // Coverage against the nearest corner circle (pixel centre).
+            let (px, py) = (col as f64 + 0.5, row as f64 + 0.5);
+            let cx = if px < rad { rad } else if px > fw - rad { fw - rad } else { px };
+            let cy = if py < rad { rad } else if py > fh - rad { fh - rad } else { py };
+            let d = ((px - cx).powi(2) + (py - cy).powi(2)).sqrt();
+            let cov = (rad + 0.5 - d).clamp(0.0, 1.0);
+            if cov <= 0.0 {
+                continue;
+            }
+            let d_base = (dy as usize * dw as usize + dx as usize) * 4;
+            let s_base = (sy as usize * sw as usize + sx as usize) * 4;
+            for ch in 0..4 {
+                let a = out[d_base + ch] as f64;
+                let b = src[s_base + ch] as f64;
+                out[d_base + ch] = (a + (b - a) * cov).round() as u8;
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shadow state (M6-P1)
 // ---------------------------------------------------------------------------
@@ -1852,6 +1896,31 @@ impl GradientPainter for TinySkiaCpuRenderContext {
 // ---------------------------------------------------------------------------
 
 impl UiEffectHelpers for TinySkiaCpuRenderContext {
+    fn blur_backdrop(&mut self, x: f64, y: f64, width: f64, height: f64, blur: f64, corner: f64) {
+        // Scale + translate of the active transform (the DOM never rotates a box).
+        let t = self.transform;
+        let (sx, sy) = (t.sx as f64, t.sy as f64);
+        let (dx, dy) = (x * sx + t.tx as f64, y * sy + t.ty as f64);
+        let (w, h) = ((width * sx).round(), (height * sy).round());
+        let sigma = blur * sx.abs().max(sy.abs());
+        if sigma < 0.5 || w < 1.0 || h < 1.0 {
+            return;
+        }
+        // Three box passes of radius ≈ 0.9σ approximate a Gaussian of deviation σ.
+        let r = ((sigma * 0.9).round() as u32).clamp(1, 128);
+        let margin = (r * 3) as i32;
+        let (w, h) = (w as u32, h as u32);
+        let (x0, y0) = (dx.round() as i32, dy.round() as i32);
+        let Some(mut scratch) = copy_pixmap_region(&self.pixmap, x0 - margin, y0 - margin, w + 2 * margin as u32, h + 2 * margin as u32) else {
+            return;
+        };
+        for _ in 0..3 {
+            box_blur_pixmap(&mut scratch, r);
+        }
+        let rad = (corner * sx.abs()).min(w as f64 / 2.0).min(h as f64 / 2.0).max(0.0);
+        blit_region_rounded(&mut self.pixmap, &scratch, x0, y0, w, h, margin, rad);
+    }
+
     fn has_blur_background(&self) -> bool {
         true
     }
