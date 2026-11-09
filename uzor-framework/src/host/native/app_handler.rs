@@ -143,7 +143,12 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
                             }
                         }
                     }
-                    Err(e) => log::warn!("spawn window {id:?} failed: {e}"),
+                    Err(e) => {
+                        // Also on stderr: without a logger a failed spawn (no GPU device, a
+                        // surface error) would otherwise leave a black window and no trace.
+                        log::warn!("spawn window {id:?} failed: {e}");
+                        eprintln!("[uzor] spawn window {id:?} failed: {e}");
+                    }
                 }
                 return;
             }

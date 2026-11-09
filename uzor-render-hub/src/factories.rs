@@ -122,7 +122,7 @@ pub struct GpuDeviceReady {
 pub fn prewarm_device() -> Result<GpuDeviceReady, SurfaceError> {
     let t_total = std::time::Instant::now();
     let mut gpu_pool = GpuDevicePool::new();
-    gpu_pool.instance = build_dcomp_instance();
+    gpu_pool.instance = build_instance();
     eprintln!("[render-hub] prewarm_device: instance: {:?}", t_total.elapsed());
 
     let t_dev = std::time::Instant::now();
@@ -376,10 +376,39 @@ fn finalize_gpu_surface(
 /// if the HWND has `WS_EX_NOREDIRECTIONBITMAP` and vello renders
 /// alpha=0 pixels.  See `docs/research/transparency-dcomp-research.md`.
 ///
-/// On non-Windows platforms returns a plain default `Instance`.
+/// The platform's `wgpu::Instance`: DX12 through DirectComposition on Windows
+/// ([`build_dcomp_instance`]), Metal only on iOS, the default backends (or
+/// `WGPU_BACKEND`) elsewhere.
 #[cfg(all(not(target_arch = "wasm32"), feature = "gpu"))]
-fn build_dcomp_instance() -> wgpu::Instance {
+fn build_instance() -> wgpu::Instance {
     #[cfg(target_os = "windows")]
+    {
+        build_dcomp_instance()
+    }
+    #[cfg(target_os = "ios")]
+    {
+        // iOS has Metal only: an instance over every backend finds no device for a
+        // UIView surface there, so the window stays black.
+        build_plain_instance(wgpu::Backends::METAL)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "ios")))]
+    {
+        build_plain_instance(wgpu::Backends::from_env().unwrap_or_default())
+    }
+}
+
+/// An `Instance` over `backends` with the flags and options from the environment.
+#[cfg(all(not(target_arch = "wasm32"), feature = "gpu", not(target_os = "windows")))]
+fn build_plain_instance(backends: wgpu::Backends) -> wgpu::Instance {
+    let flags = wgpu::InstanceFlags::from_build_config().with_env();
+    let memory_budget_thresholds = wgpu::MemoryBudgetThresholds::default();
+    let backend_options = wgpu::BackendOptions::from_env_or_default();
+    // wgpu 29: the descriptor goes by value and carries `display` (None = no display handle).
+    wgpu::Instance::new(wgpu::InstanceDescriptor { backends, flags, memory_budget_thresholds, backend_options, display: None })
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "gpu", target_os = "windows"))]
+fn build_dcomp_instance() -> wgpu::Instance {
     {
         let backends = wgpu::Backends::DX12;
         let flags = wgpu::InstanceFlags::from_build_config().with_env();
@@ -393,22 +422,6 @@ fn build_dcomp_instance() -> wgpu::Instance {
         };
         // wgpu 29: Instance::new takes the descriptor by value, the descriptor
         // gained a `display: Option<...>` field (None = no display handle).
-        return wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends,
-            flags,
-            memory_budget_thresholds,
-            backend_options,
-            display: None,
-        });
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let backends = wgpu::Backends::from_env().unwrap_or_default();
-        let flags = wgpu::InstanceFlags::from_build_config().with_env();
-        let memory_budget_thresholds = wgpu::MemoryBudgetThresholds::default();
-        let backend_options = wgpu::BackendOptions::from_env_or_default();
-        // wgpu 29: by-value descriptor + `display` field (matches the windows
-        // branch above; this arm was missed when wgpu's API changed).
         wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends,
             flags,
@@ -440,8 +453,8 @@ fn init_gpu_surface(
     // safe and does not require a vello fork.
     let t_init = std::time::Instant::now();
     let mut gpu_pool = GpuDevicePool::new();
-    gpu_pool.instance = build_dcomp_instance();
-    eprintln!("[render-hub] build_dcomp_instance: {:?}", t_init.elapsed());
+    gpu_pool.instance = build_instance();
+    eprintln!("[render-hub] build_instance: {:?}", t_init.elapsed());
 
     // We DON'T call `gpu_pool.create_surface` here — that helper calls
     // `surface.configure(..., alpha_mode: Auto)` first, then we would
@@ -462,12 +475,18 @@ fn init_gpu_surface(
         .map_err(|e| SurfaceError::InitFailed(format!("{backend:?}: create_surface: {e}")))?;
     eprintln!("[render-hub] instance.create_surface: {:?}", t_surf.elapsed());
 
-    // Step 2: acquire a compatible device through vello's helper so the
-    // `gpu_pool.devices` Vec gets populated (vello uses dev_id to index
-    // it elsewhere).
+    // Step 2: a device through vello's helper (it fills `gpu_pool.devices`, which
+    // vello indexes by dev_id), NOT bound to the surface: on iOS (Metal) a device
+    // request with `compatible_surface` finds nothing while the plain one does. The
+    // surface is configured with that device below. Only when its adapter cannot
+    // present to this surface (a multi-GPU desktop) is a surface-compatible one asked for.
     let t_dev = std::time::Instant::now();
-    let dev_id = pollster::block_on(gpu_pool.device(Some(&surface_raw)))
-        .ok_or_else(|| SurfaceError::InitFailed(format!("{backend:?}: no compatible device")))?;
+    let mut dev_id = pollster::block_on(gpu_pool.device(None))
+        .ok_or_else(|| SurfaceError::InitFailed(format!("{backend:?}: no compatible device (no adapter)")))?;
+    if !gpu_pool.devices[dev_id].adapter().is_surface_supported(&surface_raw) {
+        dev_id = pollster::block_on(gpu_pool.device(Some(&surface_raw)))
+            .ok_or_else(|| SurfaceError::InitFailed(format!("{backend:?}: no compatible device")))?;
+    }
     eprintln!("[render-hub] request_adapter + device: {:?}", t_dev.elapsed());
 
     let (alpha_mode, swap_format, alpha_modes_log, formats_log, adapter_name) = {
