@@ -2,7 +2,7 @@
 
 All crates in the workspace share one version.
 
-## Unreleased
+## 1.5.26
 
 ### Dashboard widgets (`uzor::ui::dash`)
 
@@ -25,6 +25,13 @@ All crates in the workspace share one version.
   `--ring-track`, `--ring-width`.
 - Examples: `dom_widgets` page (EN/RU through `uzor::ui::i18n`), bins `dom-widgets` (native)
   and `dom-widgets-frames` (PNG shots).
+
+## 1.5.25
+
+### PDF text and images keep the full transform
+
+- `PdfRenderContext` text `Tm` and image `cm` carry the current transform: rotation, shear, and independent horizontal and vertical scale. Font size stays the em size. Stroke width, dash, and radial-gradient radius still use the uniform scale factor. Paragraph `PdfTextRun`s stay axis-aligned.
+- `PdfPageSpec` takes optional `trim` and `bleed` boxes in top-left, y-down points. Unset boxes are omitted from the page dict.
 
 ## 1.5.24
 

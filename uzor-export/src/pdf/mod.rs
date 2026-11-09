@@ -220,6 +220,14 @@ pub struct PdfPageSpec<'a> {
     /// [`render_context`]'s own module doc for the paint-order
     /// reasoning).
     pub content: PdfContentStream,
+    /// Optional `/TrimBox`, `(x, y, width, height)` in the same top-left
+    /// y-down point space as [`PdfLink`]. `None` writes no key — existing
+    /// pages stay byte-identical aside from anything else the caller
+    /// changed.
+    pub trim: Option<(f64, f64, f64, f64)>,
+    /// Optional `/BleedBox`, same tuple convention as [`Self::trim`].
+    /// `None` writes no key.
+    pub bleed: Option<(f64, f64, f64, f64)>,
 }
 
 /// One document-outline (bookmark) entry — a caller-resolved heading
@@ -340,6 +348,9 @@ struct PageTextRun {
 struct PageRecord {
     width_pt: f64,
     height_pt: f64,
+    /// Moved verbatim from [`PdfPageSpec::trim`] / [`PdfPageSpec::bleed`].
+    trim: Option<(f64, f64, f64, f64)>,
+    bleed: Option<(f64, f64, f64, f64)>,
     /// Decoded, alpha-dropped `RGB8`, tightly packed, plus its own
     /// `(width, height)` — `None` for a text-only page.
     raster_rgb: Option<(Vec<u8>, u32, u32)>,
@@ -510,7 +521,16 @@ impl PdfBuilder {
             })
             .collect();
 
-        self.pages.push(PageRecord { width_pt: spec.width_pt, height_pt: spec.height_pt, raster_rgb, runs, links: spec.links, content_ops: spec.content.0 });
+        self.pages.push(PageRecord {
+            width_pt: spec.width_pt,
+            height_pt: spec.height_pt,
+            trim: spec.trim,
+            bleed: spec.bleed,
+            raster_rgb,
+            runs,
+            links: spec.links,
+            content_ops: spec.content.0,
+        });
         Ok(())
     }
 
@@ -804,6 +824,12 @@ fn write_font(pdf: &mut Pdf, refs: &FontRefs, base_font_name: &str, entry: &Font
     }
 }
 
+/// `(x, y, width, height)` in this module's top-left y-down point space,
+/// as a PDF rectangle (bottom-left origin, y up).
+fn top_left_box_to_pdf(page_height_pt: f64, (x, y, width, height): (f64, f64, f64, f64)) -> PdfRect {
+    PdfRect::new(x as f32, (page_height_pt - (y + height)) as f32, (x + width) as f32, (page_height_pt - y) as f32)
+}
+
 /// Write one page's image XObject (if any), content stream, and page
 /// dictionary. The coordinate conversion this module's own doc comment
 /// promises happens in exactly one place: the text matrix's own `y`
@@ -940,6 +966,12 @@ fn write_page(
         let mut page_writer = pdf.page(refs.page);
         page_writer.parent(page_tree_id);
         page_writer.media_box(PdfRect::new(0.0, 0.0, page.width_pt as f32, page.height_pt as f32));
+        if let Some(trim) = page.trim {
+            page_writer.trim_box(top_left_box_to_pdf(page.height_pt, trim));
+        }
+        if let Some(bleed) = page.bleed {
+            page_writer.bleed_box(top_left_box_to_pdf(page.height_pt, bleed));
+        }
         page_writer.contents(refs.content);
         if !refs.annotations.is_empty() {
             page_writer.annotations(refs.annotations.iter().copied());
@@ -1273,7 +1305,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "Hello PDF" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
@@ -1293,7 +1325,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "Hello PDF" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
@@ -1311,7 +1343,7 @@ mod tests {
         let mut builder = PdfBuilder::new();
         let png_bytes = one_pixel_rgba_png([255, 0, 0, 255]);
         builder
-            .add_page(PdfPageSpec { width_pt: 50.0, height_pt: 50.0, raster: Some(&png_bytes), raster_px: (1, 1), text_runs: Vec::new(), links: Vec::new(), content: PdfContentStream::empty() })
+            .add_page(PdfPageSpec { width_pt: 50.0, height_pt: 50.0, raster: Some(&png_bytes), raster_px: (1, 1), text_runs: Vec::new(), links: Vec::new(), content: PdfContentStream::empty(), trim: None, bleed: None })
             .expect("add_page with a raster should succeed");
 
         let bytes = builder.finish();
@@ -1326,7 +1358,7 @@ mod tests {
         let mut builder = PdfBuilder::new();
         let png_bytes = one_pixel_rgba_png([0, 255, 0, 255]);
         let err = builder
-            .add_page(PdfPageSpec { width_pt: 50.0, height_pt: 50.0, raster: Some(&png_bytes), raster_px: (2, 2), text_runs: Vec::new(), links: Vec::new(), content: PdfContentStream::empty() })
+            .add_page(PdfPageSpec { width_pt: 50.0, height_pt: 50.0, raster: Some(&png_bytes), raster_px: (2, 2), text_runs: Vec::new(), links: Vec::new(), content: PdfContentStream::empty(), trim: None, bleed: None })
             .expect_err("a wrong raster_px must be rejected");
         assert!(matches!(err, ExportError::RasterDimensionMismatch { expected: (2, 2), actual: (1, 1) }));
     }
@@ -1348,7 +1380,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "A\u{F8FF}B" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
@@ -1374,7 +1406,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 14.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: cyrillic }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
@@ -1411,7 +1443,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 24.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "Kerning" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
@@ -1459,7 +1491,7 @@ mod tests {
                     text,
                 }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
@@ -1512,7 +1544,7 @@ mod tests {
                     text,
                 }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
@@ -1540,7 +1572,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "Hi" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
@@ -1574,7 +1606,7 @@ mod tests {
 
         let mut builder = PdfBuilder::new();
         builder
-            .add_page(PdfPageSpec { width_pt: width as f64, height_pt: height as f64, raster: Some(&png_bytes), raster_px: (width, height), text_runs: Vec::new(), links: Vec::new(), content: PdfContentStream::empty() })
+            .add_page(PdfPageSpec { width_pt: width as f64, height_pt: height as f64, raster: Some(&png_bytes), raster_px: (width, height), text_runs: Vec::new(), links: Vec::new(), content: PdfContentStream::empty(), trim: None, bleed: None })
             .expect("add_page with a raster should succeed");
 
         let bytes = builder.finish();
@@ -1606,7 +1638,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "x" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
         let bytes_without_meta = builder.finish();
@@ -1622,7 +1654,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "x" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
         builder.set_meta(PdfMeta {
@@ -1655,7 +1687,7 @@ mod tests {
                     raster_px: (0, 0),
                     text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "Hello lopdf" }],
                     links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
                 })
                 .unwrap_or_else(|e| panic!("add_page {i} should succeed: {e}"));
         }
@@ -1680,7 +1712,7 @@ mod tests {
         let mut builder = PdfBuilder::new();
         let png_bytes = one_pixel_rgba_png([10, 20, 30, 255]);
         builder
-            .add_page(PdfPageSpec { width_pt: 50.0, height_pt: 50.0, raster: Some(&png_bytes), raster_px: (1, 1), text_runs: Vec::new(), links: Vec::new(), content: PdfContentStream::empty() })
+            .add_page(PdfPageSpec { width_pt: 50.0, height_pt: 50.0, raster: Some(&png_bytes), raster_px: (1, 1), text_runs: Vec::new(), links: Vec::new(), content: PdfContentStream::empty(), trim: None, bleed: None })
             .expect("add_page with a raster should succeed");
 
         let bytes = builder.finish();
@@ -1729,7 +1761,7 @@ mod tests {
                     raster_px: (0, 0),
                     text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "Page" }],
                     links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
                 })
                 .expect("add_page should succeed");
         }
@@ -1796,11 +1828,11 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "See page 2" }],
                 links: vec![PdfLink { x_pt: 10.0, y_pt: 20.0, width_pt: 80.0, height_pt: 16.0, target_page: 1 }],
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
         builder
-            .add_page(PdfPageSpec { width_pt: 200.0, height_pt: 300.0, raster: None, raster_px: (0, 0), text_runs: Vec::new(), links: Vec::new(), content: PdfContentStream::empty() })
+            .add_page(PdfPageSpec { width_pt: 200.0, height_pt: 300.0, raster: None, raster_px: (0, 0), text_runs: Vec::new(), links: Vec::new(), content: PdfContentStream::empty(), trim: None, bleed: None })
             .expect("add_page should succeed");
 
         let bytes = builder.finish();
@@ -1851,7 +1883,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: Some(p_id), text: "Tagged paragraph" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
@@ -1926,7 +1958,7 @@ mod tests {
                     raster_px: (0, 0),
                     text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: Some(p_id), text: "Hello" }],
                     links: Vec::new(),
-                    content: PdfContentStream::empty(),
+                    content: PdfContentStream::empty(), trim: None, bleed: None,
                 })
                 .expect("add_page should succeed");
             builder.finish()
@@ -1963,7 +1995,7 @@ mod tests {
                     raster_px: (0, 0),
                     text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: Some(p_id), text: "Parity" }],
                     links: Vec::new(),
-                    content: PdfContentStream::empty(),
+                    content: PdfContentStream::empty(), trim: None, bleed: None,
                 })
                 .expect("add_page should succeed");
             builder.finish()
@@ -2032,7 +2064,7 @@ mod tests {
                     PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 60.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: Some(p_id), text: "Body" },
                 ],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
@@ -2082,7 +2114,7 @@ mod tests {
             ctx.finish()
         };
         builder
-            .add_page(PdfPageSpec { width_pt: 200.0, height_pt: 100.0, raster: None, raster_px: (0, 0), text_runs: Vec::new(), links: Vec::new(), content })
+            .add_page(PdfPageSpec { width_pt: 200.0, height_pt: 100.0, raster: None, raster_px: (0, 0), text_runs: Vec::new(), links: Vec::new(), content, trim: None, bleed: None })
             .expect("add_page should succeed");
 
         let bytes = builder.finish();
@@ -2130,7 +2162,7 @@ mod tests {
             ctx.finish()
         };
         builder
-            .add_page(PdfPageSpec { width_pt: 200.0, height_pt: 100.0, raster: None, raster_px: (0, 0), text_runs: Vec::new(), links: Vec::new(), content })
+            .add_page(PdfPageSpec { width_pt: 200.0, height_pt: 100.0, raster: None, raster_px: (0, 0), text_runs: Vec::new(), links: Vec::new(), content, trim: None, bleed: None })
             .expect("add_page should succeed");
 
         let bytes = builder.finish();
@@ -2171,7 +2203,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: Some(td_id), text: "Cell text" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
@@ -2233,7 +2265,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: Some(p_id), text: "Real content" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
@@ -2272,7 +2304,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "x" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
         builder.set_meta(PdfMeta { title: Some("Report <A & B>".to_owned()), write_xmp: true, ..Default::default() });
@@ -2308,7 +2340,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "x" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
         builder.set_meta(PdfMeta { title: Some("Untitled".to_owned()), ..Default::default() });
@@ -2334,7 +2366,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "x" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
         builder.set_meta(PdfMeta { lang: Some("ru".to_owned()), ..Default::default() });
@@ -2360,7 +2392,7 @@ mod tests {
                 raster_px: (0, 0),
                 text_runs: vec![PdfTextRun { font, size_pt: 12.0, x_pt: 10.0, y_pt: 20.0, rgb: 0x111111, glyph_advances_pt: None, struct_tag: None, text: "x" }],
                 links: Vec::new(),
-                content: PdfContentStream::empty(),
+                content: PdfContentStream::empty(), trim: None, bleed: None,
             })
             .expect("add_page should succeed");
 
