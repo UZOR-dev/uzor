@@ -2,6 +2,43 @@
 
 All crates in the workspace share one version.
 
+## 1.5.27
+
+### DOM: scroll containers clip everything they scroll (`uzor::ui::dom`)
+
+- `paint_box` paints inside the element's overflow clip (`Placed::clip`) itself, so a host
+  that paints a laid-out tree box by box (doing its own per-box work) no longer lets text,
+  placeholders, inputs or frames of an `overflow: hidden | auto | scroll` descendant leak
+  out of it (e.g. under a dialog footer). `paint`, `paint_slots` and `paint_with` are
+  unchanged.
+- `El::scroll_top(y)`: CSS `scrollTop` for an overflow container: its descendants (in flow
+  and positioned, not `fixed`) are placed `y` higher, the container stays, its padding box
+  clips them; hits are cut by the same clip.
+- `Placed::scroll_height`: an overflow container's content height (CSS `scrollHeight`).
+- `with_clip(ctx, placed, f)` is public: paint host content (an embed, an animation) inside
+  a box's overflow clip.
+
+### Text fields clip and scroll (`uzor_framework::widgets::kit::field`)
+
+- A kit field clips its text, placeholder, selection and caret to its rect by default
+  (`.clip(false)` lets it overflow) and scrolls sideways with the caret while focused, as an
+  `<input>` does: last frame's scroll is kept while the caret is in view, moved just enough
+  when it is not, never past the text's end; back to the start when not focused. A long
+  pasted string no longer runs past the field.
+- `FieldBuilder::clip_to(rect)`: the scroll viewport the field sits in (a dialog body). Paint
+  and the hit rect are cut to it; a field scrolled out of it paints nothing (no placeholder
+  under a dialog's footer) and cannot be clicked there.
+
+### iOS GPU surface (`uzor-render-hub`, `uzor-framework`)
+
+- iOS builds the wgpu instance with `Backends::METAL` (Windows keeps DX12 through
+  DirectComposition, other platforms the default backends / `WGPU_BACKEND`).
+- `init_gpu_surface` requests the device without binding it to the surface (on iOS a
+  surface-bound request found no device, the window spawn was cancelled and the frame stayed
+  black), then configures the surface with it; only when that adapter cannot present to the
+  surface is a surface-compatible device requested.
+- A failed window spawn is also printed to stderr, so it shows without a logger.
+
 ## 1.5.26
 
 ### Dashboard widgets (`uzor::ui::dash`)
