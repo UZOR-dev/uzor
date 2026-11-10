@@ -292,6 +292,15 @@ impl<S: Spec> VisualView<S> {
         self.pressed.as_ref() == Some(id)
     }
 
+    /// This view with `id` focused, as the engines would report it: for headless renders and
+    /// app tests of a frame (a text field paints its caret and selection only when focused).
+    pub fn with_focus(mut self, id: impl Into<WidgetId>) -> Self {
+        let id = id.into();
+        self.focus_path = vec![id.clone()];
+        self.focused = Some(id);
+        self
+    }
+
     /// The widget with keyboard focus, if any.
     pub fn focused(&self) -> Option<&WidgetId> {
         self.focused.as_ref()

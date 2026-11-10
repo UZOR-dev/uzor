@@ -818,6 +818,29 @@ impl VirtualList {
     fn h(&self, i: usize) -> f64 {
         self.heights[i].unwrap_or(self.estimate)
     }
+    /// Set row `i`'s height (a host that lays rows out itself, e.g. from a cache of
+    /// laid trees, reports them here instead of [`VirtualList::measure`]).
+    pub fn set_height(&mut self, i: usize, h: f64) {
+        if let Some(x) = self.heights.get_mut(i) {
+            *x = Some(h);
+        }
+    }
+    /// Row `i`'s measured height (`None`: not measured, the estimate stands in).
+    pub fn height(&self, i: usize) -> Option<f64> {
+        self.heights.get(i).copied().flatten()
+    }
+    /// Every row's top in list coordinates in one pass (`len() + 1` entries; the last
+    /// is the total without a trailing gap counted twice).
+    pub fn tops(&self) -> Vec<f64> {
+        let mut out = Vec::with_capacity(self.len() + 1);
+        let mut y = 0.0;
+        for i in 0..self.len() {
+            out.push(y);
+            y += self.h(i) + self.gap;
+        }
+        out.push(self.total());
+        out
+    }
     /// The whole list's height (measured rows plus estimates).
     pub fn total(&self) -> f64 {
         (0..self.len()).map(|i| self.h(i)).sum::<f64>() + self.gap * self.len().saturating_sub(1) as f64
@@ -923,6 +946,11 @@ mod tests {
         let dom = crate::ui::dom::lay_out(&mut ctx, &sheet(), &el, 0.0, 0.0, 300.0, &|_| State::NONE);
         assert!(v.measure(&dom, w, |i| format!("r{i}")));
         assert_eq!(v.total(), 990.0 * 40.0 + 5.0 * 60.0 + 5.0 * 40.0);
+        // Hosts that lay rows out themselves report heights directly.
+        let mut v = VirtualList::new(3, 10.0);
+        v.set_height(1, 30.0);
+        assert_eq!((v.height(0), v.height(1)), (None, Some(30.0)));
+        assert_eq!(v.tops(), vec![0.0, 10.0, 40.0, 50.0]);
     }
 
     #[test]

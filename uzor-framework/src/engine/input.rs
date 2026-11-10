@@ -740,7 +740,7 @@ impl PerWindowInput {
                     && self.cook.drag_armed
                     && self.coord.text_fields().drag_active()
                 {
-                    self.coord.text_fields_mut().on_drag_move(pos.x);
+                    self.coord.text_fields_mut().on_drag_move_xy(pos.x, pos.y);
                     changed = true;
                 }
                 (changed, target)
@@ -758,7 +758,7 @@ impl PerWindowInput {
                 let t = target.as_ref().map(|t| self.sel_owner(t));
                 let sel_changed = self.press_down(win, t.as_ref(), pos.x, pos.y, fx);
                 if button == MouseButton::Left {
-                    self.arm_text_drag(target.as_ref(), pos.x);
+                    self.arm_text_drag(target.as_ref(), pos.x, pos.y);
                 } else if self.coord.text_fields().drag_active() {
                     self.coord.text_fields_mut().on_drag_end();
                 }
@@ -798,7 +798,7 @@ impl PerWindowInput {
     /// click is left to `end_frame` (`select_at_click_count` selects the
     /// word or the line). Any other press ends a stale text drag so it
     /// cannot follow the pointer onto another control.
-    fn arm_text_drag(&mut self, target: Option<&WidgetId>, x: f64) {
+    fn arm_text_drag(&mut self, target: Option<&WidgetId>, x: f64, y: f64) {
         let field = match target {
             Some(id)
                 if self.coord.widget_sense(id).is_some_and(|s| s.text)
@@ -810,7 +810,7 @@ impl PerWindowInput {
         };
         if let Some(id) = field {
             if self.cook.click_count <= 1 {
-                self.coord.text_fields_mut().begin_drag_at(id, x);
+                self.coord.text_fields_mut().begin_drag_at_xy(id, x, y);
                 return;
             }
         }
@@ -1284,7 +1284,13 @@ impl PerWindowInput {
             };
         }
         let field = self.text_focus();
-        let edit = editing_chord(&input);
+        let mut edit = editing_chord(&input);
+        // A multiline field with laid lines moves its caret between them.
+        if edit.is_none() && matches!(input.code, KeyCode::ArrowUp | KeyCode::ArrowDown) && !(m.ctrl || m.alt || m.meta) {
+            if field.as_ref().is_some_and(|f| self.coord.text_fields().has_lines(f)) {
+                edit = Some(Edit::Key(if input.code == KeyCode::ArrowUp { KeyPress::ArrowUp } else { KeyPress::ArrowDown }));
+            }
+        }
         let (field, edit) = match (field, edit) {
             (Some(f), Some(e)) => (f, e),
             // No focused text field: a plain-text selection takes the copy

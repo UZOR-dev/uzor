@@ -2,6 +2,33 @@
 
 All crates in the workspace share one version.
 
+## 1.5.28
+
+### Multiline text area (`uzor_framework::widgets::kit::area`)
+
+- `kit::area(id, rect)`: a multiline text field (a chat composer) on the same text store as
+  `kit::field`: hard `\n` breaks, soft wrap after spaces, long words broken by character
+  (`kit::area_lines` gives the laid lines), the selection painted per line, the caret, the IME
+  preedit underline and the IME area at the caret. Clicks, double / triple clicks and drags
+  hit by line and x; ArrowUp / ArrowDown move by laid line at the same x, Home / End (with
+  Shift) to the laid line's ends. `.text_rect`, `.clip_to`, `.scroll`, `.font`,
+  `.line_height`, `.colors`, `.caret_color`, `.set`, `.parent` as on `kit::field`;
+  `AreaResponse` reports the line count, the content height and the caret line's top.
+- Text store: `TextFieldStore::update_field_lines` (per-char x and line top),
+  `has_lines`, `begin_drag_at_xy`, `on_drag_move_xy`, `select_drag_xy`,
+  `select_at_click_count_xy`, `TextFieldState::boundary_at(x, y)`; the x-only methods keep
+  working (single-line fields).
+
+### Virtual list (`uzor::ui::domkit::VirtualList`)
+
+- `set_height(i, h)` (a height known without laying the row out, e.g. from a cache),
+  `height(i)` (a measured height, if any) and `tops()` (the row tops and the total height).
+
+### Headless frames (`uzor_framework::handle::VisualView`)
+
+- `VisualView::with_focus(id)`: a view with `id` focused, for headless renders and app tests
+  of a frame (a focused field paints its caret and selection).
+
 ## 1.5.27
 
 ### DOM: scroll containers clip everything they scroll (`uzor::ui::dom`)

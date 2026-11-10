@@ -1484,8 +1484,8 @@ impl crate::input::driver::CoordinatorDriver for InputCoordinator {
                             // A release that ENDS a drag is skipped here: it
                             // must not collapse the selection the drag made
                             // (handled below, after the loop).
-                            if let Some((mx, _my)) = mouse_pos {
-                                self.text_fields.select_at_click_count(widget.id.clone(), mx, self.cook.click_count);
+                            if let Some((mx, my)) = mouse_pos {
+                                self.text_fields.select_at_click_count_xy(widget.id.clone(), mx, my, self.cook.click_count);
                             } else {
                                 self.text_fields.focus(widget.id.clone());
                             }
@@ -1515,13 +1515,13 @@ impl crate::input::driver::CoordinatorDriver for InputCoordinator {
         // release landed — the boundaries clamp), keeping any selection a
         // host built live via `on_drag_move` instead of collapsing it to a
         // caret at the release point.
-        if let (Some((ox, oy)), Some((mx, _))) = (self.cook_drag_release, mouse_pos) {
+        if let (Some((ox, oy)), Some((mx, my))) = (self.cook_drag_release, mouse_pos) {
             let origin = self
                 .hit_test_at(ox, oy)
                 .filter(|w| w.sense.text)
                 .map(|w| w.id.clone());
             if let Some(id) = origin {
-                self.text_fields.select_drag(id, ox, mx);
+                self.text_fields.select_drag_xy(id, (ox, oy), (mx, my));
             }
         }
 

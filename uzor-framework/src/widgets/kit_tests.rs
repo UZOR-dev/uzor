@@ -506,3 +506,51 @@ fn dom_tree_registers_controls_inputs_and_reports_clicks() {
     let a11y = r.dom.a11y();
     assert!(a11y.iter().any(|n| n.id == "notify" && n.name == "Notifications" && n.checked == Some(true)));
 }
+
+#[test]
+fn area_lines_wrap_at_spaces_and_hard_breaks() {
+    let mut r = uzor::testing::RecordingRenderContext::with_char_width(10.0);
+    // 10 px a char in a 60 px box: "hello world" wraps after the space.
+    let l = area_lines(&mut r, "hello world\nab", 60.0);
+    assert_eq!(l, vec![AreaLine { start: 0, end: 6, hard: false }, AreaLine { start: 6, end: 11, hard: true }, AreaLine { start: 12, end: 14, hard: false }]);
+    // A word longer than the box breaks between chars; empty text is one line.
+    assert_eq!(area_lines(&mut r, "abcdefghij", 40.0).len(), 3);
+    assert_eq!(area_lines(&mut r, "", 40.0), vec![AreaLine::default()]);
+    assert_eq!(area_lines(&mut r, "a\n", 40.0).len(), 2);
+}
+
+#[test]
+fn area_paints_lines_and_moves_by_them() {
+    use uzor::input::keyboard::keyboard::KeyPress;
+    let rect = Rect::new(10.0, 100.0, 60.0, 80.0);
+    let id = WidgetId::from("msg");
+    let mut h = Harness { keep_coord: true, record: Some(uzor::testing::RecordingRenderContext::with_char_width(10.0)), ..Default::default() };
+    let a = || area("msg", rect).placeholder("Message").line_height(20.0).font(13.0, "Inter");
+    let r = h.frame(&idle(), |cx| a().set(Some("hello world\nab")).build(cx));
+    assert_eq!((r.lines, r.content_h), (3, 60.0));
+    let texts: Vec<String> = painted_with_clips(&h.record.as_ref().unwrap().ops).into_iter().map(|t| t.0).filter(|t| t != "<rect>").collect();
+    assert_eq!(texts, ["hello ", "world", "ab"]);
+    let f = h.coord.text_fields_mut();
+    assert!(f.has_lines(&id));
+    // A click on the third line at x = 10 + 15 puts the caret after "a"/"b" (char 13 or 14).
+    f.begin_drag_at_xy(id.clone(), 10.0 + 11.0, 100.0 + 45.0);
+    f.on_drag_end();
+    assert_eq!(f.cursor(&id), 13);
+    // Up: onto "world" at the same x; Up again: "hello "; Up past the first line: start.
+    f.on_key(KeyPress::ArrowUp);
+    assert_eq!(f.cursor(&id), 7);
+    f.on_key(KeyPress::ArrowUp);
+    assert_eq!(f.cursor(&id), 1);
+    f.on_key(KeyPress::End);
+    assert_eq!(f.cursor(&id), 5, "End stops at the soft wrap");
+    f.on_key(KeyPress::ArrowDown);
+    f.on_key(KeyPress::Home);
+    assert_eq!(f.cursor(&id), 6);
+    f.on_key(KeyPress::ArrowDown);
+    f.on_key(KeyPress::ArrowDown);
+    assert_eq!(f.cursor(&id), 14, "past the last line: the end");
+    let mut v = idle();
+    v.focused = Some(id.clone());
+    let r = h.frame(&v, |cx| a().build(cx));
+    assert!(r.focused && r.caret_top == 40.0);
+}

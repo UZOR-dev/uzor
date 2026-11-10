@@ -608,6 +608,329 @@ pub(crate) fn field_scroll(prev: f64, caret_x: f64, text_w: f64, width: f64) -> 
     }
 }
 
+// -- area (multiline text) ---------------------------------------------------
+
+/// One laid line of a [`area`]: chars `start..end` of the shown text (a hard line
+/// break's `\n` is not in any line), and whether a `\n` ends it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AreaLine {
+    /// First char of the line.
+    pub start: usize,
+    /// One past its last char.
+    pub end: usize,
+    /// A `\n` ends it (else a soft wrap or the text's end).
+    pub hard: bool,
+}
+
+/// Lay `text` out the way [`area`] paints it in a box `width` wide with the font
+/// already set on `render`: hard lines at `\n`, soft wrap after spaces (a word longer
+/// than the box breaks between chars). For sizing before layout (an auto-growing
+/// composer counts `lines.len()`). Never empty: an empty text is one empty line.
+pub fn area_lines(render: &mut dyn RenderContext, text: &str, width: f64) -> Vec<AreaLine> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start <= chars.len() {
+        let hard_end = chars[start..].iter().position(|c| *c == '\n').map_or(chars.len(), |i| start + i);
+        // Soft wrap inside the hard line by summed char advances (fast; the caret
+        // positions of a laid line are measured on its prefixes when painted).
+        let mut ls = start;
+        let mut w = 0.0;
+        let mut brk: Option<usize> = None;
+        let mut i = start;
+        let mut buf = [0u8; 4];
+        while i < hard_end {
+            let c = chars[i];
+            let cw = render.measure_text(c.encode_utf8(&mut buf));
+            if w + cw > width && i > ls && !c.is_whitespace() {
+                let at = brk.filter(|b| *b > ls).unwrap_or(i);
+                out.push(AreaLine { start: ls, end: at, hard: false });
+                ls = at;
+                brk = None;
+                w = chars[ls..i].iter().map(|c| render.measure_text(c.encode_utf8(&mut buf))).sum();
+                continue;
+            }
+            w += cw;
+            if c.is_whitespace() {
+                brk = Some(i + 1);
+            }
+            i += 1;
+        }
+        let hard = hard_end < chars.len();
+        out.push(AreaLine { start: ls, end: hard_end, hard });
+        if !hard {
+            break;
+        }
+        start = hard_end + 1;
+    }
+    out
+}
+
+/// A multiline text area (a `<textarea>`) whose box the app paints itself: the kit
+/// registers it at `rect`, wraps the text to its width, paints text, placeholder,
+/// selection, IME composition and a blinking caret line by line, and feeds per-line
+/// caret geometry to the text store, so clicks, drags, double / triple clicks,
+/// ArrowUp / ArrowDown and Home / End work by laid lines. Start with [`area`].
+pub struct AreaBuilder<'a> {
+    id: WidgetId,
+    rect: Rect,
+    text_rect: Option<Rect>,
+    config: uzor::TextFieldConfig,
+    name: &'a str,
+    placeholder: &'a str,
+    within: Option<Rect>,
+    px: f64,
+    line_h: Option<f64>,
+    family: &'a str,
+    weight: u16,
+    color: Option<&'a str>,
+    placeholder_color: Option<&'a str>,
+    caret_color: Option<&'a str>,
+    set: Option<&'a str>,
+    parent: Option<WidgetId>,
+    scroll: f64,
+}
+
+/// What an [`area`] shows this frame.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AreaResponse {
+    /// The shown text, composition included.
+    pub text: String,
+    /// Keyboard focus is in the area.
+    pub focused: bool,
+    /// Laid lines (at least one).
+    pub lines: usize,
+    /// Height of all the lines (`lines × line height`).
+    pub content_h: f64,
+    /// The caret line's top, from the first line's top (scroll it into view).
+    pub caret_top: f64,
+    /// The line height used.
+    pub line_h: f64,
+}
+
+/// A multiline text area at `rect` (see [`AreaBuilder`]). The text box is `rect`
+/// unless [`AreaBuilder::text_rect`]; it scrolls up by [`AreaBuilder::scroll`].
+pub fn area<'a>(id: impl Into<WidgetId>, rect: Rect) -> AreaBuilder<'a> {
+    AreaBuilder {
+        id: id.into(),
+        rect,
+        text_rect: None,
+        config: uzor::TextFieldConfig::text().multiline(),
+        name: "",
+        placeholder: "",
+        within: None,
+        px: 13.0,
+        line_h: None,
+        family: "sans-serif",
+        weight: 400,
+        color: None,
+        placeholder_color: None,
+        caret_color: None,
+        set: None,
+        parent: None,
+        scroll: 0.0,
+    }
+}
+
+impl<'a> AreaBuilder<'a> {
+    /// Editing behaviour (max length, filter, read-only); multiline is kept on.
+    pub fn config(mut self, c: uzor::TextFieldConfig) -> Self {
+        self.config = c.multiline();
+        self
+    }
+    /// Accessible name (defaults to the placeholder).
+    pub fn name(mut self, n: &'a str) -> Self {
+        self.name = n;
+        self
+    }
+    /// Grey hint while empty.
+    pub fn placeholder(mut self, p: &'a str) -> Self {
+        self.placeholder = p;
+        self
+    }
+    /// Where the lines run, when inset inside the hit rect.
+    pub fn text_rect(mut self, r: Rect) -> Self {
+        self.text_rect = Some(r);
+        self
+    }
+    /// Clip paint and hits to `r` too (the scroll viewport the area sits in).
+    pub fn clip_to(mut self, r: Rect) -> Self {
+        self.within = Some(r);
+        self
+    }
+    /// Font size, CSS family and weight.
+    pub fn font(mut self, px: f64, family: &'a str) -> Self {
+        self.px = px;
+        self.family = family;
+        self
+    }
+    /// Font weight (400 by default).
+    pub fn weight(mut self, w: u16) -> Self {
+        self.weight = w;
+        self
+    }
+    /// Line height (default `1.45 × px`).
+    pub fn line_height(mut self, h: f64) -> Self {
+        self.line_h = Some(h);
+        self
+    }
+    /// Text and placeholder colours (CSS); the theme's when unset.
+    pub fn colors(mut self, text: &'a str, placeholder: &'a str) -> Self {
+        self.color = Some(text);
+        self.placeholder_color = Some(placeholder);
+        self
+    }
+    /// Caret colour (the text colour when unset).
+    pub fn caret_color(mut self, c: &'a str) -> Self {
+        self.caret_color = Some(c);
+        self
+    }
+    /// Replace the text this frame (`Some("")` clears it); the caret goes to the end.
+    pub fn set(mut self, text: Option<&'a str>) -> Self {
+        self.set = text;
+        self
+    }
+    /// Nest the area under a container (a dialog scrim) for focus scoping.
+    pub fn parent(mut self, p: impl Into<WidgetId>) -> Self {
+        self.parent = Some(p.into());
+        self
+    }
+    /// Scroll the lines up by `y` (the host's scroll view offset).
+    pub fn scroll(mut self, y: f64) -> Self {
+        self.scroll = y;
+        self
+    }
+
+    /// Register, draw, and feed the store.
+    pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> AreaResponse {
+        use uzor::ui::css_text::{fill_text_css, INTER};
+        use uzor::ui::widgets::atomic::text_input::TextInputTheme;
+        let now_ms = cx.time_ms();
+        let theme = theme_of(cx);
+        let color = self.color.map_or_else(|| css_hex(theme.text_normal()), str::to_owned);
+        let ph_color = self.placeholder_color.map_or_else(|| css_hex(theme.placeholder()), str::to_owned);
+        let sel_color = css_hex(theme.selection());
+        let AreaBuilder { id, rect, text_rect, config, name, placeholder, within, px, line_h, family, weight, set, parent, scroll, caret_color, .. } = self;
+        let lh = line_h.unwrap_or((px * 1.45).round());
+        let fr = text_rect.unwrap_or(rect);
+        let hit = within.map_or(rect, |w| w.intersect(rect));
+        let (out, ime) = cx.with_paint(|render, widgets, v, _| {
+            let (coord, _, layer) = parts(widgets);
+            coord.set_default_layer(Some(layer.clone()));
+            coord.register_text_field(id.clone(), hit, config);
+            if let Some(p) = &parent {
+                coord.set_widget_parent(&id, p);
+            }
+            coord.set_a11y(&id, if name.is_empty() { placeholder } else { name }, None);
+            coord.set_default_layer(None);
+            if let Some(t) = set {
+                let fields = coord.text_fields_mut();
+                fields.clear(&id);
+                if !t.is_empty() {
+                    fields.set_text(&id, t);
+                }
+            }
+            let focused = v.is_focused(&id);
+            let (text, caret, preedit, engaged, selection) = match coord.text_fields().field_state(&id) {
+                Some(s) => {
+                    let (text, caret, preedit) = s.display();
+                    let selection = preedit.is_none().then(|| s.selection_range()).flatten();
+                    (text, caret, preedit, s.engaged, selection)
+                }
+                None => (String::new(), 0, None, false, None),
+            };
+            let blink = focused && engaged && coord.text_fields().cursor_visible(now_ms);
+            render.set_font(&format!("{weight} {px}px {family}"));
+            let lines = area_lines(render, &text, fr.width);
+            let chars: Vec<char> = text.chars().collect();
+            // Per boundary: x and line top (buffer of the shown text).
+            let n = chars.len();
+            let mut xs = vec![fr.x; n + 1];
+            let mut tops = vec![fr.y - scroll; n + 1];
+            let mut widths = Vec::with_capacity(lines.len());
+            for (li, l) in lines.iter().enumerate() {
+                let top = fr.y - scroll + li as f64 * lh;
+                let mut acc = String::new();
+                xs[l.start] = fr.x;
+                tops[l.start] = top;
+                for i in l.start..l.end {
+                    acc.push(chars[i]);
+                    xs[i + 1] = fr.x + render.measure_text(&acc);
+                    tops[i + 1] = top;
+                }
+                widths.push(xs[l.end] - fr.x);
+            }
+            let cut = within.map_or(fr, |w| w.intersect(fr));
+            let caret_line = lines.iter().rposition(|l| l.start <= caret).unwrap_or(0);
+            if cut.width > 0.0 && cut.height > 0.0 {
+                render.save();
+                render.begin_path();
+                // A little room for the caret at the right edge and descenders.
+                render.rect(cut.x - 2.0, cut.y, cut.width + 4.0, cut.height);
+                render.clip();
+                let visible = |top: f64| top + lh >= cut.y && top <= cut.y + cut.height;
+                if text.is_empty() {
+                    if !placeholder.is_empty() {
+                        render.set_fill_color(&ph_color);
+                        fill_text_css(render, placeholder, fr.x, fr.y - scroll, px, lh, INTER, uzor::render::TextAlign::Left);
+                    }
+                } else {
+                    if let Some((lo, hi)) = selection {
+                        render.set_fill_color(&sel_color);
+                        for l in &lines {
+                            let (a, b) = (lo.max(l.start), hi.min(l.end));
+                            let top = tops[l.start];
+                            if a > b || !visible(top) || (a == b && !(l.hard && hi > l.end)) {
+                                continue;
+                            }
+                            // A selected line break shows as a narrow slot past the line.
+                            let tail = if l.hard && hi > l.end && lo <= l.end { px * 0.33 } else { 0.0 };
+                            render.fill_rect(xs[a], top, xs[b] - xs[a] + tail, lh);
+                        }
+                    }
+                    render.set_fill_color(&color);
+                    for l in &lines {
+                        let top = tops[l.start];
+                        if l.end > l.start && visible(top) {
+                            let s: String = chars[l.start..l.end].iter().collect();
+                            fill_text_css(render, &s, fr.x, top, px, lh, INTER, uzor::render::TextAlign::Left);
+                        }
+                    }
+                    if let Some((a, b)) = preedit {
+                        for i in a..b.min(n) {
+                            if tops[i] == tops[i + 1] && visible(tops[i]) {
+                                render.fill_rect(xs[i].round(), (tops[i] + lh - 2.0).round(), (xs[i + 1] - xs[i]).max(1.0), 1.0);
+                            }
+                        }
+                    }
+                }
+                if blink && visible(tops[caret.min(n)]) {
+                    let c = caret.min(n);
+                    render.set_fill_color(caret_color.unwrap_or(&color));
+                    let ch = (px * 1.25).min(lh).round();
+                    render.fill_rect(xs[c].round(), (tops[c] + (lh - ch) / 2.0).round(), 1.0, ch);
+                }
+                render.restore();
+            }
+            let c = caret.min(n);
+            let ime = focused.then(|| Rect::new(xs[c], tops[c], 1.0, lh));
+            let fields = coord.text_fields_mut();
+            let (xs, tops) = match fields.field_state(&id) {
+                Some(s) => (s.buffer_positions(xs), s.buffer_positions(tops)),
+                None => (xs, tops),
+            };
+            fields.update_field_lines(&id, (fr.x, fr.y, fr.width, fr.height), xs, tops, lh);
+            let _ = widths;
+            let resp = AreaResponse { text, focused, lines: lines.len(), content_h: lines.len() as f64 * lh, caret_top: caret_line as f64 * lh, line_h: lh };
+            (resp, ime)
+        });
+        if let Some(at) = ime {
+            cx.ime_area(at);
+        }
+        out
+    }
+}
+
 // -- tabs -------------------------------------------------------------------
 
 /// A row of equal-width tabs. Start with [`tabs`].

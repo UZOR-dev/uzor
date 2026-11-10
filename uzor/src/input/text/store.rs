@@ -174,6 +174,12 @@ pub struct TextFieldState {
     pub last_rect: Option<(f64, f64, f64, f64)>,
     /// X positions of char boundaries (length = char_count + 1).
     pub last_char_positions: Vec<f64>,
+    /// Multiline fields ([`TextFieldStore::update_field_lines`]): the top y of the line
+    /// each char boundary sits on (same length as `last_char_positions`); empty for a
+    /// single-line field, whose clicks use x only.
+    pub last_char_tops: Vec<f64>,
+    /// Line height of a multiline field's last paint (0 for a single-line field).
+    pub last_line_h: f64,
     /// Frame counter at last `update_field` call.
     pub last_frame: u64,
     /// Whether the user has TOUCHED this field — clicked into it or typed.
@@ -213,6 +219,8 @@ impl TextFieldState {
             selection_start: None,
             last_rect: None,
             last_char_positions: Vec::new(),
+            last_char_tops: Vec::new(),
+            last_line_h: 0.0,
             last_frame: 0,
             engaged: false,
             preedit: String::new(),
@@ -288,6 +296,70 @@ impl TextFieldState {
             shown.drain(self.cursor..end);
         }
         shown
+    }
+
+    /// The char boundary nearest the point `(x, y)`: on a multiline field the line
+    /// under `y` (clamped to the first / last line) and on it the boundary nearest
+    /// `x`; on a single-line field (or a NaN `y`) the boundary nearest `x`.
+    pub fn boundary_at(&self, x: f64, y: f64) -> usize {
+        match self.line_range_at(y) {
+            Some((lo, hi)) => lo + cursor_from_x(&self.last_char_positions[lo..=hi], x),
+            None => cursor_from_x(&self.last_char_positions, x),
+        }
+    }
+
+    /// The boundaries `lo..=hi` of the laid line under `y` (multiline geometry only).
+    fn line_range_at(&self, y: f64) -> Option<(usize, usize)> {
+        let tops = &self.last_char_tops;
+        if tops.is_empty() || tops.len() != self.last_char_positions.len() || y.is_nan() {
+            return None;
+        }
+        // The line whose band holds `y`, else the nearest one.
+        let mut best = tops[0];
+        let mut dist = f64::INFINITY;
+        for &t in tops {
+            let d = if y < t { t - y } else if y >= t + self.last_line_h { y - t - self.last_line_h } else { 0.0 };
+            if d < dist - 1e-9 {
+                dist = d;
+                best = t;
+            }
+        }
+        self.line_of_top(best)
+    }
+
+    /// The boundaries `lo..=hi` on the line at top `top`.
+    fn line_of_top(&self, top: f64) -> Option<(usize, usize)> {
+        let tops = &self.last_char_tops;
+        let lo = tops.iter().position(|t| (t - top).abs() < 0.5)?;
+        let hi = lo + tops[lo..].iter().take_while(|t| (*t - top).abs() < 0.5).count() - 1;
+        Some((lo, hi))
+    }
+
+    /// Multiline caret moves (ArrowUp / ArrowDown, line Home / End) from the last
+    /// paint's geometry; `None` when the field has none (single line).
+    fn line_move(&self, key: &KeyPress) -> Option<usize> {
+        let tops = &self.last_char_tops;
+        if !self.config.multiline || tops.is_empty() || tops.len() != self.last_char_positions.len() {
+            return None;
+        }
+        let c = self.cursor.min(tops.len() - 1);
+        let (lo, hi) = self.line_of_top(tops[c])?;
+        match key {
+            KeyPress::Home | KeyPress::ShiftHome => Some(lo),
+            KeyPress::End | KeyPress::ShiftEnd => Some(hi),
+            KeyPress::ArrowUp | KeyPress::ArrowDown => {
+                let x = self.last_char_positions[c];
+                let up = matches!(key, KeyPress::ArrowUp);
+                let next = if up { tops[..lo].last().copied() } else { tops.get(hi + 1).copied() };
+                Some(match next.and_then(|t| self.line_of_top(t)) {
+                    Some((a, b)) => a + cursor_from_x(&self.last_char_positions[a..=b], x),
+                    // Past the first / last line: to the text's start / end, like a textarea.
+                    None if up => 0,
+                    None => self.char_count(),
+                })
+            }
+            _ => None,
+        }
     }
 
     /// Return `(lo, hi)` if there is a non-empty selection, else `None`.
@@ -415,8 +487,31 @@ impl TextFieldStore {
         if let Some(state) = self.fields.get_mut(id) {
             state.last_rect = Some(rect);
             state.last_char_positions = char_positions;
+            state.last_char_tops.clear();
+            state.last_line_h = 0.0;
             state.last_frame = self.current_frame;
         }
+    }
+
+    /// [`Self::update_field`] for a multiline field: `char_x` and `char_top` give each
+    /// char boundary's x and the top y of its line (both char_count + 1 long, buffer
+    /// indices), `line_h` the line height. Clicks and drags then pick the line under
+    /// the pointer, and ArrowUp / ArrowDown / Home / End move by laid lines.
+    pub fn update_field_lines(&mut self, id: &WidgetId, rect: (f64, f64, f64, f64), char_x: Vec<f64>, char_top: Vec<f64>, line_h: f64) {
+        if let Some(state) = self.fields.get_mut(id) {
+            state.last_rect = Some(rect);
+            let ok = char_top.len() == char_x.len();
+            state.last_char_positions = char_x;
+            state.last_char_tops = if ok { char_top } else { Vec::new() };
+            state.last_line_h = line_h;
+            state.last_frame = self.current_frame;
+        }
+    }
+
+    /// The field has multiline geometry ([`Self::update_field_lines`]): its caret moves
+    /// between lines on ArrowUp / ArrowDown.
+    pub fn has_lines(&self, id: &WidgetId) -> bool {
+        self.fields.get(id).is_some_and(|s| s.config.multiline && !s.last_char_tops.is_empty())
     }
 
     /// Stamp a field as "on screen this frame" WITHOUT touching its
@@ -876,6 +971,12 @@ impl TextFieldStore {
     /// first focus) — calling this instead moves it under the pointer, the
     /// way every native text field behaves on click.
     pub fn begin_drag_at(&mut self, id: impl Into<WidgetId>, x: f64) {
+        self.begin_drag_at_xy(id, x, f64::NAN);
+    }
+
+    /// [`Self::begin_drag_at`] at the point `(x, y)`: a multiline field puts the caret
+    /// on the line under `y`.
+    pub fn begin_drag_at_xy(&mut self, id: impl Into<WidgetId>, x: f64, y: f64) {
         let id = id.into();
         self.focus(id.clone());
 
@@ -887,7 +988,7 @@ impl TextFieldStore {
         // flag, which is right for an arming focus and wrong for this one.
         state.engaged = true;
 
-        let cursor = cursor_from_x(&state.last_char_positions, x);
+        let cursor = state.boundary_at(x, y);
         state.cursor = cursor;
         state.selection_start = Some(cursor);
         self.drag_field = Some(id);
@@ -896,6 +997,11 @@ impl TextFieldStore {
 
     /// Update the drag-selection cursor as the mouse moves.
     pub fn on_drag_move(&mut self, x: f64) {
+        self.on_drag_move_xy(x, f64::NAN);
+    }
+
+    /// [`Self::on_drag_move`] at the point `(x, y)` (multiline: across lines).
+    pub fn on_drag_move_xy(&mut self, x: f64, y: f64) {
         let id = match self.drag_field.clone() {
             Some(id) => id,
             None => return,
@@ -906,7 +1012,7 @@ impl TextFieldStore {
             None => return,
         };
 
-        state.cursor = cursor_from_x(&state.last_char_positions, x);
+        state.cursor = state.boundary_at(x, y);
     }
 
     /// Returns `true` if a text-select drag is currently in progress.
@@ -954,10 +1060,15 @@ impl TextFieldStore {
     /// (the release), either direction. A drag that ends on its start
     /// char leaves a caret there.
     pub fn select_drag(&mut self, id: impl Into<WidgetId>, anchor_x: f64, focus_x: f64) {
+        self.select_drag_xy(id, (anchor_x, f64::NAN), (focus_x, f64::NAN));
+    }
+
+    /// [`Self::select_drag`] between two points (multiline: across lines).
+    pub fn select_drag_xy(&mut self, id: impl Into<WidgetId>, anchor: (f64, f64), focus: (f64, f64)) {
         let id = id.into();
         let Some(state) = self.fields.get(&id) else { return };
-        let anchor = cursor_from_x(&state.last_char_positions, anchor_x);
-        let focus = cursor_from_x(&state.last_char_positions, focus_x);
+        let anchor = state.boundary_at(anchor.0, anchor.1);
+        let focus = state.boundary_at(focus.0, focus.1);
         self.set_selection(id, TextSelection::new(anchor, focus));
     }
 
@@ -968,9 +1079,15 @@ impl TextFieldStore {
     /// [`selection`](super::selection) helpers, so they agree with
     /// Ctrl+Arrow.
     pub fn select_at_click_count(&mut self, id: impl Into<WidgetId>, x: f64, click_count: u8) {
+        self.select_at_click_count_xy(id, x, f64::NAN, click_count);
+    }
+
+    /// [`Self::select_at_click_count`] at the point `(x, y)` (multiline: the line
+    /// under `y`).
+    pub fn select_at_click_count_xy(&mut self, id: impl Into<WidgetId>, x: f64, y: f64, click_count: u8) {
         let id = id.into();
         if click_count <= 1 {
-            self.begin_drag_at(id, x);
+            self.begin_drag_at_xy(id, x, y);
             return;
         }
         let Some(state) = self.fields.get(&id) else {
@@ -982,7 +1099,10 @@ impl TextFieldStore {
         let sel = if state.config.masked {
             TextSelection::all(&state.text)
         } else {
-            let under = char_index_at_x(&state.last_char_positions, x);
+            let under = match state.line_range_at(y) {
+                Some((lo, hi)) => lo + char_index_at_x(&state.last_char_positions[lo..=hi], x),
+                None => char_index_at_x(&state.last_char_positions, x),
+            };
             TextSelection::for_click_count(&state.text, under, click_count)
         };
         self.set_selection(id, sel);
@@ -1083,6 +1203,22 @@ impl Default for TextFieldStore {
 /// Apply a key event to a `TextFieldState`. Returns `true` if consumed.
 fn apply_key(state: &mut TextFieldState, key: KeyPress) -> bool {
     let char_count = state.char_count();
+    // Multiline geometry: Up / Down and Home / End move by laid lines.
+    if let Some(to) = state.line_move(&key) {
+        let shift = matches!(key, KeyPress::ShiftHome | KeyPress::ShiftEnd);
+        if shift {
+            if state.selection_start.is_none() {
+                state.selection_start = Some(state.cursor);
+            }
+        } else {
+            state.selection_start = None;
+        }
+        state.cursor = to.min(char_count);
+        if state.selection_start == Some(state.cursor) {
+            state.selection_start = None;
+        }
+        return true;
+    }
 
     match key {
         KeyPress::Delete => {
