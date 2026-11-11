@@ -418,7 +418,7 @@ fn counts(m: &TrayModel, l: &TrayLabels) -> String {
 }
 
 fn working(m: &TrayModel) -> usize {
-    m.agents.iter().filter(|a| matches!(a.status, TrayStatus::Live | TrayStatus::Attention)).count()
+    m.agents.iter().filter(|a| a.status == TrayStatus::Live).count()
 }
 
 /// A tray widget card (`div.tw`) at its [`size`](TrayWidget::size). Critters are embed
