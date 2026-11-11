@@ -98,7 +98,7 @@ pub fn create_window(
     let window = Arc::new(window);
 
     let dpr = window.scale_factor();
-    let inner = window.inner_size();
+    let inner = surface_px(&window);
     let size = SurfaceSize {
         width: inner.width.max(1),
         height: inner.height.max(1),
@@ -143,9 +143,24 @@ pub fn create_window(
     })
 }
 
-/// Physical inner size + DPR for a Created / Resized echo.
+/// The physical size the surface covers. On iOS winit's `inner_size` is the safe
+/// area while the view, its layer and `WindowEvent::Resized` cover the whole
+/// window: sizing the swapchain from the safe area stretched the first frames and
+/// put touches off by the notch until the next resize.
+pub fn surface_px(window: &Window) -> winit::dpi::PhysicalSize<u32> {
+    #[cfg(target_os = "ios")]
+    {
+        window.outer_size()
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        window.inner_size()
+    }
+}
+
+/// Physical surface size + DPR for a Created / Resized echo.
 pub fn geometry_echo(window: &Window) -> (SizePx, f64, Option<(i32, i32)>) {
-    let inner = window.inner_size();
+    let inner = surface_px(window);
     let dpr = window.scale_factor();
     let pos = window.outer_position().ok().map(|p| (p.x, p.y));
     (SizePx::new(inner.width, inner.height), dpr, pos)
