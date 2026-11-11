@@ -149,6 +149,25 @@ pub fn unregister_font(id: FontId) -> bool {
     } else { false }
 }
 
+/// A registered face as CSS font words: `"<weight> '<family>'"`, e.g.
+/// `"400 'JetBrains Mono'"` (family from the `name` table, weight from
+/// `OS/2`, to the nearest hundred). For a consumer that draws a `GlyphRun` by its text through a
+/// CSS-font API instead of by glyph ids, so the run keeps its face.
+pub fn font_css(id: FontId) -> Option<String> {
+    with_font_ref(id, |f| {
+        let family = f
+            .localized_strings()
+            .find_by_id(swash::StringId::Family, None)
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())?;
+        // CSS weight words are whole hundreds.
+        let weight = ((f.attributes().weight().0 as u32 + 50) / 100 * 100).clamp(100, 900);
+        Some(format!("{weight} '{}'", family.replace('\'', "")))
+    })
+    .ok()
+    .flatten()
+}
+
 #[derive(Debug)]
 pub enum GlyphError {
     InvalidFont,
@@ -368,4 +387,18 @@ pub fn _clear_caches_for_tests() {
     *c = None;
     let mut r = REGISTRY.write().unwrap();
     *r = None;
+}
+
+#[cfg(test)]
+mod font_css_tests {
+    use super::*;
+
+    #[test]
+    fn font_css_names_the_registered_face() {
+        let mono = include_bytes!("../../uzor-fonts/fonts/JetBrainsMono-Bold.ttf").to_vec();
+        let id = register_font(mono).unwrap();
+        assert_eq!(font_css(id).as_deref(), Some("600 'JetBrains Mono'"));
+        assert!(unregister_font(id));
+        assert_eq!(font_css(id), None);
+    }
 }

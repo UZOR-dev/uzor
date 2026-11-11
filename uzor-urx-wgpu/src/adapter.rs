@@ -163,7 +163,7 @@ pub fn adapt_scene_into(scene: &Scene, ctx: &mut InstancedRenderContext) {
                 ctx.stroke();
                 unapply_transform(ctx, transform);
             }
-            DrawCommand::GlyphRun { glyphs: _, font: _, font_size, brush, transform, text } => {
+            DrawCommand::GlyphRun { glyphs: _, font, font_size, brush, transform, text } => {
                 match text {
                     // Stage 2 (Wave 0 of the URX family-parity plan,
                     // 2026-07-24): the `text` source-string companion the
@@ -171,14 +171,15 @@ pub fn adapt_scene_into(scene: &Scene, ctx: &mut InstancedRenderContext) {
                     // instanced backend's EXISTING GPU glyph atlas via
                     // `fill_text`. The run origin is the transform's own
                     // translation (same convention `uzor-urx-cpu`'s
-                    // `draw_glyph_run` reads); `FontId` → family
-                    // resolution is not wired at this layer yet (default
-                    // family, size honored) — a documented approximation
-                    // the Wave 2 native glyph-id atlas removes.
+                    // `draw_glyph_run` reads); the family and weight come
+                    // from the registered face (`uzor_urx_glyph::font_css`).
                     Some(s) if !s.is_empty() => {
                         let color = brush_to_solid_color(brush);
                         ctx.set_fill_color(&color_to_css(color));
-                        ctx.set_font(&format!("{font_size}px sans-serif"));
+                        // The run's own face (a monospace run stays monospace:
+                        // terminal cells, code); sans-serif when the id is unknown.
+                        let face = uzor_urx_glyph::font_css(*font).unwrap_or_else(|| "sans-serif".into());
+                        ctx.set_font(&format!("{font_size}px {face}"));
                         apply_transform(ctx, transform);
                         ctx.fill_text(s, 0.0, 0.0);
                         unapply_transform(ctx, transform);
