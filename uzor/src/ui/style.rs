@@ -510,8 +510,17 @@ impl Clone for Sheet {
 }
 
 impl Sheet {
-    /// Parse a CSS subset. `/* comments */` are skipped.
+    /// Parse a CSS subset. `/* comments */` are skipped. `@media` blocks and `env()`
+    /// are evaluated against [`super::media::current`] (see [`Sheet::parse_with`]).
     pub fn parse(css: &str) -> Result<Sheet, StyleError> {
+        Self::parse_with(css, &super::media::current())
+    }
+
+    /// [`Sheet::parse`] against an explicit media environment: rules inside
+    /// `@media <query> { ... }` apply when the query matches `env` (in source order
+    /// with the rules around them), and `env(safe-area-inset-*)` /
+    /// `env(keyboard-inset-height)` become px values.
+    pub fn parse_with(css: &str, env: &super::media::MediaEnv) -> Result<Sheet, StyleError> {
         let mut src = String::with_capacity(css.len());
         let mut rest = css;
         while let Some(i) = rest.find("/*") {
@@ -520,21 +529,38 @@ impl Sheet {
         }
         src.push_str(rest);
         let mut sheet = Sheet::default();
-        let mut rest = src.as_str();
+        sheet.parse_into(&src, env)?;
+        Ok(sheet)
+    }
+
+    fn parse_into(&mut self, src: &str, env: &super::media::MediaEnv) -> Result<(), StyleError> {
+        let sheet = self;
+        let mut rest = src;
+        let block_end = |rest: &str, open: usize| -> Result<usize, StyleError> {
+            let mut depth = 0;
+            rest[open..]
+                .char_indices()
+                .find(|&(_, c)| {
+                    depth += (c == '{') as i32 - (c == '}') as i32;
+                    depth == 0
+                })
+                .map(|(i, _)| open + i)
+                .ok_or_else(|| StyleError("missing `}`".into()))
+        };
         while let Some(open) = rest.find('{') {
             if let Some(name) = rest[..open].trim().strip_prefix("@keyframes") {
                 // Nested block: find the brace that closes it.
-                let mut depth = 0;
-                let close = rest[open..]
-                    .char_indices()
-                    .find(|&(_, c)| {
-                        depth += (c == '{') as i32 - (c == '}') as i32;
-                        depth == 0
-                    })
-                    .map(|(i, _)| open + i)
-                    .ok_or_else(|| StyleError("missing `}`".into()))?;
+                let close = block_end(rest, open)?;
                 let kf = super::motion::Keyframes::parse(&rest[open + 1..close]).ok_or_else(|| StyleError(format!("bad @keyframes `{}`", name.trim())))?;
                 sheet.keyframes.insert(name.trim().to_string(), kf);
+                rest = &rest[close + 1..];
+                continue;
+            }
+            if let Some(query) = rest[..open].trim().strip_prefix("@media") {
+                let close = block_end(rest, open)?;
+                if env.matches(query) {
+                    sheet.parse_into(&rest[open + 1..close], env)?;
+                }
                 rest = &rest[close + 1..];
                 continue;
             }
@@ -545,7 +571,7 @@ impl Sheet {
                 .filter(|d| !d.trim().is_empty())
                 .map(|d| {
                     let (k, v) = d.split_once(':').ok_or_else(|| StyleError(format!("bad declaration `{}`", d.trim())))?;
-                    Ok((k.trim().to_ascii_lowercase(), v.trim().to_string()))
+                    Ok((k.trim().to_ascii_lowercase(), env.substitute(v.trim())))
                 })
                 .collect::<Result<_, StyleError>>()?;
             for s in sels.split(',') {
@@ -565,7 +591,7 @@ impl Sheet {
         if !rest.trim().is_empty() {
             return Err(StyleError(format!("trailing text `{}`", rest.trim())));
         }
-        Ok(sheet)
+        Ok(())
     }
 
     /// The `@keyframes` rule called `name`.
@@ -1287,6 +1313,22 @@ mod tests {
         let sel: Vec<_> = tr.iter().map(|a| (a.property.as_str(), a.selector.as_str())).collect();
         assert_eq!(sel, [("color", "button"), ("gap", "button"), ("color", ".b"), ("gap", ".b"), ("color", "#x")]);
         assert_eq!(tr.last().unwrap().value, "#111");
+    }
+
+    #[test]
+    fn media_blocks_and_env_follow_the_environment() {
+        use crate::ui::media::{Edges, MediaEnv};
+        let css = ".bar{height:44px;padding-bottom:env(safe-area-inset-bottom, 0px)} @media (pointer: coarse) { .btn{padding:12px 16px} } .btn{color:#fff} @media (max-width: 600px) and (orientation: portrait) { .side{display:none} }";
+        let phone = MediaEnv::touch(390.0, 844.0, Edges::new(47.0, 0.0, 34.0, 0.0));
+        let ph = Sheet::parse_with(css, &phone).unwrap();
+        assert_eq!(ph.el("div.bar").padding.map(|p| p[2]), Some(34.0));
+        assert_eq!(ph.el("button.btn").padding, Some([12.0, 16.0, 12.0, 16.0]));
+        assert_eq!(ph.el("button.btn").color.as_deref(), Some("#fff"), "rules after the block still apply");
+        assert_eq!(ph.el("div.side").display.as_deref(), Some("none"));
+        let desk = Sheet::parse_with(css, &MediaEnv::desktop(1440.0, 900.0)).unwrap();
+        assert_eq!(desk.el("div.bar").padding.map(|p| p[2]), Some(0.0));
+        assert_eq!(desk.el("button.btn").padding, None);
+        assert_eq!(desk.el("div.side").display, None);
     }
 
     #[test]

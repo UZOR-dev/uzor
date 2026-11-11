@@ -7,6 +7,7 @@ pub mod dash;
 pub mod domkit;
 pub mod effects;
 pub mod i18n;
+pub mod media;
 pub mod motion;
 pub mod style;
 pub mod flow;
