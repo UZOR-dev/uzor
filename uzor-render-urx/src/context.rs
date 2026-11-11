@@ -100,7 +100,85 @@ struct SavedState {
 struct ShadowState {
     dx:    f64,
     dy:    f64,
+    /// Canvas2D `shadowBlur` (CSS blur radius): Gaussian sigma = blur / 2.
+    blur:  f64,
     color: Color,
+}
+
+/// Layers of a soft shadow: nested rounded rects, outermost first.
+const SOFT_SHADOW_LAYERS: usize = 8;
+
+/// `1 - Φ(x)` (upper tail of the standard normal), A&S 7.1.26 erf.
+fn normal_tail(x: f64) -> f64 {
+    let z = x.abs() / std::f64::consts::SQRT_2;
+    let t = 1.0 / (1.0 + 0.327_591_1 * z);
+    let poly = t * (0.254_829_592 + t * (-0.284_496_736 + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
+    let erf = 1.0 - poly * (-z * z).exp();
+    let tail = 0.5 * (1.0 - erf);
+    if x >= 0.0 { tail } else { 1.0 - tail }
+}
+
+/// The soft shadow of a rounded rect with corner `radius`, blurred by `blur`
+/// (Canvas2D `shadowBlur`): `(rect, radius, alpha)` per layer, outermost
+/// first. Painted over each other in that order the layers build the
+/// Gaussian edge profile `A·(1 − Φ(d/σ))` (d = distance outside the rect
+/// edge, σ = blur / 2, A = `alpha`) within ±2σ of the edge. Layers that
+/// collapse (a rect inset to nothing) are left out.
+fn soft_shadow_layers(rect: KRect, radius: f64, blur: f64, alpha: f64) -> Vec<(KRect, f64, f64)> {
+    let sigma = (blur / 2.0).max(0.5);
+    let n = SOFT_SHADOW_LAYERS;
+    let mut out = Vec::with_capacity(n);
+    let mut below = 0.0_f64;
+    for i in 0..n {
+        let e = 2.0 * sigma * (1.0 - (2 * i + 1) as f64 / n as f64);
+        let want = (alpha * normal_tail(e / sigma)).min(0.999);
+        let a = 1.0 - (1.0 - want) / (1.0 - below);
+        below = want;
+        let r = rect.inflate(e, e);
+        if r.width() <= 0.0 || r.height() <= 0.0 || a <= 0.0 {
+            continue;
+        }
+        out.push((r, (radius + e).max(0.0), a));
+    }
+    out
+}
+
+/// The rounded rect a path outlines, if it is one: every on-curve point on
+/// the bounding box's edges (as `path_round_rect` / the DOM border box
+/// paths draw it) and the area of that rounded rect. The radius is read off
+/// the first point (`x0 + r, y0`).
+fn path_as_round_rect(path: &BezPath) -> Option<(KRect, f64)> {
+    use kurbo::{PathEl, Shape};
+    let els = path.elements();
+    if els.is_empty() || els.len() > 12 {
+        return None;
+    }
+    let b = path.bounding_box();
+    const EPS: f64 = 0.01;
+    let on_edge = |p: KPoint| (p.x - b.x0).abs() < EPS || (p.x - b.x1).abs() < EPS || (p.y - b.y0).abs() < EPS || (p.y - b.y1).abs() < EPS;
+    let mut first = None;
+    for el in els {
+        let end = match *el {
+            PathEl::MoveTo(p) => {
+                if first.is_some() {
+                    return None;
+                }
+                first = Some(p);
+                p
+            }
+            PathEl::LineTo(p) | PathEl::QuadTo(_, p) | PathEl::CurveTo(_, _, p) => p,
+            PathEl::ClosePath => continue,
+        };
+        if !on_edge(end) {
+            return None;
+        }
+    }
+    let p = first?;
+    let r = if (p.y - b.y0).abs() < EPS { p.x - b.x0 } else { 0.0 };
+    let r = r.clamp(0.0, b.width().min(b.height()) / 2.0);
+    // A triangle or a notch can touch all four edges too: the area tells.
+    let want = b.area() - (4.0 - std::f64::consts::PI) * r * r;
+    ((path.area().abs() - want).abs() <= 0.02 * want.max(1.0)).then_some((b, r))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -481,7 +559,13 @@ impl UrxRenderContext {
     /// with a gradient, same as Canvas2D's own `fill()` contract).
     fn emit_fill_path(&mut self, brush: PenikoBrush) {
         if self.path.elements().is_empty() { return; }
-        if let Some(sh) = self.shadow.clone() {
+        let soft = self.shadow.as_ref().filter(|sh| sh.blur >= 1.0).and_then(|_| match self.path_hint {
+            PathHint::FullCircle { cx, cy, radius } => Some((KRect::new(cx - radius, cy - radius, cx + radius, cy + radius), radius)),
+            _ => path_as_round_rect(&self.path),
+        });
+        if let (Some(sh), Some((rect, radius))) = (self.shadow.clone(), soft) {
+            self.emit_soft_shadow(&sh, rect, radius);
+        } else if let Some(sh) = self.shadow.clone() {
             self.scene.push(DrawCommand::FillPath {
                 path:      self.path.clone(),
                 rule:      FillRule::NonZero,
@@ -495,6 +579,22 @@ impl UrxRenderContext {
             brush,
             transform: self.transform,
         });
+    }
+
+    /// A blurred shadow under `rect` (corner `radius`): the layers of
+    /// [`soft_shadow_layers`], offset by the shadow's dx/dy.
+    fn emit_soft_shadow(&mut self, sh: &ShadowState, rect: KRect, radius: f64) {
+        let base = sh.color.with_alpha(1.0);
+        let transform = self.transform.then_translate(Vec2::new(sh.dx, sh.dy));
+        for (r, rad, a) in soft_shadow_layers(rect, radius, sh.blur, sh.color.components[3] as f64) {
+            let rad = rad.min(r.width() / 2.0).min(r.height() / 2.0) as f32;
+            self.scene.push(DrawCommand::FillRect {
+                rect: r,
+                radii: Some([rad; 4]),
+                brush: PenikoBrush::Solid(apply_alpha(base.with_alpha(a as f32), self.global_alpha)),
+                transform,
+            });
+        }
     }
 
     fn current_stroke(&self) -> UrxStroke {
@@ -530,7 +630,10 @@ impl UrxRenderContext {
             return;
         }
         let rect = KRect::new(x, y, x + w, y + h);
-        if let Some(sh) = self.shadow.clone() {
+        if let Some(sh) = self.shadow.clone().filter(|sh| sh.blur >= 1.0) {
+            let r = radii.map_or(0.0, |r| r.iter().copied().fold(0.0_f32, f32::max) as f64);
+            self.emit_soft_shadow(&sh, rect, r);
+        } else if let Some(sh) = self.shadow.clone() {
             self.scene.push(DrawCommand::FillRect {
                 rect,
                 radii,
@@ -921,10 +1024,11 @@ impl Masking for UrxRenderContext {
 // ── Effects ────────────────────────────────────────────────────────────────
 
 impl Effects for UrxRenderContext {
-    fn set_shadow(&mut self, dx: f64, dy: f64, _blur: f64, color: &str) {
-        // Blur is approximated as a translated copy (matches the
-        // vello-cpu/gpu approach until urx_core gains a blur op).
-        self.shadow = Some(ShadowState { dx, dy, color: parse_color(color) });
+    fn set_shadow(&mut self, dx: f64, dy: f64, blur: f64, color: &str) {
+        // A blurred shadow of a rect or rounded rect is soft (layered, see
+        // `soft_shadow_layers`); any other shape keeps a translated copy
+        // until urx_core gains a blur op.
+        self.shadow = Some(ShadowState { dx, dy, blur: blur.max(0.0), color: parse_color(color) });
     }
     fn clear_shadow(&mut self) { self.shadow = None; }
     fn set_blend_mode(&mut self, mode: UzorBlendMode) { self.blend_mode = mode; }
@@ -1952,6 +2056,41 @@ mod tests {
     /// Shadow pre-pass still emits (as `GlyphRun` now, matching the
     /// main draw) BEFORE the main glyph run — same ordering the old
     /// FillPath shadow pre-pass used.
+    #[test]
+    fn blurred_shadow_of_a_round_rect_is_soft_layers_then_the_box() {
+        let mut ctx = UrxRenderContext::new(1.0);
+        Effects::set_shadow(&mut ctx, 0.0, 30.0, 80.0, "rgba(0,0,0,0.8)");
+        uzor::ui::widgets::composite::dialog::fill_round_rect(&mut ctx, uzor::types::Rect::new(100.0, 100.0, 400.0, 300.0), 14.0, "#1b1b1b");
+        let scene = ctx.take_scene();
+        let n = scene.commands.len();
+        assert!(n > 2, "layers, not one hard copy: {n}");
+        // Layers grow fainter outwards and reach past the box by the blur.
+        let DrawCommand::FillRect { rect, .. } = &scene.commands[0] else { panic!("layer is a FillRect") };
+        assert!(rect.x0 < 100.0 - 40.0, "outermost layer spreads ~2 sigma: {rect:?}");
+        assert!(matches!(scene.commands[n - 1], DrawCommand::FillPath { .. }), "the box itself last");
+        // Coverage built by the layers: ~A deep inside, ~A/2 on the edge, ~0 far out.
+        let cov = |layers: &[(KRect, f64, f64)], x: f64| layers.iter().filter(|(r, _, _)| r.x0 <= x).fold(0.0, |c, (_, _, a)| c + (1.0 - c) * a);
+        let l = soft_shadow_layers(KRect::new(0.0, 0.0, 400.0, 300.0), 0.0, 80.0, 0.8);
+        assert!((cov(&l, 200.0) - 0.8).abs() < 0.05);
+        assert!((cov(&l, 0.0) - 0.4).abs() < 0.12, "{}", cov(&l, 0.0));
+        assert!(cov(&l, -90.0) < 0.01);
+    }
+
+    #[test]
+    fn unblurred_or_odd_shapes_keep_the_translated_copy() {
+        let mut ctx = UrxRenderContext::new(1.0);
+        Effects::set_shadow(&mut ctx, 2.0, 2.0, 0.0, "#000000");
+        ctx.fill_rect(0.0, 0.0, 10.0, 10.0);
+        Effects::set_shadow(&mut ctx, 2.0, 2.0, 8.0, "#000000");
+        ctx.begin_path();
+        ctx.move_to(0.0, 0.0);
+        ctx.line_to(10.0, 5.0);
+        ctx.line_to(3.0, 9.0);
+        ctx.close_path();
+        ctx.fill();
+        assert_eq!(ctx.take_scene().commands.len(), 4, "copy + rect, copy + triangle");
+    }
+
     #[test]
     fn fill_text_with_shadow_emits_shadow_then_main_glyph_run() {
         let mut ctx = UrxRenderContext::new(1.0);
