@@ -267,3 +267,16 @@ fn approach_lands() {
     }
     assert!(n > 5, "eases, does not jump");
 }
+
+#[test]
+fn drawer_avatar_paints_inside_the_drawer() {
+    // The avatar is `position: relative` (for its dot); the drawer's z-index makes it a
+    // stacking context, so the avatar paints over the drawer, not under it.
+    let el = drawer("dr", 1.0, Some(("Л", "ЛАВР", Dot::Ok, "в сети")), &[]).unwrap();
+    let dom = lay(&el, &phone());
+    let at = |f: &dyn Fn(&crate::ui::dom::Placed) -> bool| dom.boxes.iter().position(|b| f(b)).unwrap();
+    let av = at(&|b| b.text.as_deref() == Some("Л"));
+    let panel = at(&|b| b.style.backdrop_blur.is_some());
+    let scrim = at(&|b| b.id.as_deref() == Some("dr:scrim"));
+    assert!(scrim < panel && panel < av, "scrim {scrim}, panel {panel}, avatar {av}");
+}

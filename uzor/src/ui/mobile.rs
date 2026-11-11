@@ -78,7 +78,7 @@ div.m-row { display: flex; align-items: center; gap: 12px; min-height: 68px; pad
 div.m-row.dense { min-height: 52px }
 div.m-row:active { background: var(--m-press) }
 div.m-row.on { background: var(--m-press) }
-div.m-av { width: 44px; height: 44px; border-radius: 22px; background: #2a2a2a; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 16px; color: #d8d8d8; position: relative }
+div.m-av { width: 44px; height: 44px; border-radius: 22px; background: #2a2a2a; flex-shrink: 0; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: 600; font-size: 16px; color: #d8d8d8; position: relative }
 div.m-av.sq { border-radius: 12px }
 div.m-av > span.m-dot { position: absolute; right: -1px; bottom: -1px; width: 12px; height: 12px; border-radius: 6px; border: 2px solid var(--m-bg) }
 div.m-main { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px }

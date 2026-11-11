@@ -1216,11 +1216,38 @@ fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(bool, i
             let mut sub = Vec::new();
             // A fixed box escapes its ancestors' overflow clips.
             let cc = if f && !fixed { None } else { inner };
-            place(c, cl, &mut sub, layers, a, f, cc);
+            if c.style.z_index.is_some() {
+                // A z-index makes a stacking context: the box's own positioned
+                // descendants paint inside it (by their z-index), not among its siblings.
+                let mut own = Vec::new();
+                place(c, cl, &mut sub, &mut own, a, f, cc);
+                stack(&mut sub, own);
+            } else {
+                place(c, cl, &mut sub, layers, a, f, cc);
+            }
             layers[at].2 = sub;
         } else {
             place(c, cl, out, layers, a, fixed, inner);
         }
+    }
+}
+
+/// Merge a stacking context's positioned `layers` into its painted `flow` (the context's
+/// box first): negative z-index under the flow, the rest above it, ties in document order.
+fn stack(flow: &mut Vec<Placed>, mut layers: Vec<(bool, i32, Vec<Placed>)>) {
+    if layers.is_empty() {
+        return;
+    }
+    crate::sort::sort_by_key(&mut layers, |l| l.1);
+    let rest = if flow.is_empty() { Vec::new() } else { flow.split_off(1) };
+    let split = layers.iter().position(|l| l.1 >= 0).unwrap_or(layers.len());
+    let mut layers = layers.into_iter();
+    for (_, _, l) in layers.by_ref().take(split) {
+        flow.extend(l);
+    }
+    flow.extend(rest);
+    for (_, _, l) in layers {
+        flow.extend(l);
     }
 }
 

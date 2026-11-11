@@ -22,6 +22,13 @@ All crates in the workspace share one version.
 
 - `vh`, `vw`, `vmin`, `vmax` and `rem` lengths resolve against the media environment.
 
+### DOM paint order (`uzor`)
+
+- A positioned box with a `z-index` is a stacking context: its positioned descendants paint
+  inside it, ordered by their own `z-index`, instead of among the page's layers. Before this,
+  a `position: relative` child of an overlay was painted under the overlay (the drawer's
+  avatar was hidden). Mobile avatars also centre their letters.
+
 ### Mobile drivers (`uzor-framework::widgets::mobile`)
 
 - `DragTracker` turns touch pans and mouse drags into one `Drag` stream for a target rect or a
