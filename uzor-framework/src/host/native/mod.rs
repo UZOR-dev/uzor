@@ -40,4 +40,11 @@ pub use win32::{
     extract_hwnd, get_cursor_pos, install_borderless_resize, set_border_color, set_corner_style,
 };
 pub use window::NativeWindow;
+
+/// The Android activity type `android_main` receives (winit's `android-activity`),
+/// re-exported so mobile layers need no direct winit dependency.
+#[cfg(target_os = "android")]
+pub mod android {
+    pub use winit::platform::android::activity::AndroidApp;
+}
 pub use window_create::{create_window, icon_from_rgba, platform_pipeline_cache_dir};

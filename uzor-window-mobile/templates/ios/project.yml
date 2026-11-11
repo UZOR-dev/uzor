@@ -1,0 +1,39 @@
+# XcodeGen spec of the iOS host (`xcodegen` makes __APP_TITLE__.xcodeproj from it;
+# never edit the .xcodeproj by hand). The app itself is the Rust static library in
+# Rust/lib__APP__.xcframework, built by ../build-ios.sh.
+name: __APP_TITLE__
+options:
+  bundleIdPrefix: __BUNDLE_PREFIX__
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  __APP_TITLE__:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: __APP_TITLE__
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: __BUNDLE_ID__
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/Bridge.h
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ENABLE_BITCODE: NO
+    dependencies:
+      - framework: Rust/lib__APP__.xcframework
+        embed: false
+      - sdk: Metal.framework
+      - sdk: QuartzCore.framework
+      - sdk: CoreGraphics.framework
+      - sdk: Security.framework
+      - sdk: UIKit.framework

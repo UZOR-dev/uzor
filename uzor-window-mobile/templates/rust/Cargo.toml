@@ -1,0 +1,23 @@
+[package]
+name = "__APP__"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+# staticlib for the iOS host, cdylib for Android, rlib for the desktop binary.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+uzor = { version = "__UZOR_VERSION__", features = ["flow-flex", "flow-grid"] }
+uzor-framework = { version = "__UZOR_VERSION__" }
+uzor-window-mobile = { version = "__UZOR_VERSION__" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+uzor-window-mobile = { version = "__UZOR_VERSION__", features = ["android-game-activity"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+opt-level = "s"
