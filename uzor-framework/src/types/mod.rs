@@ -13,6 +13,7 @@
 //! | [`intent`] | typed intents the kernel delivers to the app |
 //! | [`snapshot`] | the published [`VisualSnapshot`](snapshot::VisualSnapshot) and its per-window views |
 //! | [`window`] | [`WindowCommand`](window::WindowCommand), window spec / geometry, cursor / IME enums |
+//! | [`gesture`] | touch gesture recogniser, release velocity and fling |
 //! | [`frame`] | frame requests, region plans, loop wake-up, window surfaces |
 //! | [`layout_blob`] | opaque serialized dock layout and its codec error |
 //! | [`ops`] | engine operations and effects (kernel-facing, not app-facing) |
@@ -26,6 +27,7 @@ pub mod command;
 pub mod controls;
 pub mod error;
 pub mod frame;
+pub mod gesture;
 pub mod ids;
 pub mod intent;
 pub mod layout_blob;
