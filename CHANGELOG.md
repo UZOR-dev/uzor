@@ -2,6 +2,42 @@
 
 All crates in the workspace share one version.
 
+## 1.5.29
+
+### Android native host (`uzor-framework`)
+
+- The native host builds for Android. `arboard` and `tray-icon` have no Android backend, and
+  the X11 flush and pointer query only run on desktop unix; Android takes the same no-op
+  clipboard and tray path as iOS.
+- Features `android-native-activity` and `android-game-activity` pick winit's activity glue.
+  The app's `android_main` passes its `AndroidApp` in `NativeOptions::android_app`; without
+  it `run_native` returns an error, because winit cannot build an event loop on Android
+  otherwise.
+
+### QuickJS bindings on Android (`uzor-anim-js`)
+
+- `quickjs-jit-sys` ships no `aarch64-linux-android` bindings, so the native build failed
+  there the same way it did on iOS. Android now enables the `bindgen` feature too (with the
+  NDK sysroot in `BINDGEN_EXTRA_CLANG_ARGS_<target>`).
+
+### iOS surface size (`uzor-framework`)
+
+- On iOS winit's `inner_size` is the safe area, while the view, its Metal layer and every
+  `Resized` event cover the whole window. The first swapchain and the `Created` echo used
+  the safe area, so the opening frames were stretched and touches were off by the notch
+  until a resize came in. `surface_px` sizes the surface and the echo from the whole view
+  (`outer_size` on iOS).
+
+### Soft shadows (`uzor-render-urx`)
+
+- Blurred shadows of rects and rounded rects are soft: a stack of nested rounded rects
+  builds the Canvas2D `shadowBlur` Gaussian edge (sigma = blur / 2).
+
+### Glyph run face (`uzor-urx-glyph`, `uzor-urx-wgpu`)
+
+- `font_css(id)` returns a registered face as CSS font words (`"400 'JetBrains Mono'"`).
+  `uzor-urx-wgpu` draws a `GlyphRun` through that face, so a monospace run stays monospace.
+
 ## 1.5.28
 
 ### Multiline text area (`uzor_framework::widgets::kit::area`)
