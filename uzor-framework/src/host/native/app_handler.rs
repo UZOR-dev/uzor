@@ -32,6 +32,10 @@ use crate::types::ids::{Seconds, WindowId};
 use crate::types::window::{RenderCmd, WindowCommand, WindowSpec};
 use crate::{App, Spec, Waker};
 
+/// Android destroys the native window of a backgrounded app: its surfaces must go
+/// in `suspended` and come back in `resumed`. Elsewhere the surface survives.
+const DROP_SURFACES_ON_SUSPEND: bool = cfg!(target_os = "android");
+
 /// User-event payload that wakes the loop from another thread.
 #[derive(Debug, Clone, Copy)]
 pub enum HostWake {
@@ -58,6 +62,9 @@ pub struct NativeHost<S: Spec, A: App<Spec = S>> {
     exit: bool,
     /// Cursor locked: device mouse motion becomes RawDelta.
     raw_delta: bool,
+    /// Between `suspended` and the next `resumed` (app in the background on
+    /// Android / iOS): nothing paints.
+    suspended: bool,
     /// Automation port and its in-flight work (feature `automation`).
     #[cfg(feature = "automation")]
     auto: AutoState,
@@ -106,6 +113,29 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
         });
     }
 
+    /// Back from the background: surfaces dropped in `suspended` are made again
+    /// at the window's current size, and every window repaints.
+    fn resume_surfaces(&mut self) {
+        let mut back = Vec::new();
+        for nw in self.windows.values_mut() {
+            if nw.render_state.is_none() {
+                let px = super::window_create::surface_px(&nw.window);
+                let size = uzor_render_hub::SurfaceSize { width: px.width.max(1), height: px.height.max(1) };
+                match super::window_create::create_surface(&self.hub, &nw.window, size) {
+                    Ok(rs) => nw.render_state = Some(rs),
+                    Err(e) => log::warn!("resume: surface for {:?} failed: {e}", nw.id),
+                }
+            }
+            nw.window.request_redraw();
+            back.push((nw.id, geometry_echo(&nw.window)));
+        }
+        for (id, (size, dpr, _)) in back {
+            self.push(id, InputEvent::Window(WindowInput::Occluded(false)));
+            // The surface may come back at another size (rotated while away).
+            self.push(id, InputEvent::Window(WindowInput::Resized { size, dpr }));
+        }
+    }
+
     fn execute_all(&mut self, el: &ActiveEventLoop, cmds: Vec<(WindowId, WindowCommand)>) {
         for (id, cmd) in cmds {
             self.execute_one(el, id, cmd);
@@ -118,6 +148,11 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
         match &cmd {
             WindowCommand::Spawn(spec) => {
                 let spec = spec.clone();
+                // No native window to attach to while suspended (Android): wait for `resumed`.
+                if self.suspended {
+                    self.pending.push((id, spec));
+                    return;
+                }
                 match create_window(el, &self.hub, id, spec) {
                     Ok(nw) => {
                         let (size, dpr, position) = geometry_echo(&nw.window);
@@ -236,7 +271,7 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
         let Some(nw) = self.windows.get_mut(&wid) else {
             return;
         };
-        let Some((device, queue, surface)) = nw.render_state.gpu_handles() else {
+        let Some((device, queue, surface)) = nw.render_state.as_mut().and_then(|rs| rs.gpu_handles()) else {
             log::warn!("screenshot: no GPU surface for {id:?}");
             return;
         };
@@ -333,10 +368,11 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
     fn window_readback(&mut self, id: WindowId) -> Option<crate::automation::AutoShot> {
         let wid = *self.by_id.get(&id)?;
         let nw = self.windows.get_mut(&wid)?;
-        let (pixels, w, h) = if let Some((device, queue, surface)) = nw.render_state.gpu_handles() {
+        let rs = nw.render_state.as_mut()?;
+        let (pixels, w, h) = if let Some((device, queue, surface)) = rs.gpu_handles() {
             capture_screenshot(device, queue, surface, None)?
         } else {
-            nw.render_state.software_readback()?
+            rs.software_readback()?
         };
         let png = encode_png(&pixels, w, h)?;
         Some(crate::automation::AutoShot { window: id, png, width: w, height: h, source: "window" })
@@ -379,7 +415,13 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
                 self.auto.waits.painted();
                 self.auto.background.insert(req.window, req.background);
             }
-            if let Err(e) = paint_frame(&mut self.runtime, &mut self.hub, &mut nw.render_state, &req)
+            // Suspended (app in the background): no surface on Android, and iOS
+            // kills an app that submits GPU work from the background.
+            let Some(rs) = nw.render_state.as_mut().filter(|_| !self.suspended) else {
+                self.windows.insert(wid, nw);
+                continue;
+            };
+            if let Err(e) = paint_frame(&mut self.runtime, &mut self.hub, rs, &req)
             {
                 log::warn!("paint failed: {e}");
             }
@@ -404,9 +446,36 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
 
 impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A> {
     fn resumed(&mut self, el: &ActiveEventLoop) {
+        if self.suspended {
+            self.suspended = false;
+            self.resume_surfaces();
+        }
         let pending = std::mem::take(&mut self.pending);
         for (id, spec) in pending {
             self.execute_one(el, id, WindowCommand::Spawn(spec));
+        }
+    }
+
+    /// The app went to the background. App state (the runtime, the windows'
+    /// layout and input state) stays; only the surfaces go where the OS takes
+    /// them away. Android destroys the native window behind every surface, so
+    /// they are dropped here and made again in `resumed`. iOS keeps the layer
+    /// but forbids GPU work in the background, so painting just stops.
+    /// Every window reads `Occluded(true)` (and `Occluded(false)` on return),
+    /// so apps can pause timers and the cadence stops asking for frames.
+    fn suspended(&mut self, _el: &ActiveEventLoop) {
+        if self.suspended {
+            return;
+        }
+        self.suspended = true;
+        let ids: Vec<WindowId> = self.windows.values().map(|nw| nw.id).collect();
+        if DROP_SURFACES_ON_SUSPEND {
+            for nw in self.windows.values_mut() {
+                nw.render_state = None;
+            }
+        }
+        for id in ids {
+            self.push(id, InputEvent::Window(WindowInput::Occluded(true)));
         }
     }
 
@@ -434,7 +503,9 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
         // window, otherwise frames keep presenting at the creation size (only the
         // top-left part drawn after maximize) and a shrink can stall presents.
         if let WindowEvent::Resized(size) = &ev {
-            resize_render_surface(&mut nw.render_state, size.width, size.height);
+            if let Some(rs) = nw.render_state.as_mut() {
+                resize_render_surface(rs, size.width, size.height);
+            }
             nw.window.request_redraw();
             // The OS (WM, double-click, Win+Up) can maximize too: echo the state
             // so a restore toggle reads the truth.
@@ -543,6 +614,13 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
 
         if self.exit || self.runtime.should_exit() {
             el.exit();
+            return;
+        }
+
+        // In the background nothing paints: park until the OS brings the app back
+        // (frames the cadence still asks for would spin the loop for nothing).
+        if self.suspended {
+            el.set_control_flow(ControlFlow::Wait);
             return;
         }
 
@@ -783,6 +861,7 @@ where
         start: Instant::now(),
         exit: false,
         raw_delta: false,
+        suspended: false,
         #[cfg(feature = "automation")]
         auto: AutoState { port: native.automation.clone(), ..Default::default() },
     };

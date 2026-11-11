@@ -26,8 +26,9 @@ pub struct NativeWindow {
     pub key: String,
     /// winit window.
     pub window: Arc<Window>,
-    /// Hub render state for this surface.
-    pub render_state: WindowRenderState,
+    /// Hub render state for this surface. `None` while the app is suspended on
+    /// Android (the OS destroyed the native window); `resumed` makes it again.
+    pub render_state: Option<WindowRenderState>,
     /// Per-window input mapper.
     pub mapper: WinitMapper,
     /// Last known decorations flag (for borderless-resize install).

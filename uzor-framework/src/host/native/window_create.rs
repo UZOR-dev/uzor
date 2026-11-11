@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use uzor::RgbaIcon;
-use uzor_render_hub::{resolve_render_family_from_process_env, RenderBackend, RenderHub, SurfaceSize};
+use uzor_render_hub::{resolve_render_family_from_process_env, RenderBackend, RenderHub, SurfaceSize, WindowRenderState};
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Icon, Window, WindowButtons};
@@ -104,18 +104,7 @@ pub fn create_window(
         height: inner.height.max(1),
     };
 
-    let raw = raw_handle_for(&window)
-        .ok_or_else(|| FrameworkError::Host("no raw window handle".into()))?;
-
-    let active = hub.active();
-    let factory = hub
-        .factory_for(active)
-        .ok_or_else(|| FrameworkError::Host(format!("hub has no factory for {active:?}")))?;
-
-    let mut render_state = factory
-        .create_render_state(&raw, active, size)
-        .map_err(|e| FrameworkError::Host(format!("create_render_state: {e}")))?;
-    render_state.resize_surface(size.width, size.height);
+    let render_state = create_surface(hub, &window, size)?;
 
     apply_spawn_style(&window, &spec);
     if !spec.decorations {
@@ -133,7 +122,7 @@ pub fn create_window(
         id,
         key,
         window,
-        render_state,
+        render_state: Some(render_state),
         mapper: WinitMapper::new(dpr),
         decorations: spec.decorations,
         maximized: None,
@@ -141,6 +130,23 @@ pub fn create_window(
         transparent: spec.transparent,
         defer_show,
     })
+}
+
+/// A render surface for `window` from the hub's active backend. Window creation calls
+/// it, and so does `resumed` on Android, where the OS destroys the native window
+/// while the app is in the background and the surface has to be made again.
+pub fn create_surface(hub: &RenderHub, window: &Arc<Window>, size: SurfaceSize) -> Result<WindowRenderState, FrameworkError> {
+    let raw = raw_handle_for(window)
+        .ok_or_else(|| FrameworkError::Host("no raw window handle".into()))?;
+    let active = hub.active();
+    let factory = hub
+        .factory_for(active)
+        .ok_or_else(|| FrameworkError::Host(format!("hub has no factory for {active:?}")))?;
+    let mut render_state = factory
+        .create_render_state(&raw, active, size)
+        .map_err(|e| FrameworkError::Host(format!("create_render_state: {e}")))?;
+    render_state.resize_surface(size.width, size.height);
+    Ok(render_state)
 }
 
 /// The physical size the surface covers. On iOS winit's `inner_size` is the safe
