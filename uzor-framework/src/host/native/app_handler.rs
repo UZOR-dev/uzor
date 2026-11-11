@@ -588,7 +588,7 @@ fn dnd_moves<'a>(windows: impl Iterator<Item = &'a mut super::window::NativeWind
 }
 
 /// Pointer position in the window's logical px (X11 XQueryPointer), if available.
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))]
 fn query_pointer(window: &winit::window::Window) -> Option<(f64, f64)> {
     use std::sync::OnceLock;
     use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
@@ -612,7 +612,7 @@ fn query_pointer(window: &winit::window::Window) -> Option<(f64, f64)> {
     Some((wx as f64 / k, wy as f64 / k))
 }
 
-#[cfg(not(all(unix, not(target_os = "macos"))))]
+#[cfg(not(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android")))))]
 fn query_pointer(_window: &winit::window::Window) -> Option<(f64, f64)> {
     None
 }
@@ -684,6 +684,11 @@ pub struct NativeOptions {
     pub automation: Option<crate::automation::AutomationPort>,
     /// Serve dev control (feature `dev-control`; ignored without it).
     pub dev_control: Option<DevControlConfig>,
+    /// The activity `android_main` received. winit cannot build an event loop on
+    /// Android without it; build with `android-native-activity` or
+    /// `android-game-activity`.
+    #[cfg(target_os = "android")]
+    pub android_app: Option<winit::platform::android::activity::AndroidApp>,
 }
 
 /// Run the app on the native host (feature `native`).
@@ -738,7 +743,17 @@ where
         return Ok(());
     }
 
-    let event_loop = EventLoop::<HostWake>::with_user_event()
+    #[cfg_attr(not(target_os = "android"), allow(unused_mut))]
+    let mut builder = EventLoop::<HostWake>::with_user_event();
+    #[cfg(target_os = "android")]
+    {
+        use winit::platform::android::EventLoopBuilderExtAndroid;
+        let Some(app) = native.android_app.clone() else {
+            return Err(FrameworkError::Host("android: NativeOptions::android_app is not set".into()));
+        };
+        builder.with_android_app(app);
+    }
+    let event_loop = builder
         .build()
         .map_err(|e| FrameworkError::Host(format!("event loop: {e}")))?;
     let proxy = event_loop.create_proxy();
@@ -811,7 +826,7 @@ pub(crate) fn resize_render_surface(rs: &mut WindowRenderState, width: u32, heig
 /// the probe the next present waits on) sat in the buffer until some other
 /// traffic flushed it: the last frame after a state change stayed unseen
 /// until the mouse moved.
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))]
 fn flush_x11(window: &winit::window::Window) {
     use std::sync::OnceLock;
     use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
@@ -825,7 +840,7 @@ fn flush_x11(window: &winit::window::Window) {
     }
 }
 
-#[cfg(not(all(unix, not(target_os = "macos"))))]
+#[cfg(not(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android")))))]
 fn flush_x11(_window: &winit::window::Window) {}
 
 #[cfg(test)]

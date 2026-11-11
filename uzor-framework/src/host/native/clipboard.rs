@@ -1,7 +1,7 @@
 //! System clipboard via arboard (design §5.4 `ClipboardRead` / `ClipboardWrite`).
-//! iOS has no arboard backend. The oasis window still runs; clipboard calls no-op.
+//! iOS and Android have no arboard backend. The window still runs; clipboard calls no-op.
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use arboard::Clipboard;
 
 use crate::types::bus::ClipboardResult;
@@ -9,18 +9,18 @@ use crate::types::ids::Ticket;
 
 /// Host-owned clipboard. Created once; OS errors become `None` / warn logs.
 pub struct NativeClipboard {
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     inner: Option<Clipboard>,
 }
 
 impl NativeClipboard {
     /// Open the system clipboard; `None` inside when the OS denies access.
     pub fn new() -> Self {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         {
             return Self {};
         }
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         Self {
             inner: Clipboard::new()
                 .map_err(|e| {
@@ -33,12 +33,12 @@ impl NativeClipboard {
 
     /// Write text; OS errors are logged and ignored (executor contract).
     pub fn write(&mut self, text: &str) {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         {
             let _ = text;
             return;
         }
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             let Some(cb) = self.inner.as_mut() else {
                 return;
@@ -51,12 +51,12 @@ impl NativeClipboard {
 
     /// Write an image (RGBA8).
     pub fn write_image(&mut self, img: &crate::types::bus::ClipboardImage) {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         {
             let _ = img;
             return;
         }
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             let Some(cb) = self.inner.as_mut() else {
                 return;
@@ -74,11 +74,11 @@ impl NativeClipboard {
 
     /// The clipboard image, if it holds one.
     pub fn read_image(&mut self) -> Option<crate::types::bus::ClipboardImage> {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         {
             return None;
         }
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             let img = self.inner.as_mut()?.get_image().ok()?;
             Some(crate::types::bus::ClipboardImage {
@@ -91,11 +91,11 @@ impl NativeClipboard {
 
     /// Read text for a `ClipboardRead` ticket.
     pub fn read(&mut self, ticket: Ticket) -> ClipboardResult {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         {
             return ClipboardResult { ticket, text: None };
         }
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             let text = self.inner.as_mut().and_then(|cb| match cb.get_text() {
                 Ok(t) if t.is_empty() => None,

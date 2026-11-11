@@ -3,12 +3,12 @@
 //! Menu selections become [`HostEvent::Tray`](crate::HostEvent::Tray) via the
 //! native host's about_to_wait drain — never a second input path.
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use std::collections::HashMap;
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use uzor::RgbaIcon;
 
@@ -127,12 +127,12 @@ impl TrayBuilder {
     /// Create the OS tray icon. Must run on the main thread after the event
     /// loop has started.
     pub fn build(self) -> Result<TrayHandle, TrayError> {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         {
             let _ = self;
             return Err(TrayError::Build("ios has no status tray".into()));
         }
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
         let menu = Menu::new();
         let mut id_map: HashMap<tray_icon::menu::MenuId, TrayItemId> = HashMap::new();
@@ -175,23 +175,23 @@ impl TrayBuilder {
 
 /// Live system tray handle. Drop removes the icon.
 pub struct TrayHandle {
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     tray: TrayIcon,
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     id_map: HashMap<tray_icon::menu::MenuId, TrayItemId>,
-    #[cfg_attr(target_os = "ios", allow(dead_code))]
+    #[cfg_attr(any(target_os = "ios", target_os = "android"), allow(dead_code))]
     icon_dims: (u32, u32),
 }
 
 impl TrayHandle {
     /// Replace the tray icon.
     pub fn set_icon(&mut self, icon: RgbaIcon) -> Result<(), TrayError> {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         {
             let _ = icon;
             return Err(TrayError::Icon("ios has no status tray".into()));
         }
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
         self.icon_dims = (icon.width, icon.height);
         let os_icon = Icon::from_rgba(icon.pixels, icon.width, icon.height)
@@ -204,11 +204,11 @@ impl TrayHandle {
 
     /// Update the tooltip.
     pub fn set_tooltip(&mut self, text: &str) {
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             let _ = self.tray.set_tooltip(Some(text));
         }
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         {
             let _ = text;
         }
@@ -216,11 +216,11 @@ impl TrayHandle {
 
     /// Drain one pending tray event (non-blocking).
     pub fn next_event(&self) -> Option<TrayEvent> {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         {
             return None;
         }
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
         if let Ok(menu_ev) = MenuEvent::receiver().try_recv() {
             if let Some(id) = self.id_map.get(&menu_ev.id) {
