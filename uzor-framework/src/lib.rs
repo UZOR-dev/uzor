@@ -53,6 +53,7 @@ pub mod flex;
 pub mod handle;
 pub mod host;
 mod kernel;
+pub mod platform;
 pub mod profiler;
 mod runtime;
 pub mod types;

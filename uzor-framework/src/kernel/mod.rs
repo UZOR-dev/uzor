@@ -143,6 +143,9 @@ pub(crate) struct Kernel<S: Spec> {
     touch_wheel: bool,
     /// Clock of the last `touch_tick` (settle passes share their tick's clock).
     touch_clock: Option<f64>,
+    /// The last pointer input came from a finger (CSS `pointer: coarse`); a mouse
+    /// move turns it off again. Starts on for iOS / Android builds.
+    coarse_pointer: bool,
     /// Gestures recognised this tick, per window (`VisualView::gestures`).
     gestures: VecMap<WindowId, Vec<crate::types::gesture::Gesture>>,
     /// Debug-only phase order assertions (design §4.2 `PhaseClock`).
@@ -199,6 +202,7 @@ impl<S: Spec> Kernel<S> {
             fling: None,
             touch_wheel: false,
             touch_clock: None,
+            coarse_pointer: cfg!(any(target_os = "ios", target_os = "android")),
             gestures: VecMap::new(),
             clock: PhaseClock::new(),
             #[cfg(feature = "inspector")]

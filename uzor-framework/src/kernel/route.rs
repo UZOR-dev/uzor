@@ -32,6 +32,17 @@ impl<S: Spec> Kernel<S> {
         for env in inputs.drain(..) {
             self.trace.clear();
             let win = env.window;
+            match &env.event {
+                InputEvent::Touch(_) if !self.coarse_pointer => {
+                    self.coarse_pointer = true;
+                    self.invalidate(win, None, InvalidateBits::ALL);
+                }
+                InputEvent::Pointer(PointerInput::Moved { .. }) if self.coarse_pointer => {
+                    self.coarse_pointer = false;
+                    self.invalidate(win, None, InvalidateBits::ALL);
+                }
+                _ => {}
+            }
             match env.event {
                 InputEvent::Pointer(input) => self.route_pointer(now, win, input),
                 InputEvent::Wheel(input) => self.route_wheel(now, win, input),

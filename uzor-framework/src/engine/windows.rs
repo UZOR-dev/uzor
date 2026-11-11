@@ -370,6 +370,13 @@ impl WindowEngine {
                     fx.push(WindowEffect::FocusChanged { win, focused });
                 }
             }
+            WindowInput::Insets { safe, keyboard } => {
+                if st.geometry.safe_area != safe || st.geometry.keyboard != keyboard {
+                    st.geometry.safe_area = safe;
+                    st.geometry.keyboard = keyboard;
+                    fx.push(WindowEffect::GeometryChanged(win));
+                }
+            }
             WindowInput::Occluded(b) => st.geometry.occluded = b,
             WindowInput::Minimized(b) => st.geometry.minimized = b,
             WindowInput::Maximized(b) => st.geometry.maximized = b,

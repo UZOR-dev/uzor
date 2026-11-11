@@ -164,6 +164,30 @@ pub fn surface_px(window: &Window) -> winit::dpi::PhysicalSize<u32> {
     }
 }
 
+/// The window's safe area in logical px. winit reports it on iOS only (as the
+/// difference between the safe-area `inner_*` and the full `outer_*` rect); the
+/// Android wrapper pushes its `WindowInsets` through [`crate::platform`].
+pub fn safe_area(window: &Window) -> crate::types::window::Insets {
+    #[cfg(target_os = "ios")]
+    {
+        let dpr = window.scale_factor().max(0.1);
+        let (Ok(ip), Ok(op)) = (window.inner_position(), window.outer_position()) else {
+            return crate::types::window::Insets::ZERO;
+        };
+        let (is, os) = (window.inner_size(), window.outer_size());
+        let top = f64::from(ip.y - op.y) / dpr;
+        let left = f64::from(ip.x - op.x) / dpr;
+        let bottom = (f64::from(os.height) - f64::from(is.height)) / dpr - top;
+        let right = (f64::from(os.width) - f64::from(is.width)) / dpr - left;
+        crate::types::window::Insets::new(top.max(0.0), right.max(0.0), bottom.max(0.0), left.max(0.0))
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = window;
+        crate::types::window::Insets::ZERO
+    }
+}
+
 /// Physical surface size + DPR for a Created / Resized echo.
 pub fn geometry_echo(window: &Window) -> (SizePx, f64, Option<(i32, i32)>) {
     let inner = surface_px(window);

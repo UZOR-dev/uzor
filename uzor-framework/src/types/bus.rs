@@ -320,6 +320,15 @@ pub enum WindowInput {
         /// Reduced motion requested.
         reduced: bool,
     },
+    /// The safe area or the soft keyboard changed (mobile hosts: winit's iOS safe
+    /// area, the wrapper's Android insets and keyboard height via
+    /// [`crate::platform`]). Logical px.
+    Insets {
+        /// Safe area inside the viewport.
+        safe: crate::types::window::Insets,
+        /// Soft keyboard height over the bottom (0 when hidden).
+        keyboard: f64,
+    },
     /// The user asked to close the window.
     CloseRequested,
     /// The window is gone.

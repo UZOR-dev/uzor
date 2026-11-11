@@ -211,6 +211,10 @@ impl WindowSpec {
     }
 }
 
+/// Insets in logical px (top, right, bottom, left): the safe area left by the
+/// notch / status bar / home indicator, as the CSS `env(safe-area-inset-*)` reads.
+pub type Insets = uzor::ui::media::Edges;
+
 /// OS-facing geometry and state flags of one window.
 ///
 /// Written only by the WindowEngine from host lifecycle echoes; published in
@@ -233,6 +237,10 @@ pub struct WindowGeometry {
     pub focused: bool,
     /// Device pixel ratio (physical / logical).
     pub scale: f64,
+    /// Safe area inside the viewport (zero on desktop).
+    pub safe_area: Insets,
+    /// Soft keyboard height over the bottom of the viewport (0 when hidden).
+    pub keyboard: f64,
 }
 
 impl Default for WindowGeometry {
@@ -246,6 +254,8 @@ impl Default for WindowGeometry {
             occluded: false,
             focused: false,
             scale: 1.0,
+            safe_area: Insets::ZERO,
+            keyboard: 0.0,
         }
     }
 }

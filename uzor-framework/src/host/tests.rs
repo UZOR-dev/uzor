@@ -104,6 +104,8 @@ struct TestApp {
     seen_gestures: Vec<crate::types::gesture::Gesture>,
     /// Context (secondary) clicks the panel hook observed.
     seen_context: Vec<(f64, f64)>,
+    /// Safe area, keyboard and pointer kind the panel hook last observed.
+    seen_insets: Option<(crate::types::window::Insets, f64, bool)>,
 }
 
 impl App for TestApp {
@@ -164,6 +166,7 @@ impl App for TestApp {
         self.seen_clicks.extend(cx.view.clicks().iter().cloned());
         self.seen_gestures.extend(cx.view.gestures().iter().copied());
         self.seen_context.extend(cx.view.context_click());
+        self.seen_insets = Some((cx.view.safe_area(), cx.view.keyboard(), cx.view.coarse_pointer()));
         if self.request_frame {
             cx.out.request_frame();
         }
@@ -1464,6 +1467,34 @@ fn touch_drag_on_a_drag_widget_drags_instead_of_scrolling() {
     h.advance(0.016);
     assert!(captured, "the drag widget captured the finger");
     assert!(off(&h).abs() < 0.5, "nothing scrolled: {}", off(&h));
+}
+
+/// Safe area and keyboard reach the hooks and the CSS media environment; a touch
+/// turns the pointer coarse, a mouse move turns it fine again.
+#[test]
+fn insets_and_pointer_kind_reach_hooks_and_media() {
+    use crate::types::bus::{TouchInput, WindowInput};
+    use crate::types::window::Insets;
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    h.runtime_mut().app_mut().request_frame = true;
+    h.input(win, InputEvent::Window(WindowInput::Insets { safe: Insets::new(47.0, 0.0, 34.0, 0.0), keyboard: 291.0 }));
+    h.advance(0.017);
+    h.advance(0.017);
+    let seen = h.runtime().app().seen_insets;
+    assert_eq!(seen.map(|s| (s.0, s.1)), Some((Insets::new(47.0, 0.0, 34.0, 0.0), 291.0)));
+    let snap_safe = h.snapshot().windows[0].geometry.safe_area;
+    assert_eq!(snap_safe.top, 47.0);
+    h.input(win, InputEvent::Touch(TouchInput::Start { id: 1, pos: Point::new(300.0, 300.0) }));
+    h.advance(0.017);
+    h.input(win, InputEvent::Touch(TouchInput::End { id: 1, pos: Point::new(300.0, 300.0) }));
+    h.advance(0.017);
+    h.advance(0.017);
+    assert_eq!(h.runtime().app().seen_insets.map(|s| s.2), Some(true), "touch = coarse");
+    mov(&mut h, win, 10.0, 10.0);
+    h.advance(0.017);
+    h.advance(0.017);
+    assert_eq!(h.runtime().app().seen_insets.map(|s| s.2), Some(false), "mouse = fine");
 }
 
 /// F12 belongs to the inspector: it never reaches the app as an unhandled key.

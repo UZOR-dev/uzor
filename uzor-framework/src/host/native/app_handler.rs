@@ -136,6 +136,17 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
         }
     }
 
+    /// Echo the window's safe area and keyboard: the wrapper's values
+    /// ([`crate::platform`]) win over what winit reports (iOS safe area).
+    fn push_insets(&mut self, id: WindowId) {
+        let Some(nw) = self.by_id.get(&id).and_then(|w| self.windows.get(w)) else {
+            return;
+        };
+        let (pushed, keyboard) = crate::platform::current();
+        let safe = pushed.unwrap_or_else(|| super::window_create::safe_area(&nw.window));
+        self.push(id, InputEvent::Window(WindowInput::Insets { safe, keyboard }));
+    }
+
     fn execute_all(&mut self, el: &ActiveEventLoop, cmds: Vec<(WindowId, WindowCommand)>) {
         for (id, cmd) in cmds {
             self.execute_one(el, id, cmd);
@@ -168,6 +179,7 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
                                 caps: Self::caps(),
                             }),
                         );
+                        self.push_insets(id);
                         // Install tray on first successful window.
                         if self.tray.is_none() {
                             if let Some(spec) = self.tray_spec.take() {
@@ -522,6 +534,8 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
             for e in events {
                 self.push(framework_id, e);
             }
+            // Rotation moves the notch: the safe area follows the size.
+            self.push_insets(framework_id);
             return;
         }
 
@@ -580,6 +594,12 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         self.drain_tray();
+        if crate::platform::take_changed().is_some() {
+            let ids: Vec<WindowId> = self.by_id.keys().copied().collect();
+            for id in ids {
+                self.push_insets(id);
+            }
+        }
         #[cfg(feature = "automation")]
         self.automation_intake();
         let (moved, dnd) = dnd_moves(self.windows.values_mut());
@@ -840,6 +860,12 @@ where
         let proxy = proxy.clone();
         port.set_waker(move || {
             let _ = proxy.send_event(HostWake::Automation);
+        });
+    }
+    {
+        let proxy = proxy.clone();
+        crate::platform::set_wake(move || {
+            let _ = proxy.send_event(HostWake::Wake);
         });
     }
     let waker = Waker::new(move || {

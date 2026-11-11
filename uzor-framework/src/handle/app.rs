@@ -183,6 +183,9 @@ pub struct VisualView<S: Spec> {
     pub(crate) scroll_precise: bool,
     pub(crate) scroll_touch: bool,
     pub(crate) gestures: Vec<crate::types::gesture::Gesture>,
+    pub(crate) safe_area: crate::types::window::Insets,
+    pub(crate) keyboard: f64,
+    pub(crate) coarse_pointer: bool,
     pub(crate) pointer: Option<(f64, f64)>,
     pub(crate) button_down: bool,
     pub(crate) press_origin: Option<(f64, f64)>,
@@ -210,6 +213,9 @@ impl<S: Spec> Default for VisualView<S> {
             scroll_precise: false,
             scroll_touch: false,
             gestures: Vec::new(),
+            safe_area: crate::types::window::Insets::ZERO,
+            keyboard: 0.0,
+            coarse_pointer: false,
             pointer: None,
             button_down: false,
             press_origin: None,
@@ -355,6 +361,24 @@ impl<S: Spec> VisualView<S> {
     /// already carries its own inertia, so scroll containers must not add theirs.
     pub fn scroll_touch(&self) -> bool {
         self.scroll_touch
+    }
+
+    /// The window's safe area (notch, status bar, home indicator), logical px.
+    /// Pad edge-to-edge chrome with it: a top bar by `top`, a tab bar by `bottom`.
+    pub fn safe_area(&self) -> crate::types::window::Insets {
+        self.safe_area
+    }
+
+    /// The soft keyboard's height over the bottom of the window (0 when hidden).
+    /// A composer sits at `viewport bottom - max(keyboard, safe_area().bottom)`.
+    pub fn keyboard(&self) -> f64 {
+        self.keyboard
+    }
+
+    /// The pointer is a finger (CSS `pointer: coarse`): show hover-only actions,
+    /// use touch-sized targets.
+    pub fn coarse_pointer(&self) -> bool {
+        self.coarse_pointer
     }
 
     /// Touch gestures recognised since the last tick (tap, long-press, pan, swipe,

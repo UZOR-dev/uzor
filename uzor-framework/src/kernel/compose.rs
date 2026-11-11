@@ -410,6 +410,25 @@ impl<S: Spec> Kernel<S> {
         // Gestures wait for the window's next compose (frames are paced; a tick
         // without a frame must not drop them).
         view.gestures = self.gestures.remove(&win).unwrap_or_default();
+        view.coarse_pointer = self.coarse_pointer;
+        let wv = self.windows.view();
+        if let Some(g) = wv.window(win).map(|w| *w.geometry()) {
+            view.safe_area = g.safe_area;
+            view.keyboard = g.keyboard;
+            // The CSS media environment this window's sheets parse against
+            // (`@media`, `env(safe-area-inset-*)`); apps re-parse when
+            // `uzor::ui::media::generation()` moves.
+            uzor::ui::media::set_current(uzor::ui::media::MediaEnv {
+                width: g.viewport.width,
+                height: g.viewport.height,
+                coarse: self.coarse_pointer,
+                hover: !self.coarse_pointer,
+                safe: g.safe_area,
+                keyboard: g.keyboard,
+                dark: wv.dark(),
+                reduced_motion: wv.reduced_motion(),
+            });
+        }
         view.open_overlays = self
             .overlays
             .view()
