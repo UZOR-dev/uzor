@@ -1,0 +1,13 @@
+[package]
+name = "uzor-secure"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Platform secure store for uzor apps: secrets behind biometry / device credential, passkey ceremonies, platform capabilities, OS randomness. No signing or verification."
+readme = "README.md"
+
+[dependencies]
+getrandom = "0.2"

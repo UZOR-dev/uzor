@@ -14,6 +14,8 @@ members = [
     "uzor-devtools",
     "uzor-window-web",
     "uzor-window-mobile",
+    # Platform secure store (secrets, unlock gate, passkeys; no signing)
+    "uzor-secure",
     "uzor-tui",
     # Backends
     "uzor-render-vello-gpu",
@@ -122,6 +124,7 @@ uzor-vision = { version = "1.5.29", path = "./uzor-vision" }
 uzor-vectorize = { version = "1.5.29", path = "./uzor-vectorize" }
 uzor-window-web = { version = "1.5.29", path = "./uzor-window-web" }
 uzor-window-mobile = { version = "1.5.29", path = "./uzor-window-mobile" }
+uzor-secure = { version = "1.5.29", path = "./uzor-secure" }
 uzor-framework-macros = { version = "1.5.29", path = "./uzor-framework-macros" }
 uzor-framework = { version = "1.5.29", path = "./uzor-framework" }
 uzor-devtools = { version = "1.5.29", path = "./uzor-devtools" }
