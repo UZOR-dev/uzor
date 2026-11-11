@@ -679,6 +679,10 @@ impl PerWindowInput {
             PointerInput::Entered | PointerInput::RawDelta { .. } => {}
             PointerInput::Left => self.pointer.pos = None,
             PointerInput::Cancelled => {
+                // A cancelled press (a touch that became a scroll) ends a text drag.
+                if self.coord.text_fields().drag_active() {
+                    self.coord.text_fields_mut().on_drag_end();
+                }
                 self.cook.press_origin = None;
                 self.cook.drag_armed = false;
                 self.pointer.button_down = None;

@@ -69,8 +69,9 @@ impl<S: Spec> Kernel<S> {
 
     /// Touch (design: one recogniser, platform feel). The first finger presses at
     /// once (pressed look, a tap clicks on lift). When it leaves the 8 px slop:
-    /// - on a widget that captured the drag (slider, splitter, text selection) or a
-    ///   layout zone, it keeps dragging the pointer;
+    /// - on a widget that captured the drag (slider, splitter) or a layout zone, it
+    ///   keeps dragging the pointer;
+    /// - on a text field it scrolls like anywhere else (the selection drag ends);
     /// - anywhere else the press is cancelled (no click) and the motion scrolls
     ///   1:1 as pixel wheel steps marked as touch; on lift a fast finger flings
     ///   (`types::gesture::Fling`, stepped every tick in `touch_tick`).
@@ -149,7 +150,9 @@ impl<S: Spec> Kernel<S> {
                                 .view()
                                 .coordinator(win)
                                 .is_some_and(|c| c.text_fields().drag_active());
-                            if captured || text_drag {
+                            // A finger dragging over a text field scrolls (as on a
+                            // phone: selection is the long-press's), it does not select.
+                            if captured && !text_drag {
                                 self.touch_mode = TouchMode::Drag;
                             } else {
                                 self.route_pointer(now, win, PointerInput::Cancelled);

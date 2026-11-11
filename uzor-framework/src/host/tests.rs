@@ -1469,6 +1469,32 @@ fn touch_drag_on_a_drag_widget_drags_instead_of_scrolling() {
     assert!(off(&h).abs() < 0.5, "nothing scrolled: {}", off(&h));
 }
 
+/// A finger dragging over a text field scrolls the page (phone feel): no selection drag.
+#[test]
+fn touch_drag_over_a_text_field_scrolls() {
+    use crate::types::bus::TouchInput;
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    h.runtime_mut().app_mut().scroller = Some((Rect::new(0.0, 0.0, 400.0, 300.0), 3000.0, crate::ScrollView::default()));
+    h.runtime_mut().app_mut().field = Some(Field { id: wid("field"), rect: Rect::new(10.0, 200.0, 300.0, 40.0), initial: "some longer text".to_string(), initialized: false });
+    h.runtime_mut().app_mut().request_frame = true;
+    h.advance(0.017);
+    let off = |h: &Host<TS, TestApp>| h.runtime().app().scroller.as_ref().unwrap().2.offset;
+    h.input(win, InputEvent::Touch(TouchInput::Start { id: 1, pos: Point::new(50.0, 220.0) }));
+    h.advance(0.016);
+    let mut y = 220.0;
+    for _ in 0..10 {
+        y -= 10.0;
+        h.input(win, InputEvent::Touch(TouchInput::Move { id: 1, pos: Point::new(52.0, y) }));
+        h.advance(0.016);
+    }
+    let moved = off(&h);
+    h.input(win, InputEvent::Touch(TouchInput::End { id: 1, pos: Point::new(52.0, y) }));
+    h.advance(0.016);
+    assert!(moved > 50.0, "the page scrolled under the finger: {moved}");
+    assert!(!h.snapshot().windows[0].input.captured, "no text drag holds the pointer");
+}
+
 /// Safe area and keyboard reach the hooks and the CSS media environment; a touch
 /// turns the pointer coarse, a mouse move turns it fine again.
 #[test]
