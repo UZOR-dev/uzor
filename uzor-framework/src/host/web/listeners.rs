@@ -187,6 +187,8 @@ pub fn install(
             return Err(err);
         }
     };
+    // Soft-keyboard and safe-area insets (phones): never fatal, older browsers lack them.
+    install_insets(&window, &document, &q, &wake, &mut closures);
     let media = match install_theme_and_dpr(&window, &q, &wake, &mut closures, canvas) {
         Ok(list) => list,
         Err(err) => {
@@ -534,6 +536,90 @@ fn install_resize(
     // the observer holds it, and `Listeners` holds the observer.
     cb.forget();
     Ok(Some(observer))
+}
+
+/// Phone browsers: the soft keyboard covers the bottom of the layout viewport
+/// (iOS Safari keeps the layout viewport and shrinks `visualViewport`), and
+/// `env(safe-area-inset-*)` (with `viewport-fit=cover`) is the notch / home
+/// indicator. Both go out as `WindowInput::Insets` on `visualViewport` resize and
+/// scroll and on window resize, read from a hidden probe whose padding is the
+/// page's safe area.
+fn install_insets(
+    window: &web_sys::Window,
+    document: &Document,
+    q: &Queue,
+    wake: &RafWake,
+    out: &mut Vec<Closure<dyn FnMut(Event)>>,
+) {
+    let probe = document.create_element("div").ok();
+    if let (Some(p), Some(body)) = (&probe, document.body()) {
+        let _ = p.set_attribute(
+            "style",
+            "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;\
+             padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)",
+        );
+        let _ = body.append_child(p);
+    }
+    let last: Rc<Cell<Option<[u64; 5]>>> = Rc::new(Cell::new(None));
+    let vv = js_sys::Reflect::get(window.as_ref(), &JsValue::from_str("visualViewport"))
+        .ok()
+        .filter(|v| v.is_object());
+    let num = |o: &JsValue, k: &str| {
+        js_sys::Reflect::get(o, &JsValue::from_str(k))
+            .ok()
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+    };
+    let push = {
+        let (q, wake, last, vv, probe, win) = (q.clone(), wake.clone(), Rc::clone(&last), vv.clone(), probe.clone(), window.clone());
+        move || {
+            // Before the canvas is bound the queue holds it and stamps it on bind.
+            let inner = win.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let keyboard = match &vv {
+                Some(v) => (inner - num(v, "height") - num(v, "offsetTop")).max(0.0),
+                None => 0.0,
+            };
+            // Under ~80px it is a toolbar collapsing, not a keyboard.
+            let keyboard = if keyboard < 80.0 { 0.0 } else { keyboard.round() };
+            let px = |s: Option<String>| s.and_then(|v| v.trim_end_matches("px").trim().parse::<f64>().ok()).unwrap_or(0.0);
+            let safe = match probe.as_ref().and_then(|p| win.get_computed_style(p).ok().flatten()) {
+                Some(cs) => crate::types::window::Insets::new(
+                    px(cs.get_property_value("padding-top").ok()),
+                    px(cs.get_property_value("padding-right").ok()),
+                    px(cs.get_property_value("padding-bottom").ok()),
+                    px(cs.get_property_value("padding-left").ok()),
+                ),
+                None => crate::types::window::Insets::ZERO,
+            };
+            let key = [safe.top.to_bits(), safe.right.to_bits(), safe.bottom.to_bits(), safe.left.to_bits(), keyboard.to_bits()];
+            if last.get() == Some(key) {
+                return;
+            }
+            last.set(Some(key));
+            q.push_raw(InputEvent::Window(WindowInput::Insets { safe, keyboard }));
+            wake.request();
+        }
+    };
+    let push = Rc::new(push);
+    let mut targets: Vec<(EventTarget, &str)> = vec![(window.clone().unchecked_into(), "resize")];
+    if let Some(v) = &vv {
+        let t: EventTarget = v.clone().unchecked_into();
+        targets.push((t.clone(), "resize"));
+        targets.push((t, "scroll"));
+    }
+    for (t, ty) in targets {
+        let p = Rc::clone(&push);
+        let c = Closure::wrap(Box::new(move |_raw: Event| p()) as Box<dyn FnMut(Event)>);
+        if listen(&t, ty, &c, true).is_ok() {
+            out.push(c);
+        } else {
+            c.forget();
+        }
+    }
+    // The first reading (held by the queue until the canvas is bound).
+    let p = Rc::clone(&push);
+    let first = Closure::once_into_js(move || p());
+    let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(first.unchecked_ref(), 0);
 }
 
 fn maybe_resize(
