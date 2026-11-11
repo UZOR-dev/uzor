@@ -44,7 +44,7 @@ urx-3d = ["urx", "dep:uzor-urx-3d", "dep:uzor-urx-physics"]
 # Shared GPU plumbing: wgpu device pool + swapchain (`GpuDevicePool` is
 # vello's `util::RenderContext`), adapter detection, winit raw-handle
 # surface creation. Implied by every GPU backend.
-gpu = ["dep:wgpu", "dep:vello", "dep:pollster", "dep:winit", "dep:uzor-window-desktop"]
+gpu = ["dep:wgpu", "dep:vello", "dep:pollster", "dep:winit", "dep:uzor-window-desktop", "uzor-urx-core/pipeline-cache"]
 
 [dependencies]
 uzor = { workspace = true }

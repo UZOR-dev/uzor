@@ -195,7 +195,7 @@ fn ensure_urx_cpu_resources(state: &mut WindowRenderState, width: u32, height: u
 /// substitute, and `NativeUrxRenderer::new` already defaults to it.
 /// Mapping `0` to one sample made every autodetected `UrxWgpu` path
 /// hard-edged.
-fn native_urx_sample_count(msaa_samples: u8) -> u32 {
+pub(crate) fn native_urx_sample_count(msaa_samples: u8) -> u32 {
     match msaa_samples {
         1 => 1,
         _ => 4,

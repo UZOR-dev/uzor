@@ -308,8 +308,8 @@ impl BlendLayerPool {
 /// color target (exact-match reallocation on resize, see `msaa.rs`'s
 /// module doc), the tessellation cache, and the glyph atlas.
 pub struct NativeUrxRenderer {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: wgpu::Queue,
     format: wgpu::TextureFormat,
     sample_count: u32,
 
@@ -378,6 +378,31 @@ impl NativeUrxRenderer {
             sample_count,
             &UrxConfig::default(),
             true,
+            None,
+        )
+    }
+
+    /// [`Self::with_sample_count`] with every render pipeline built
+    /// through `cache` (a `wgpu::PipelineCache`, Vulkan only; see
+    /// `uzor_urx_core::pipeline_cache` for loading and saving it). With a
+    /// blob from an earlier run the driver skips shader compilation, which
+    /// is most of this constructor's cost on a cold start. `None` is
+    /// exactly [`Self::with_sample_count`].
+    pub fn with_pipeline_cache(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        format: wgpu::TextureFormat,
+        sample_count: u32,
+        cache: Option<&wgpu::PipelineCache>,
+    ) -> Self {
+        Self::with_config_and_cache_mode(
+            device,
+            queue,
+            format,
+            sample_count,
+            &UrxConfig::default(),
+            true,
+            cache,
         )
     }
 
@@ -403,7 +428,7 @@ impl NativeUrxRenderer {
         sample_count: u32,
         cfg: &UrxConfig,
     ) -> Self {
-        Self::with_config_and_cache_mode(device, queue, format, sample_count, cfg, false)
+        Self::with_config_and_cache_mode(device, queue, format, sample_count, cfg, false, None)
     }
 
     fn with_config_and_cache_mode(
@@ -413,6 +438,7 @@ impl NativeUrxRenderer {
         sample_count: u32,
         cfg: &UrxConfig,
         adaptive_tess_cache: bool,
+        cache: Option<&wgpu::PipelineCache>,
     ) -> Self {
         let sample_count = sample_count.max(1);
 
@@ -443,16 +469,16 @@ impl NativeUrxRenderer {
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() }],
         });
 
-        let quad = QuadPipeline::new(&device, format, sample_count, &uniform_bgl);
-        let line = LinePipeline::new(&device, format, sample_count, &uniform_bgl);
-        let path = PathPipeline::new(&device, format, sample_count, &uniform_bgl);
+        let quad = QuadPipeline::new(&device, format, sample_count, &uniform_bgl, cache);
+        let line = LinePipeline::new(&device, format, sample_count, &uniform_bgl, cache);
+        let path = PathPipeline::new(&device, format, sample_count, &uniform_bgl, cache);
         // The atlas must be built BEFORE the Glyph pipeline — the
         // pipeline's layout borrows the atlas's `BindGroupLayout` at
         // pipeline-creation time (design §4), fixed for the pipeline's
         // lifetime (this crate has no atlas-resize path).
         let glyph_atlas = NativeGlyphAtlas::new(&device, &queue, cfg.wgpu_glyph_atlas_w, cfg.wgpu_glyph_atlas_h);
-        let glyph = GlyphPipeline::new(&device, format, sample_count, &uniform_bgl, glyph_atlas.bind_group_layout());
-        let stencil_mask = StencilMaskPipeline::new(&device, format, sample_count, &uniform_bgl);
+        let glyph = GlyphPipeline::new(&device, format, sample_count, &uniform_bgl, glyph_atlas.bind_group_layout(), cache);
+        let stencil_mask = StencilMaskPipeline::new(&device, format, sample_count, &uniform_bgl, cache);
 
         // Group-1 layout/sampler shared by every `BlendLayerTarget`'s
         // resolve bind group (design §3.6) — texture + sampler, same
@@ -490,20 +516,20 @@ impl NativeUrxRenderer {
                 },
             ],
         });
-        let blend_composite = BlendCompositePipeline::new(&device, format, sample_count, &uniform_bgl, &resolve_bgl);
+        let blend_composite = BlendCompositePipeline::new(&device, format, sample_count, &uniform_bgl, &resolve_bgl, cache);
 
         // Gradient LUT atlas + Radial/Sweep pipeline (Wave 4 Commit 3,
         // design §2.2/§2.3) — same "build the shared group-1 resource
         // BEFORE the pipeline that borrows its BindGroupLayout" order
         // the glyph atlas established above.
         let gradient_lut = GradientLutAtlas::new(&device, cfg.wgpu_gradient_lut_rows);
-        let gradient = GradientPipeline::new(&device, format, sample_count, &uniform_bgl, gradient_lut.bind_group_layout());
+        let gradient = GradientPipeline::new(&device, format, sample_count, &uniform_bgl, gradient_lut.bind_group_layout(), cache);
 
         // Per-image texture cache + Image pipeline (Wave 4 Commit 3,
         // design §4.2/§4.3) — same ordering precedent.
         let image_cache = NativeImageCache::new(&device, cfg.wgpu_image_cache_cap);
-        let image = ImagePipeline::new(&device, format, sample_count, &uniform_bgl, image_cache.bind_group_layout());
-        let image_tri = ImageTriPipeline::new(&device, format, sample_count, &uniform_bgl, image_cache.bind_group_layout());
+        let image = ImagePipeline::new(&device, format, sample_count, &uniform_bgl, image_cache.bind_group_layout(), cache);
+        let image_tri = ImageTriPipeline::new(&device, format, sample_count, &uniform_bgl, image_cache.bind_group_layout(), cache);
 
         let msaa = MsaaTarget::new(sample_count, format);
         // Sample count MUST match whichever color target this same
@@ -648,6 +674,98 @@ impl NativeUrxRenderer {
         viewport: Viewport,
     ) -> Result<(), NativeRenderError> {
         self.render_into_encoder_impl(scene, Some(revision), encoder, view, viewport)
+    }
+
+    /// The glyph and image pipelines (no built-in scene reaches them: they
+    /// need a font or a registered image) drawn once into `view` (`format()`,
+    /// `width`×`height`) with transparent instances, in a plain pass and in
+    /// a stencil-tested one, then submitted. Part of [`Self::warm_up`].
+    pub(crate) fn warm_up_textured(&mut self, view: &wgpu::TextureView, width: u32, height: u32) {
+        use crate::pipelines::glyph::GlyphInstance;
+        use crate::pipelines::image::ImageInstance;
+        use crate::pipelines::image_tri::ImageTriInstance;
+        let (w, h) = (width as f32, height as f32);
+        let clip = [0.0, 0.0, w, h];
+        self.glyph.upload(&self.device, &self.queue, &[GlyphInstance {
+            pos: [2.0, 2.0],
+            size: [8.0, 8.0],
+            uv_pos: [0.0, 0.0],
+            uv_size: [0.01, 0.01],
+            color: 0,
+            _pad0: 0.0,
+            clip_rect: clip,
+        }]);
+        self.image.upload(&self.device, &self.queue, &[ImageInstance {
+            c0: [2.0, 2.0],
+            c1: [10.0, 2.0],
+            c2: [10.0, 10.0],
+            c3: [2.0, 10.0],
+            uv_pos: [0.0, 0.0],
+            uv_size: [1.0, 1.0],
+            tint: 0,
+            _pad: 0,
+            clip_rect: clip,
+        }]);
+        self.image_tri.upload(&self.device, &self.queue, &[ImageTriInstance {
+            p0: [2.0, 2.0],
+            p1: [10.0, 2.0],
+            p2: [2.0, 10.0],
+            uv0: [0.0, 0.0],
+            uv1: [1.0, 0.0],
+            uv2: [0.0, 1.0],
+            tint: 0,
+            _pad: 0,
+            clip_rect: clip,
+        }]);
+        let texel = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("uzor_urx_wgpu.warm_up_texel"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let texel_view = texel.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("uzor_urx_wgpu.warm_up_sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let image_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("uzor_urx_wgpu.warm_up_image_bg"),
+            layout: self.image_cache.bind_group_layout(),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&texel_view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+            ],
+        });
+        self.msaa.ensure(&self.device, width, height);
+        self.stencil.ensure(&self.device, width, height);
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("uzor_urx_wgpu.warm_up_textured"),
+        });
+        for stencil_ref in [None, Some(0u32)] {
+            let (color, resolve) =
+                if self.sample_count > 1 { (self.msaa.color_view(), Some(view)) } else { (view, None) };
+            let ds = stencil_ref.map(|_| wgpu::RenderPassDepthStencilAttachment {
+                view: self.stencil.view(),
+                depth_ops: None,
+                stencil_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Discard }),
+            });
+            let store = if self.sample_count > 1 { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store };
+            let mut pass = open_pass(&mut encoder, color, resolve, wgpu::LoadOp::Load, store, ds);
+            pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            self.glyph.bind(&mut pass, stencil_ref, self.glyph_atlas.bind_group());
+            self.glyph.draw_range(&mut pass, 0, 1);
+            self.image.bind(&mut pass, stencil_ref, &image_bg);
+            self.image.draw_range(&mut pass, 0, 1);
+            self.image_tri.bind(&mut pass, stencil_ref, &image_bg);
+            self.image_tri.draw_range(&mut pass, 0, 1);
+        }
+        self.queue.submit([encoder.finish()]);
     }
 
     fn invalidate_prepared_frame(&mut self) {

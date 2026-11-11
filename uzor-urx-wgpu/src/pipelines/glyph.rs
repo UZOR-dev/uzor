@@ -115,6 +115,7 @@ impl GlyphPipeline {
         sample_count: u32,
         uniform_bgl: &wgpu::BindGroupLayout,
         atlas_bgl: &wgpu::BindGroupLayout,
+        cache: Option<&wgpu::PipelineCache>,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("uzor_urx_wgpu.glyph_shader_native"),
@@ -159,7 +160,7 @@ impl GlyphPipeline {
                 depth_stencil,
                 multisample: wgpu::MultisampleState { count: sample_count, ..Default::default() },
                 multiview_mask: None,
-                cache: None,
+                cache,
             });
         let buffer = make_instance_buffer(device, INITIAL_CAPACITY);
 

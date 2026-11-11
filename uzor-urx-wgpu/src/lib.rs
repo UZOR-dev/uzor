@@ -140,6 +140,7 @@ pub mod native_error;
 mod pipelines;
 mod profile;
 pub mod renderer;
+mod warm;
 mod shaders;
 mod stencil;
 mod tessellate;

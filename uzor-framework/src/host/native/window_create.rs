@@ -4,12 +4,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use uzor::RgbaIcon;
-use uzor_render_hub::{resolve_render_family_from_process_env, RenderBackend, RenderHub, SurfaceSize, WindowRenderState};
+use uzor_render_hub::{
+    resolve_render_family_from_process_env, PipelineCacheStore, Prewarmed, RenderBackend, RenderHub, SurfaceSize,
+    WindowRenderState,
+};
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Icon, Window, WindowButtons};
 
 use super::mapper::WinitMapper;
+use super::prewarm::{self, PrewarmConfig};
 use super::window::{apply_spawn_style, NativeWindow};
 use super::win32;
 use crate::types::error::FrameworkError;
@@ -19,18 +23,18 @@ use crate::types::window::{CaptionButtons, SizePx, WindowSpec};
 /// Resolve this platform's base cache directory (L-D4).
 ///
 /// - Windows: `%LOCALAPPDATA%`
-/// - macOS: `$HOME/Library/Caches`
+/// - macOS, iOS: `$HOME/Library/Caches`
 /// - other: `$XDG_CACHE_HOME` or `$HOME/.cache`
 pub fn platform_pipeline_cache_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
         std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Caches"))
     }
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos"), not(target_os = "ios")))]
     {
         if let Some(xdg) = std::env::var_os("XDG_CACHE_HOME") {
             Some(PathBuf::from(xdg))
@@ -46,6 +50,29 @@ pub fn create_window(
     hub: &RenderHub,
     id: WindowId,
     spec: WindowSpec,
+) -> Result<NativeWindow, FrameworkError> {
+    create_window_with(event_loop, id, spec, |window, size| Ok((create_surface(hub, window, size)?, None)))
+}
+
+/// [`create_window`] whose surface comes from `warm` (a prewarm made before
+/// the window), or from a prewarm made now when `cfg` enables it; the
+/// factory path when neither applies or binding fails.
+pub(crate) fn create_window_warm(
+    event_loop: &ActiveEventLoop,
+    hub: &RenderHub,
+    id: WindowId,
+    spec: WindowSpec,
+    warm: Option<Prewarmed>,
+    cfg: &PrewarmConfig,
+) -> Result<NativeWindow, FrameworkError> {
+    create_window_with(event_loop, id, spec, |window, size| create_surface_warm(hub, window, size, warm, cfg))
+}
+
+fn create_window_with(
+    event_loop: &ActiveEventLoop,
+    id: WindowId,
+    spec: WindowSpec,
+    surface: impl FnOnce(&Arc<Window>, SurfaceSize) -> Result<(WindowRenderState, Option<PipelineCacheStore>), FrameworkError>,
 ) -> Result<NativeWindow, FrameworkError> {
     let mut attrs = Window::default_attributes()
         .with_title(&spec.title)
@@ -104,7 +131,7 @@ pub fn create_window(
         height: inner.height.max(1),
     };
 
-    let render_state = create_surface(hub, &window, size)?;
+    let (render_state, pipeline_cache) = surface(&window, size)?;
 
     apply_spawn_style(&window, &spec);
     if !spec.decorations {
@@ -129,7 +156,42 @@ pub fn create_window(
         dnd_hover: None,
         transparent: spec.transparent,
         defer_show,
+        created: std::time::Instant::now(),
+        presented: false,
+        pipeline_cache,
     })
+}
+
+/// A render surface for `window`: bound to `warm` when it was made for the
+/// hub's active backend, else prewarmed now (when `cfg` enables it), else
+/// from the hub's factory as [`create_surface`]. Also the pipeline cache to
+/// save after the first frame.
+pub(crate) fn create_surface_warm(
+    hub: &RenderHub,
+    window: &Arc<Window>,
+    size: SurfaceSize,
+    warm: Option<Prewarmed>,
+    cfg: &PrewarmConfig,
+) -> Result<(WindowRenderState, Option<PipelineCacheStore>), FrameworkError> {
+    let warm = match warm {
+        Some(w) if w.backend() == hub.active() => Some(w),
+        Some(w) => {
+            prewarm::trace("prewarm-stale", &format!("{:?} != active {:?}", w.backend(), hub.active()));
+            prewarm::warm(hub, cfg, "spawn")
+        }
+        None => prewarm::warm(hub, cfg, "spawn"),
+    };
+    if let Some(w) = warm {
+        let raw = raw_handle_for(window).ok_or_else(|| FrameworkError::Host("no raw window handle".into()))?;
+        match w.into_render_state(&raw, size) {
+            Ok(ok) => return Ok(ok),
+            Err(e) => {
+                log::warn!("prewarmed device does not fit this window, using the factory: {e}");
+                prewarm::trace("prewarm-unbound", &e.to_string());
+            }
+        }
+    }
+    Ok((create_surface(hub, window, size)?, None))
 }
 
 /// A render surface for `window` from the hub's active backend. Window creation calls

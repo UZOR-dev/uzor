@@ -38,6 +38,8 @@ pub mod factories;
 pub mod retained;
 #[cfg(feature = "urx")]
 pub mod urx_engine_handle;
+#[cfg(all(not(target_arch = "wasm32"), feature = "gpu"))]
+pub mod prewarm;
 
 pub use backend::{is_backend_compiled, RenderBackend, RenderFamily};
 pub use detect::{
@@ -88,3 +90,7 @@ pub use factories::WgpuInstancedSurfaceFactory;
 pub use factories::UrxSurfaceFactory;
 #[cfg(all(not(target_arch = "wasm32"), feature = "gpu"))]
 pub use factories::{GpuDeviceReady, prewarm_device, build_surface_from_device};
+#[cfg(all(not(target_arch = "wasm32"), feature = "vello-gpu"))]
+pub use factories::build_renderer_with_cache;
+#[cfg(all(not(target_arch = "wasm32"), feature = "gpu"))]
+pub use prewarm::{prewarm, prewarm_supported, app_pipeline_cache_dir, PipelineCacheStore, Prewarmed, PrewarmOptions, PrewarmTimings};

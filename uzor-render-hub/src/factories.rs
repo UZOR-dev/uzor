@@ -139,6 +139,16 @@ pub fn prewarm_device() -> Result<GpuDeviceReady, SurfaceError> {
 /// rendering on the main thread.
 #[cfg(all(not(target_arch = "wasm32"), feature = "vello-gpu"))]
 pub fn build_renderer(device: &wgpu::Device) -> Result<vello::Renderer, SurfaceError> {
+    build_renderer_with_cache(device, None)
+}
+
+/// [`build_renderer`] with vello's pipelines built through `pipeline_cache`
+/// (see [`crate::prewarm`]).
+#[cfg(all(not(target_arch = "wasm32"), feature = "vello-gpu"))]
+pub fn build_renderer_with_cache(
+    device: &wgpu::Device,
+    pipeline_cache: Option<wgpu::PipelineCache>,
+) -> Result<vello::Renderer, SurfaceError> {
     let t_renderer = std::time::Instant::now();
     let n_threads = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -150,7 +160,7 @@ pub fn build_renderer(device: &wgpu::Device) -> Result<vello::Renderer, SurfaceE
             use_cpu: false,
             antialiasing_support: aa,
             num_init_threads: std::num::NonZeroUsize::new(n_threads),
-            pipeline_cache: None,
+            pipeline_cache,
         },
     )
     .map_err(|e| SurfaceError::InitFailed(format!("build_renderer: {e}")))?;

@@ -18,6 +18,7 @@ mod clipboard;
 mod executor;
 mod mapper;
 mod paint;
+mod prewarm;
 mod screenshot;
 mod single_instance;
 mod tray;
@@ -47,4 +48,5 @@ pub use window::NativeWindow;
 pub mod android {
     pub use winit::platform::android::activity::AndroidApp;
 }
+pub use prewarm::PrewarmConfig;
 pub use window_create::{create_window, icon_from_rgba, platform_pipeline_cache_dir};

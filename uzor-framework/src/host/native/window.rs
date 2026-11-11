@@ -41,7 +41,16 @@ pub struct NativeWindow {
     pub transparent: bool,
     /// `WindowSpec::visible`. The host shows the window one tick later,
     /// after the app's icon command. ShowWindow creates the taskbar button.
+    /// With [`super::PrewarmConfig::hold_until_first_frame`] it waits for the
+    /// first presented frame instead.
     pub defer_show: bool,
+    /// When the window was created.
+    pub created: std::time::Instant,
+    /// A frame has been presented.
+    pub presented: bool,
+    /// Pipeline cache of the prewarm this surface was bound to, saved after
+    /// the first frame.
+    pub pipeline_cache: Option<uzor_render_hub::PipelineCacheStore>,
 }
 
 impl NativeWindow {

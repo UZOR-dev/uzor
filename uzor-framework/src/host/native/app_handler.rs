@@ -21,7 +21,8 @@ use super::screenshot::{capture_screenshot, encode_png};
 use super::single_instance::{self, SingleInstanceGuard};
 use super::tray::{TrayBuilder, TrayEvent, TrayHandle, TraySpec};
 use super::window::NativeWindow;
-use super::window_create::{build_hub, create_window, geometry_echo};
+use super::prewarm::{self, PrewarmConfig, Startup};
+use super::window_create::{build_hub, create_window_warm, geometry_echo};
 use crate::runtime::{Runtime, RuntimeConfig};
 use crate::types::bus::{
     HostCaps, HostEvent, InputEnvelope, InputEvent, PointerInput, RenderInfo, WindowInput,
@@ -68,7 +69,20 @@ pub struct NativeHost<S: Spec, A: App<Spec = S>> {
     /// Automation port and its in-flight work (feature `automation`).
     #[cfg(feature = "automation")]
     auto: AutoState,
+    /// The startup thread building the hub and the prewarm; `hub` is a
+    /// placeholder until [`Self::settle`] joins it.
+    startup: Option<Startup>,
+    /// The startup prewarm, for the first window.
+    prewarmed: Option<uzor_render_hub::Prewarmed>,
+    /// Prewarm switches (after the `UZOR_PREWARM` override).
+    prewarm: PrewarmConfig,
+    /// `RenderPreference::backend`, for a hub built after a failed startup thread.
+    preferred: Option<RenderBackend>,
 }
+
+/// The longest a window waits hidden for its first frame
+/// ([`PrewarmConfig::hold_until_first_frame`]) before it is shown anyway.
+const HOLD_MAX: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The native host's automation bookkeeping.
 #[cfg(feature = "automation")]
@@ -86,6 +100,19 @@ struct AutoState {
 }
 
 impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
+    /// Take the hub (and the prewarm) from the startup thread, once.
+    fn settle(&mut self) {
+        if let Some(s) = self.startup.take() {
+            match s.join() {
+                Some((hub, warm)) => {
+                    self.hub = hub;
+                    self.prewarmed = warm;
+                }
+                None => self.hub = build_hub(self.preferred),
+            }
+        }
+    }
+
     fn now(&self) -> Seconds {
         Seconds(self.start.elapsed().as_secs_f64())
     }
@@ -116,13 +143,21 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
     /// Back from the background: surfaces dropped in `suspended` are made again
     /// at the window's current size, and every window repaints.
     fn resume_surfaces(&mut self) {
+        self.settle();
         let mut back = Vec::new();
         for nw in self.windows.values_mut() {
             if nw.render_state.is_none() {
                 let px = super::window_create::surface_px(&nw.window);
                 let size = uzor_render_hub::SurfaceSize { width: px.width.max(1), height: px.height.max(1) };
-                match super::window_create::create_surface(&self.hub, &nw.window, size) {
-                    Ok(rs) => nw.render_state = Some(rs),
+                // Android makes the surface again on every resume: prewarmed on
+                // the spot, so the pipelines come from the cache before the frame.
+                match super::window_create::create_surface_warm(&self.hub, &nw.window, size, None, &self.prewarm) {
+                    Ok((rs, cache)) => {
+                        nw.render_state = Some(rs);
+                        if let Some(c) = cache {
+                            prewarm::save_cache(c);
+                        }
+                    }
                     Err(e) => log::warn!("resume: surface for {:?} failed: {e}", nw.id),
                 }
             }
@@ -154,6 +189,7 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
     }
 
     fn execute_one(&mut self, el: &ActiveEventLoop, id: WindowId, cmd: WindowCommand) {
+        self.settle();
         // Spawn / Exit / clipboard / screenshot / render do not need the
         // window surface first.
         match &cmd {
@@ -164,8 +200,9 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
                     self.pending.push((id, spec));
                     return;
                 }
-                match create_window(el, &self.hub, id, spec) {
+                match create_window_warm(el, &self.hub, id, spec, self.prewarmed.take(), &self.prewarm) {
                     Ok(nw) => {
+                        prewarm::trace("window-created", &format!("{id:?}"));
                         let (size, dpr, position) = geometry_echo(&nw.window);
                         let wid = nw.winit_id();
                         self.windows.insert(wid, nw);
@@ -408,6 +445,9 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
     }
 
     fn paint_due(&mut self, frames: Vec<crate::types::frame::FrameRequest>) {
+        if !frames.is_empty() {
+            self.settle();
+        }
         for req in frames {
             let Some(&wid) = self.by_id.get(&req.window) else {
                 continue;
@@ -433,9 +473,28 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
                 self.windows.insert(wid, nw);
                 continue;
             };
-            if let Err(e) = paint_frame(&mut self.runtime, &mut self.hub, rs, &req)
-            {
-                log::warn!("paint failed: {e}");
+            let t_paint = Instant::now();
+            match paint_frame(&mut self.runtime, &mut self.hub, rs, &req) {
+                Ok(()) if !nw.presented => {
+                    nw.presented = true;
+                    let m = self.hub.metrics();
+                    prewarm::trace(
+                        "first-frame",
+                        &format!(
+                            "{:?}: paint {:.1} ms (submit {:.1}, render {:.1}, present {:.1})",
+                            req.window,
+                            t_paint.elapsed().as_secs_f64() * 1e3,
+                            m.submit_us as f64 / 1e3,
+                            m.render_to_texture_us as f64 / 1e3,
+                            m.present_us as f64 / 1e3
+                        ),
+                    );
+                    if let Some(c) = nw.pipeline_cache.take() {
+                        prewarm::save_cache(c);
+                    }
+                }
+                Ok(()) => {}
+                Err(e) => log::warn!("paint failed: {e}"),
             }
             flush_x11(&nw.window);
             if std::env::var_os("UZOR_TRACE_PAINT").is_some() {
@@ -458,6 +517,7 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
 
 impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A> {
     fn resumed(&mut self, el: &ActiveEventLoop) {
+        self.settle();
         if self.suspended {
             self.suspended = false;
             self.resume_surfaces();
@@ -610,9 +670,12 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
         // Windows already open had their Created delivered by this tick, so
         // the icon command is in `out`. A spawn inside execute_all is not
         // in this list: its button waits until the next tick.
+        // Held windows (`hold_until_first_frame`) are shown after the paint
+        // below presents their first frame; the others before it.
+        let hold = self.prewarm.hold_until_first_frame;
         let mut reveal = Vec::new();
         for (wid, nw) in &mut self.windows {
-            if nw.defer_show {
+            if nw.defer_show && !hold {
                 nw.defer_show = false;
                 reveal.push(*wid);
             }
@@ -621,12 +684,36 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
         for wid in reveal {
             if let Some(nw) = self.windows.get(&wid) {
                 nw.window.set_visible(true);
+                prewarm::trace("shown", &format!("{:?}", nw.id));
             }
         }
         if std::env::var_os("UZOR_TRACE_PAINT").is_some() {
             eprintln!("[tick] frames {} wake {:?}", out.frames.len(), out.wake);
         }
         self.paint_due(out.frames);
+        let mut held = false;
+        if hold {
+            let mut shown = Vec::new();
+            for nw in self.windows.values_mut() {
+                if !nw.defer_show {
+                    continue;
+                }
+                if nw.presented || nw.created.elapsed() >= HOLD_MAX {
+                    nw.defer_show = false;
+                    nw.window.set_visible(true);
+                    prewarm::trace("shown", &format!("{:?} presented={}", nw.id, nw.presented));
+                    shown.push((nw.id, geometry_echo(&nw.window)));
+                } else {
+                    held = true;
+                }
+            }
+            // One more frame once mapped, at the same size: a platform that
+            // drops what was presented to a hidden window (X11 without a
+            // compositor) gets it again; everywhere else it is a cheap warm frame.
+            for (id, (size, dpr, _)) in shown {
+                self.push(id, InputEvent::Window(WindowInput::Resized { size, dpr }));
+            }
+        }
         #[cfg(feature = "automation")]
         let auto_busy = self.automation_answer();
         #[cfg(not(feature = "automation"))]
@@ -663,6 +750,16 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
         });
         if dnd && !matches!(wake, Wake::Immediate) {
             el.set_control_flow(ControlFlow::WaitUntil(Instant::now() + std::time::Duration::from_millis(40)));
+        }
+        // A window still hidden waiting for its first frame: come back to
+        // show it by `HOLD_MAX` even when nothing paints.
+        if held && !matches!(wake, Wake::Immediate) {
+            let soon = Instant::now() + std::time::Duration::from_millis(50);
+            let at = match el.control_flow() {
+                ControlFlow::WaitUntil(t) if t < soon => t,
+                _ => soon,
+            };
+            el.set_control_flow(ControlFlow::WaitUntil(at));
         }
     }
 }
@@ -787,6 +884,9 @@ pub struct NativeOptions {
     /// `android-game-activity`.
     #[cfg(target_os = "android")]
     pub android_app: Option<winit::platform::android::activity::AndroidApp>,
+    /// Renderer prewarm and the on-disk pipeline cache (on by default;
+    /// [`PrewarmConfig::off`] or `UZOR_PREWARM=0` turns them off).
+    pub prewarm: PrewarmConfig,
 }
 
 /// Run the app on the native host (feature `native`).
@@ -799,6 +899,7 @@ where
     S: Spec,
     A: App<Spec = S>,
 {
+    prewarm::mark_origin();
     let _guard: Option<SingleInstanceGuard> = native
         .single_instance
         .as_deref()
@@ -841,6 +942,17 @@ where
         return Ok(());
     }
 
+    // The hub's adapter probe and the prewarm run on their own thread while
+    // the event loop, the runtime and the app's first tick are built here.
+    #[cfg_attr(not(target_os = "android"), allow(unused_mut))]
+    let mut pcfg = native.prewarm.clone().effective();
+    #[cfg(target_os = "android")]
+    if pcfg.cache_base.is_none() {
+        pcfg.cache_base = native.android_app.as_ref().and_then(|a| a.internal_data_path());
+    }
+    let startup = pcfg.enabled.then(|| Startup::spawn(native.render.backend, pcfg.clone()));
+    prewarm::trace("run", if startup.is_some() { "prewarm on" } else { "prewarm off" });
+
     #[cfg_attr(not(target_os = "android"), allow(unused_mut))]
     let mut builder = EventLoop::<HostWake>::with_user_event();
     #[cfg(target_os = "android")]
@@ -873,7 +985,8 @@ where
     });
 
     let (runtime, _handle) = Runtime::new(app, cfg, waker);
-    let hub = build_hub(native.render.backend);
+    // With a startup thread the real hub arrives in `settle`.
+    let hub = if startup.is_some() { RenderHub::fixed(RenderBackend::TinySkia) } else { build_hub(native.render.backend) };
 
     let mut host = NativeHost {
         runtime,
@@ -890,6 +1003,10 @@ where
         suspended: false,
         #[cfg(feature = "automation")]
         auto: AutoState { port: native.automation.clone(), ..Default::default() },
+        startup,
+        prewarmed: None,
+        prewarm: pcfg,
+        preferred: native.render.backend,
     };
 
     // The first tick drains Open commands into Spawn follow-ups. Run it

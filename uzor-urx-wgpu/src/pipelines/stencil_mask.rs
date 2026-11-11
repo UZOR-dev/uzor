@@ -102,6 +102,7 @@ impl StencilMaskPipeline {
         format: wgpu::TextureFormat,
         sample_count: u32,
         uniform_bgl: &wgpu::BindGroupLayout,
+        cache: Option<&wgpu::PipelineCache>,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("uzor_urx_wgpu.stencil_mask_shader_native"),
@@ -142,7 +143,7 @@ impl StencilMaskPipeline {
                 depth_stencil: Some(mask_stencil_state(op)),
                 multisample: wgpu::MultisampleState { count: sample_count, ..Default::default() },
                 multiview_mask: None,
-                cache: None,
+                cache,
             })
         };
         let increment = make(wgpu::StencilOperation::IncrementClamp);
