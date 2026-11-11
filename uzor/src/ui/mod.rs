@@ -11,6 +11,7 @@ pub mod media;
 pub mod mobile;
 pub mod motion;
 pub mod style;
+pub mod tray;
 pub mod flow;
 #[cfg(feature = "inspector")]
 pub mod inspector;

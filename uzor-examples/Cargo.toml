@@ -47,6 +47,16 @@ path = "src/bin/dom_widgets_frames.rs"
 required-features = ["png"]
 
 [[bin]]
+name = "tray-widgets-frames"
+path = "src/bin/tray_widgets_frames.rs"
+required-features = ["png"]
+
+[[bin]]
+name = "tray-widgets"
+path = "src/bin/tray_widgets.rs"
+required-features = ["native"]
+
+[[bin]]
 name = "dom-widgets"
 path = "src/bin/dom_widgets.rs"
 required-features = ["native"]

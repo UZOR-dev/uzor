@@ -20,6 +20,7 @@ use super::paint::paint_frame;
 use super::screenshot::{capture_screenshot, encode_png};
 use super::single_instance::{self, SingleInstanceGuard};
 use super::tray::{TrayBuilder, TrayEvent, TrayHandle, TraySpec};
+use super::tray_widget::{FlyoutAction, TrayWidgetHandle, TrayWidgets};
 use super::window::NativeWindow;
 use super::prewarm::{self, PrewarmConfig, Startup};
 use super::window_create::{build_hub, create_window_warm, geometry_echo};
@@ -56,6 +57,8 @@ pub struct NativeHost<S: Spec, A: App<Spec = S>> {
     clipboard: NativeClipboard,
     tray: Option<TrayHandle>,
     tray_spec: Option<TraySpec>,
+    /// Tray widgets: the flyout, the taskbar thumbnail, the icon badge.
+    tray_widgets: Option<TrayWidgets>,
     /// Pending spawn specs that could not be created yet (before resumed).
     pending: Vec<(WindowId, WindowSpec)>,
     start: Instant,
@@ -220,10 +223,24 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
                         // Install tray on first successful window.
                         if self.tray.is_none() {
                             if let Some(spec) = self.tray_spec.take() {
-                                match TrayBuilder::from_spec(spec).build() {
-                                    Ok(t) => self.tray = Some(t),
+                                let icon = spec.icon.clone();
+                                let mut b = TrayBuilder::from_spec(spec);
+                                if let Some(item) = self.tray_widgets.as_ref().and_then(|t| t.menu_item()) {
+                                    b = b.item(item);
+                                }
+                                match b.build() {
+                                    Ok(t) => {
+                                        self.tray = Some(t);
+                                        if let Some(tw) = self.tray_widgets.as_mut() {
+                                            tw.set_base_icon(icon);
+                                        }
+                                    }
                                     Err(e) => log::warn!("tray build failed: {e}"),
                                 }
+                            }
+                            // The first window's taskbar thumbnail is the widget.
+                            if let (Some(tw), Some(nw)) = (self.tray_widgets.as_mut(), self.windows.get(&wid)) {
+                                tw.attach_main(&nw.window);
                             }
                         }
                     }
@@ -427,20 +444,48 @@ impl<S: Spec, A: App<Spec = S>> NativeHost<S, A> {
         Some(crate::automation::AutoShot { window: id, png, width: w, height: h, source: "window" })
     }
 
-    fn drain_tray(&mut self) {
+    fn drain_tray(&mut self, el: &ActiveEventLoop) {
         let mut events = Vec::new();
+        let mut rect = None;
         if let Some(tray) = self.tray.as_ref() {
             while let Some(ev) = tray.next_event() {
                 events.push(ev);
             }
+            rect = tray.icon_rect();
+        }
+        if !events.is_empty() {
+            self.settle();
         }
         for ev in events {
-            if let TrayEvent::MenuClick(id) = ev {
-                // Tray has no window; attach to the first open window.
-                if let Some((&win, _)) = self.by_id.iter().next() {
-                    self.push(win, InputEvent::Host(HostEvent::Tray { id }));
-                }
+            if let Some(tw) = self.tray_widgets.as_mut() {
+                tw.on_tray(&ev, rect, el, &self.hub);
             }
+            match ev {
+                TrayEvent::MenuClick(id) if id == super::tray_widget::FLYOUT_MENU_ID => {}
+                TrayEvent::MenuClick(id) => {
+                    // Tray has no window; attach to the first open window.
+                    if let Some((&win, _)) = self.by_id.iter().next() {
+                        self.push(win, InputEvent::Host(HostEvent::Tray { id }));
+                    }
+                }
+                TrayEvent::DoubleClick if self.tray_widgets.is_some() => self.raise_main(),
+                _ => {}
+            }
+        }
+        if let Some(tw) = self.tray_widgets.as_mut() {
+            if self.startup.is_none() {
+                tw.poll(el, &self.hub, self.tray.as_mut(), rect);
+            }
+        }
+    }
+
+    /// Bring the app's first window up (a click on the tray widget).
+    fn raise_main(&mut self) {
+        let first = self.windows.values().min_by_key(|nw| nw.created);
+        if let Some(nw) = first {
+            nw.window.set_visible(true);
+            nw.window.set_minimized(false);
+            nw.window.focus_window();
         }
     }
 
@@ -552,6 +597,13 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, id: WinitWindowId, ev: WindowEvent) {
+        if let Some(tw) = self.tray_widgets.as_mut().filter(|t| t.owns(id)) {
+            if tw.window_event(&ev) == FlyoutAction::OpenMain {
+                self.raise_main();
+            }
+            el.set_control_flow(ControlFlow::Poll);
+            return;
+        }
         let Some(nw) = self.windows.get_mut(&id) else {
             return;
         };
@@ -653,7 +705,7 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
-        self.drain_tray();
+        self.drain_tray(el);
         if crate::platform::take_changed().is_some() {
             let ids: Vec<WindowId> = self.by_id.keys().copied().collect();
             for id in ids {
@@ -760,6 +812,18 @@ impl<S: Spec, A: App<Spec = S>> ApplicationHandler<HostWake> for NativeHost<S, A
                 _ => soon,
             };
             el.set_control_flow(ControlFlow::WaitUntil(at));
+        }
+        // The tray flyout: hide when due, paint when moving.
+        let next = match self.tray_widgets.as_mut() {
+            Some(tw) if self.startup.is_none() => tw.frame(&self.hub),
+            _ => None,
+        };
+        if let Some(at) = next {
+            match el.control_flow() {
+                ControlFlow::Poll => {}
+                ControlFlow::WaitUntil(t) if t <= at => {}
+                _ => el.set_control_flow(ControlFlow::WaitUntil(at)),
+            }
         }
     }
 }
@@ -871,6 +935,10 @@ pub struct NativeOptions {
     pub single_instance: Option<String>,
     /// Optional system tray.
     pub tray: Option<TraySpec>,
+    /// Tray widgets (needs [`Self::tray`]): a live card in a flyout over the tray
+    /// icon, as the taskbar thumbnail (Windows) and a status dot on the icon. Keep a
+    /// clone of the handle to update it.
+    pub tray_widget: Option<TrayWidgetHandle>,
     /// Render backend preference.
     pub render: RenderPreference,
     /// Serve this automation port (feature `automation`); see
@@ -996,6 +1064,7 @@ where
         clipboard: NativeClipboard::new(),
         tray: None,
         tray_spec: native.tray,
+        tray_widgets: native.tray_widget.clone().map(TrayWidgets::new),
         pending: Vec::new(),
         start: Instant::now(),
         exit: false,
@@ -1049,7 +1118,7 @@ pub(crate) fn resize_render_surface(rs: &mut WindowRenderState, width: u32, heig
 /// traffic flushed it: the last frame after a state change stayed unseen
 /// until the mouse moved.
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))]
-fn flush_x11(window: &winit::window::Window) {
+pub(super) fn flush_x11(window: &winit::window::Window) {
     use std::sync::OnceLock;
     use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
     static XLIB: OnceLock<Option<x11_dl::xlib::Xlib>> = OnceLock::new();
@@ -1063,7 +1132,7 @@ fn flush_x11(window: &winit::window::Window) {
 }
 
 #[cfg(not(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android")))))]
-fn flush_x11(_window: &winit::window::Window) {}
+pub(super) fn flush_x11(_window: &winit::window::Window) {}
 
 #[cfg(test)]
 mod dev_config_tests {

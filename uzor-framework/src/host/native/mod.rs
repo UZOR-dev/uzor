@@ -1,7 +1,7 @@
 //! Native (winit) host shell — brief F9 (design §2.3, §5.4, §5.5, §7.3).
 //!
 //! Modules: mapper, app_handler, executor, paint via hub, window create,
-//! clipboard, tray, single-instance, screenshot, Win32 NCHITTEST subclass.
+//! clipboard, tray and tray widgets, single-instance, screenshot, Win32 NCHITTEST subclass.
 //!
 //! ## `uzor-render-hub` wasm32 verdict (F9 done-condition)
 //!
@@ -22,6 +22,7 @@ mod prewarm;
 mod screenshot;
 mod single_instance;
 mod tray;
+mod tray_widget;
 mod win32;
 mod window;
 mod window_create;
@@ -36,7 +37,10 @@ pub use screenshot::{
     add_copy_src_to_target_texture, capture_screenshot, capture_screenshot_texture, encode_png,
 };
 pub use single_instance::{single_instance, SingleInstanceGuard};
-pub use tray::{TrayBuilder, TrayError, TrayEvent, TrayHandle, TrayMenuItem, TraySpec};
+pub use tray::{IconRect, TrayBuilder, TrayError, TrayEvent, TrayHandle, TrayMenuItem, TraySpec};
+pub use tray_widget::{
+    flyout_position, rasterize_icon, render_rgba, FlyoutTrigger, TrayWidgetConfig, TrayWidgetHandle, FLYOUT_MENU_ID,
+};
 pub use win32::{
     extract_hwnd, get_cursor_pos, install_borderless_resize, set_border_color, set_corner_style,
 };

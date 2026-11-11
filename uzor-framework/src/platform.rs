@@ -70,6 +70,15 @@ pub(crate) fn take_changed() -> Option<(Option<Insets>, f64)> {
     with(|s| std::mem::take(&mut s.dirty).then_some((s.safe, s.keyboard)))
 }
 
+/// Wake the host's loop (from any thread): something it polls changed (a tray
+/// menu pick, a tray widget update).
+#[allow(dead_code)]
+pub(crate) fn wake() {
+    if let Some(w) = with(|s| s.wake.clone()) {
+        w();
+    }
+}
+
 /// The host's loop wake, called after every change.
 #[allow(dead_code)]
 pub(crate) fn set_wake(f: impl Fn() + Send + Sync + 'static) {

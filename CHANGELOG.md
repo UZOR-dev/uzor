@@ -2,6 +2,32 @@
 
 All crates in the workspace share one version.
 
+## 1.5.33
+
+### Tray widgets (`uzor`, `uzor-framework`, `uzor-examples`)
+
+- New `uzor::ui::tray`: compact cards for the tray / taskbar hover instead of a
+  logo. `TrayWidget::{Tasks, Limits, Agents, Combined}` render a `TrayModel`
+  (task states, limit rings from `dash::Meter`, live agents as critters with a
+  status dot) through `tray_widget` / `render`, with `TrayLabels` (ru default,
+  en) and `TrayLook` (frosted glass for the flyout, solid for thumbnails;
+  monochrome, only status dots carry colour). `ring_icon` and `badge` make
+  icon-size variants and a status dot on any RGBA icon.
+- `uzor-framework` native host: `NativeOptions::tray_widget` takes a
+  `TrayWidgetHandle` (`TrayWidgetConfig`: widget, model, labels, theme, glass
+  overrides, hover or click trigger). The host opens a borderless glass flyout
+  anchored at the tray icon (hover on Windows and macOS; a host-added menu entry
+  via `menu_label` on Linux, where StatusNotifier items report no hover), keeps
+  it while the pointer is over it, hides it after a short delay, and a click on
+  it brings the main window up. The tray icon gets the model's status dot. On
+  Windows the main window's taskbar thumbnail and live preview are the widget
+  (DWM iconic bitmaps); on macOS the dock tile carries the dot.
+- Linux tray: the StatusNotifier item now runs its own GTK loop on a thread,
+  so `TraySpec` works without the app driving GTK. `TrayEvent` gains `Enter` /
+  `Leave`; `TrayHandle::icon_rect`; `TrayBuilder::item`.
+- `uzor-examples`: `tray-widgets` (live, with a real tray icon) and
+  `tray-widgets-frames` (PNG of every widget), both in the launcher index.
+
 ## 1.5.32
 
 ### Renderer prewarm before the first window (`uzor-framework`, `uzor-render-hub`, `uzor-urx-wgpu`)
