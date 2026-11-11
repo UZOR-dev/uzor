@@ -115,8 +115,20 @@ layout-blob = ["dep:postcard"]
 inspector = ["uzor/inspector"]
 # Web: mirror the accessibility tree into hidden ARIA DOM nodes after each frame.
 a11y-dom = ["web"]
-# Native (winit) host — brief F9.
-native = [
+# Native (winit) host — brief F9 — with every render backend of the hub
+# (vello GPU / hybrid / CPU, wgpu-instanced, tiny-skia, URX 2D and 3D).
+native = ["native-lean", "uzor-render-hub/default"]
+# The native host with the two backends a phone needs: vello on the GPU
+# (Metal / Vulkan) and tiny-skia on the CPU when there is no compute-capable GPU
+# (GLES-only Android). The mobile features below build on this one; add
+# `native` for the full backend set.
+native-lean = [
+    "native-core",
+    "uzor-render-hub/vello-gpu",
+    "uzor-render-hub/tiny-skia",
+]
+# The host without any render backend chosen (pick them on uzor-render-hub).
+native-core = [
     "dep:winit",
     "dep:x11-dl",
     "dep:uzor-window-desktop",
@@ -130,8 +142,8 @@ native = [
 ]
 # Android: winit needs one activity glue. Pick one; the app's `android_main` passes
 # its `AndroidApp` in `NativeOptions::android_app`.
-android-native-activity = ["native", "winit/android-native-activity"]
-android-game-activity = ["native", "winit/android-game-activity"]
+android-native-activity = ["native-lean", "winit/android-native-activity"]
+android-game-activity = ["native-lean", "winit/android-game-activity"]
 # Web (browser RAF) host — brief F10. Canvas2d paint, not the render hub.
 web = [
     "dep:wasm-bindgen",

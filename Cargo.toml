@@ -106,7 +106,9 @@ categories = ["gui", "rendering", "graphics"]
 # builds `image` just because it sits in this workspace.
 uzor = { version = "1.5.29", path = "./uzor", default-features = false }
 uzor-fonts = { version = "1.5.29", path = "./uzor-fonts" }
-uzor-render-hub = { version = "1.5.29", path = "./uzor-render-hub" }
+# default-features = false: members name the backends they compile (the framework's
+# `native` asks for all of them, `native-lean` for vello-gpu + tiny-skia).
+uzor-render-hub = { version = "1.5.29", path = "./uzor-render-hub", default-features = false }
 uzor-render-vello-gpu = { version = "1.5.29", path = "./uzor-render-vello-gpu" }
 uzor-render-vello-hybrid = { version = "1.5.29", path = "./uzor-render-vello-hybrid" }
 uzor-render-vello-cpu = { version = "1.5.29", path = "./uzor-render-vello-cpu" }

@@ -13,10 +13,10 @@ pub use headless::HeadlessHost;
 #[cfg(all(feature = "automation", not(target_arch = "wasm32")))]
 pub use headless::run_headless;
 
-#[cfg(feature = "native")]
+#[cfg(feature = "native-core")]
 pub mod native;
 
-#[cfg(feature = "native")]
+#[cfg(feature = "native-core")]
 pub use native::{
     run_native, run_native_default, NativeOptions, RenderPreference, TraySpec, WinitMapper,
 };
