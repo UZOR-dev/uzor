@@ -16,6 +16,9 @@
 //!
 //! `env()` names: `safe-area-inset-top | right | bottom | left` and
 //! `keyboard-inset-height` (the soft keyboard), in px.
+//!
+//! Viewport and root units in values (`100vh`, `50vw`, `10vmin`, `5vmax`, `1.5rem`)
+//! become px at parse time too ([`MediaEnv::units`]; `rem` is 16 px).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
@@ -196,6 +199,53 @@ impl MediaEnv {
     }
 }
 
+impl MediaEnv {
+    /// `v` with every `<number>vh | vw | vmin | vmax | rem` turned into px against this
+    /// viewport (1vh = 1% of the height, `rem` = 16 px). Other text is kept as it is:
+    /// a unit only counts right after a number and before a non-letter.
+    pub fn units(&self, v: &str) -> String {
+        let b = v.as_bytes();
+        let mut out = String::with_capacity(v.len());
+        let mut i = 0;
+        let mut last = 0;
+        while i < b.len() {
+            let c = b[i];
+            // A number starts after a non-identifier char.
+            let starts = (c.is_ascii_digit() || (c == b'.' && b.get(i + 1).is_some_and(u8::is_ascii_digit)) || (c == b'-' && b.get(i + 1).is_some_and(|d| d.is_ascii_digit() || *d == b'.')))
+                && (i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'#' || b[i - 1] == b'-' || b[i - 1] == b'_' || b[i - 1] == b'.'));
+            if !starts {
+                i += 1;
+                continue;
+            }
+            let s = i;
+            i += 1;
+            while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.') {
+                i += 1;
+            }
+            let num_end = i;
+            while i < b.len() && b[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            let unit = &v[num_end..i];
+            let scale = match unit {
+                "vh" => self.height / 100.0,
+                "vw" => self.width / 100.0,
+                "vmin" => self.width.min(self.height) / 100.0,
+                "vmax" => self.width.max(self.height) / 100.0,
+                "rem" => 16.0,
+                _ => continue,
+            };
+            let Ok(n) = v[s..num_end].parse::<f64>() else { continue };
+            out.push_str(&v[last..s]);
+            out.push_str(&fmt_px((n * scale * 100.0).round() / 100.0));
+            out.push_str("px");
+            last = i;
+        }
+        out.push_str(&v[last..]);
+        out
+    }
+}
+
 fn fmt_px(v: f64) -> String {
     if v.fract() == 0.0 { format!("{}", v as i64) } else { format!("{v}") }
 }
@@ -321,5 +371,17 @@ mod tests {
         assert_eq!(phone.substitute("env(nope, 5px)"), "5px");
         assert_eq!(phone.substitute("env(nope)"), "0px");
         assert_eq!(phone.substitute("solid"), "solid");
+    }
+
+    #[test]
+    fn viewport_and_root_units() {
+        let phone = MediaEnv::touch(390.0, 844.0, Edges::ZERO);
+        assert_eq!(phone.units("100vh"), "844px");
+        assert_eq!(phone.units("50vw"), "195px");
+        assert_eq!(phone.units("0 2vmin 10vmax"), "0 7.8px 84.4px");
+        assert_eq!(phone.units("1.5rem 12px"), "24px 12px");
+        assert_eq!(phone.units("-10vw"), "-39px");
+        assert_eq!(phone.units("#10vh1a rgba(0,0,0,.5) 3em"), "#10vh1a rgba(0,0,0,.5) 3em", "colours, em and plain numbers stay");
+        assert_eq!(phone.units("a1vh solid"), "a1vh solid");
     }
 }

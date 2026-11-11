@@ -571,7 +571,7 @@ impl Sheet {
                 .filter(|d| !d.trim().is_empty())
                 .map(|d| {
                     let (k, v) = d.split_once(':').ok_or_else(|| StyleError(format!("bad declaration `{}`", d.trim())))?;
-                    Ok((k.trim().to_ascii_lowercase(), env.substitute(v.trim())))
+                    Ok((k.trim().to_ascii_lowercase(), env.units(&env.substitute(v.trim()))))
                 })
                 .collect::<Result<_, StyleError>>()?;
             for s in sels.split(',') {
