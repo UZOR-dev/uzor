@@ -185,6 +185,34 @@ div.k-field { display: flex; flex-direction: column; gap: 6px }
 div.k-field > div.k-field-label { color: var(--k-muted); font-size: 11px; font-weight: 600 }
 "#;
 
+/// Touch-sized targets, applied under `@media (pointer: coarse)` (a finger: iOS /
+/// Android builds, or the last input was touch). Apple asks for 44 pt, Material
+/// for 48 dp: controls grow to 44 px, list rows to 48 px, text to 15 px. The look
+/// stays the same; only sizes change. [`sheet`] and [`sheet_with`] include it
+/// after [`KIT_CSS`]; the app's own rules still win.
+pub const KIT_TOUCH_CSS: &str = r#"
+@media (pointer: coarse) {
+div.k-root { font-size: 15px }
+button.k-btn { padding: 12px 18px; min-height: 44px; border-radius: 10px }
+button.k-switch { width: 44px; height: 26px; padding: 3px; border-radius: 13px }
+span.k-box { width: 22px; height: 22px; border-radius: 6px }
+div.k-check { gap: 12px; min-height: 44px }
+div.k-input { height: 44px; padding: 0 12px; border-radius: 10px }
+select.k-select { height: 44px; padding: 0 34px 0 14px; border-radius: 10px }
+div.k-opt { padding: 12px 12px; border-radius: 8px }
+div.k-mi { padding: 12px 12px; border-radius: 8px }
+div.k-search { height: 40px }
+div.k-li { height: 48px; padding: 0 14px; border-radius: 8px }
+div.k-tr { height: 44px }
+button.k-act { width: 40px; height: 40px; padding: 10px; border-radius: 8px }
+button.k-tab { padding: 10px 14px }
+button.k-seg-btn { padding: 9px 12px }
+button.k-chip { padding: 8px 14px }
+div.k-card-head { padding: 12px 14px }
+div.k-dialog-foot { padding: 12px 16px 16px }
+}
+"#;
+
 /// Inline `:root` overrides for the light look: put them on the page root
 /// (`El::new("div.k-root").css(LIGHT_VARS)`); custom properties cascade to the subtree.
 pub const LIGHT_VARS: &str = "--k-bg: #f6f7f9; --k-panel: #ffffff; --k-fg: #1d1f24; --k-muted: #6b6f78; --k-line: #dfe1e6; \
@@ -201,14 +229,14 @@ pub fn theme_vars(dark: bool) -> &'static str {
     }
 }
 
-/// [`KIT_CSS`] parsed.
+/// [`KIT_CSS`] (plus [`KIT_TOUCH_CSS`]) parsed against the current media environment.
 pub fn sheet() -> Sheet {
-    Sheet::parse(KIT_CSS).expect("KIT_CSS parses")
+    Sheet::parse(&[KIT_CSS, KIT_TOUCH_CSS].concat()).expect("KIT_CSS parses")
 }
 
 /// [`KIT_CSS`] followed by the app's own rules (later rules of equal specificity win).
 pub fn sheet_with(app_css: &str) -> Result<Sheet, StyleError> {
-    Sheet::parse(&[KIT_CSS, app_css].concat())
+    Sheet::parse(&[KIT_CSS, KIT_TOUCH_CSS, app_css].concat())
 }
 
 /// A 24×24 stroke icon (`currentColor`) from its path markup.
@@ -1107,4 +1135,21 @@ mod tests {
         assert!((bar.rect.width - 75.0).abs() < 0.5, "25% of 300: {:?}", bar.rect);
         assert!(dom.rect("n").is_some());
     }
+
+    #[test]
+    fn coarse_pointer_grows_targets_to_touch_size() {
+        use crate::ui::media::{Edges, MediaEnv};
+        let css = [KIT_CSS, KIT_TOUCH_CSS].concat();
+        let touch = Sheet::parse_with(&css, &MediaEnv::touch(390.0, 844.0, Edges::ZERO)).unwrap();
+        let mouse = Sheet::parse_with(&css, &MediaEnv::default()).unwrap();
+        assert_eq!(mouse.el("div.k-li").height, Some(30.0));
+        assert_eq!(touch.el("div.k-li").height, Some(48.0));
+        assert_eq!(touch.el("div.k-input").height, Some(44.0));
+        assert_eq!(touch.el("select.k-select").height, Some(44.0));
+        assert_eq!(touch.el("button.k-btn").min_height, Some(44.0));
+        assert_eq!(mouse.el("button.k-btn").min_height, None);
+        // The look is the same: colours come from KIT_CSS in both.
+        assert_eq!(touch.el("button.k-btn").background, mouse.el("button.k-btn").background);
+    }
+
 }
