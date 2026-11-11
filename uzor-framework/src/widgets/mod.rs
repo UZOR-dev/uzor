@@ -20,6 +20,7 @@ mod composites;
 mod host;
 pub mod kit;
 pub mod lm;
+pub mod mobile;
 mod paint;
 mod scroll;
 pub mod splitter;
