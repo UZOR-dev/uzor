@@ -2,6 +2,29 @@
 
 All crates in the workspace share one version.
 
+## 1.5.32
+
+### Renderer prewarm before the first window (`uzor-framework`, `uzor-render-hub`, `uzor-urx-wgpu`)
+
+- `run_native` now builds the GPU device and the selected backend's renderer
+  (URX-wgpu with all its pipelines, or vello) on a thread before the first
+  window exists, through a persistent wgpu pipeline cache in
+  `<cache dir>/uzor/<app>` (Vulkan), and draws a small off-screen warm-up
+  scene so first-use shader compiles happen there. The first window binds the
+  result to its surface. Later windows and Android surfaces on resume prewarm
+  on the spot.
+- On by default: `NativeOptions::prewarm` (`PrewarmConfig`); opt out with
+  `PrewarmConfig::off()` or `UZOR_PREWARM=0`. `PrewarmConfig::app` names the
+  cache directory (default: the executable name).
+- `hold_until_first_frame` (default on Windows) keeps a window hidden until
+  its first frame is presented (capped at 2 s). Elsewhere the window is shown
+  right before its first frame, as before.
+- `UZOR_TRACE_STARTUP=1` prints startup stages with timings.
+- New in `uzor-render-hub`: `prewarm`, `Prewarmed`, `PrewarmOptions`,
+  `PipelineCacheStore`, `app_pipeline_cache_dir`, `build_renderer_with_cache`.
+  New in `uzor-urx-wgpu`: `NativeUrxRenderer::with_pipeline_cache`, `warm_up`.
+- wasm is unaffected.
+
 ## 1.5.31
 
 ### Desktop window controls as a safe-area inset (`uzor-framework`)
