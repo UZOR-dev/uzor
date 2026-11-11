@@ -106,6 +106,8 @@ struct TestApp {
     seen_context: Vec<(f64, f64)>,
     /// Safe area, keyboard and pointer kind the panel hook last observed.
     seen_insets: Option<(crate::types::window::Insets, f64, bool)>,
+    /// Per-frame chrome (floating controls under test).
+    chrome: crate::types::command::ChromeModel,
 }
 
 impl App for TestApp {
@@ -113,6 +115,10 @@ impl App for TestApp {
 
     fn overlay_model(&self, _win: WindowId, _id: Ov) -> OverlayModel {
         OverlayModel::default()
+    }
+
+    fn chrome_model(&self, _win: WindowId) -> crate::types::command::ChromeModel {
+        self.chrome.clone()
     }
 
     fn panel(&mut self, cx: &mut PanelCx<'_, TS>) {
@@ -1521,6 +1527,40 @@ fn insets_and_pointer_kind_reach_hooks_and_media() {
     h.advance(0.017);
     h.advance(0.017);
     assert_eq!(h.runtime().app().seen_insets.map(|s| s.2), Some(false), "mouse = fine");
+}
+
+/// An undecorated window's floating min/max/close band is a top safe-area inset
+/// (and `env(safe-area-inset-top)`), so a phone layout can clear the close button.
+/// A taller host inset (a notch) is kept.
+#[test]
+fn floating_controls_are_a_top_safe_area_inset() {
+    use crate::types::command::ChromeModel;
+    use crate::types::controls::{FloatingControls, WindowControlsStyle};
+    use crate::types::window::Insets;
+    let (mut h, handle) = host();
+    let fc = FloatingControls::new(WindowControlsStyle::default());
+    let band = fc.reserved_top();
+    h.runtime_mut().app_mut().chrome = ChromeModel { floating: Some(fc), ..Default::default() };
+    let win = open_with_panel(&mut h, &handle);
+    h.runtime_mut().app_mut().request_frame = true;
+    h.advance(0.017);
+    h.advance(0.017);
+    let seen = h.runtime().app().seen_insets;
+    if crate::types::controls::HOST_HAS_WINDOW_CONTROLS {
+        assert!(band > 0.0);
+        assert_eq!(seen.map(|s| s.0), Some(Insets::new(band, 0.0, 0.0, 0.0)));
+        assert_eq!(uzor::ui::media::current().safe.top, band);
+        // The host's own inset wins when it is taller than the buttons.
+        h.input(win, InputEvent::Window(crate::types::bus::WindowInput::Insets { safe: Insets::new(47.0, 0.0, 34.0, 0.0), keyboard: 0.0 }));
+        h.advance(0.017);
+        h.advance(0.017);
+        assert_eq!(h.runtime().app().seen_insets.map(|s| s.0), Some(Insets::new(47.0, 0.0, 34.0, 0.0)));
+        assert_eq!(uzor::ui::media::current().safe.top, 47.0);
+        assert_eq!(uzor::ui::media::current().safe.bottom, 34.0);
+    } else {
+        assert_eq!(band, 0.0);
+        assert_eq!(seen.map(|s| s.0.top), Some(0.0));
+    }
 }
 
 /// F12 belongs to the inspector: it never reaches the app as an unhandled key.

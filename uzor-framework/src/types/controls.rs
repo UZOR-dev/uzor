@@ -14,8 +14,9 @@ use uzor::Rect;
 /// Whether the host has a window of its own to minimize / maximize / close.
 /// A browser page does not (the tab is the browser's), so on the web host
 /// [`ChromeModel::floating`](super::command::ChromeModel::floating) is ignored:
-/// no buttons are painted or hit-tested and no drag band exists. Apps that leave
-/// room under the buttons read this too.
+/// no buttons are painted or hit-tested and no drag band exists. The reserved
+/// top of the buttons is also a safe-area inset (`reserved_top`); apps and the
+/// mobile shell read it through `VisualView::safe_area` and `env(safe-area-inset-top)`.
 pub const HOST_HAS_WINDOW_CONTROLS: bool = !cfg!(target_arch = "wasm32");
 
 /// Which corner the buttons sit in.
@@ -282,6 +283,20 @@ impl FloatingControls {
 }
 
 impl FloatingControls {
+    /// Height of the top band the buttons occupy, logical px. Compose folds
+    /// this into `VisualView::safe_area().top` and `env(safe-area-inset-top)`
+    /// so a phone layout's title and actions sit below the close button.
+    /// `0` when the host has no window of its own (the web).
+    pub fn reserved_top(&self) -> f64 {
+        if !HOST_HAS_WINDOW_CONTROLS {
+            return 0.0;
+        }
+        match self.placement.resolve() {
+            ControlsPlacement::Left => (self.style.dot_inset + self.style.dot).max(0.0),
+            _ => self.style.button_h.max(0.0),
+        }
+    }
+
     /// The corner radius to clip with: none while maximized / fullscreen.
     pub fn clip_radius(&self, maximized: bool) -> f64 {
         if maximized { 0.0 } else { self.radius.max(0.0) }
@@ -343,6 +358,19 @@ mod tests {
     fn auto_resolves_per_platform() {
         let want = if cfg!(target_os = "macos") { ControlsPlacement::Left } else { ControlsPlacement::Right };
         assert_eq!(ControlsPlacement::Auto.resolve(), want);
+    }
+
+    #[test]
+    fn reserved_top_is_the_button_band_on_a_native_host() {
+        let right = FloatingControls { placement: ControlsPlacement::Right, ..FloatingControls::new(WindowControlsStyle::default()) };
+        let left = FloatingControls { placement: ControlsPlacement::Left, ..FloatingControls::new(WindowControlsStyle::default()) };
+        if HOST_HAS_WINDOW_CONTROLS {
+            assert_eq!(right.reserved_top(), 32.0);
+            assert_eq!(left.reserved_top(), 14.0 + 12.0);
+        } else {
+            assert_eq!(right.reserved_top(), 0.0);
+            assert_eq!(left.reserved_top(), 0.0);
+        }
     }
 
     #[test]

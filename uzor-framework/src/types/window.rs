@@ -237,7 +237,11 @@ pub struct WindowGeometry {
     pub focused: bool,
     /// Device pixel ratio (physical / logical).
     pub scale: f64,
-    /// Safe area inside the viewport (zero on desktop).
+    /// Safe area inside the viewport as the host reported it (notch, status
+    /// bar, home indicator; zero when the host has none). Compose also folds
+    /// the floating window-controls band into `VisualView::safe_area` and
+    /// `env(safe-area-inset-top)`, so a desktop window with custom decorations
+    /// still reserves that strip.
     pub safe_area: Insets,
     /// Soft keyboard height over the bottom of the viewport (0 when hidden).
     pub keyboard: f64,

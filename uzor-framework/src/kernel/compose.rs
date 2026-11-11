@@ -78,13 +78,34 @@ impl<S: Spec> Kernel<S> {
 
         // The frame's truth, built BEFORE `BeginFrame` clears the last
         // frame's clicks (the one-frame-latency immediate-mode read).
-        let view = self.visual_view(win);
+        let mut view = self.visual_view(win);
 
         // ChromeModel duality: the app declares per frame, the layout
         // engine is the single writer; apply only on change.
         let mut declared = app.chrome_model(win);
         if !crate::types::controls::HOST_HAS_WINDOW_CONTROLS {
             declared.floating = None;
+        }
+        // Custom / transparent decorations: the floating min/max/close band
+        // is a top safe-area inset, so phone layouts and `env(safe-area-inset-top)`
+        // clear the close button. The host's own inset (notch, status bar) wins
+        // when it is taller.
+        if let Some(top) = declared.floating.as_ref().map(|fc| fc.reserved_top()) {
+            if top > view.safe_area.top {
+                view.safe_area.top = top;
+                if let Some(g) = self.windows.view().window(win).map(|w| *w.geometry()) {
+                    uzor::ui::media::set_current(uzor::ui::media::MediaEnv {
+                        width: g.viewport.width,
+                        height: g.viewport.height,
+                        coarse: self.coarse_pointer,
+                        hover: !self.coarse_pointer,
+                        safe: view.safe_area,
+                        keyboard: view.keyboard,
+                        dark: self.windows.view().dark(),
+                        reduced_motion: self.windows.view().reduced_motion(),
+                    });
+                }
+            }
         }
         let same = self
             .layout

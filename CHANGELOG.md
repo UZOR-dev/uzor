@@ -2,6 +2,17 @@
 
 All crates in the workspace share one version.
 
+## 1.5.31
+
+### Desktop window controls as a safe-area inset (`uzor-framework`)
+
+- On a native host, an undecorated window's floating min / max / close band is
+  reported as a top safe-area inset (`FloatingControls::reserved_top`, folded into
+  `VisualView::safe_area().top` and `env(safe-area-inset-top)`). Phone layouts
+  that pad the top safe area no longer sit their title actions under the close
+  button. A taller host inset (a notch or a status bar) is kept. The web host
+  still has no window controls and reports no band.
+
 ## 1.5.30
 
 ### Mobile shell kit (`uzor::ui::mobile`)
