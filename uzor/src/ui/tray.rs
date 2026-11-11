@@ -504,6 +504,22 @@ pub fn tray_widget(w: TrayWidget, m: &TrayModel, l: &TrayLabels, look: &TrayLook
     }
 }
 
+/// Paints one agent's creature into its slot: `(ctx, rect, agent, t seconds, reduced motion)`.
+pub type CritterPainter = std::rc::Rc<dyn Fn(&mut dyn RenderContext, Rect, &TrayAgent, f64, bool)>;
+
+thread_local! {
+    static CRITTER_PAINTER: std::cell::RefCell<Option<CritterPainter>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Draw the agents' creatures with the app's own painter instead of uzor's critter (an app
+/// whose sidebar creatures have their own shapes and expressions shows the same ones in the
+/// tray). Per thread: set it on the thread that paints the widgets (a native host's event
+/// loop thread, where the flyout and the taskbar thumbnail are drawn). `None` restores
+/// uzor's critter. [`TrayAgent::key`] is passed through as the creature's identity.
+pub fn set_critter_painter(p: Option<CritterPainter>) {
+    CRITTER_PAINTER.with(|c| *c.borrow_mut() = p);
+}
+
 /// Paint a laid-out tray widget with its critters at time `t` (seconds).
 pub fn paint(ctx: &mut dyn RenderContext, d: &Dom, m: &TrayModel, t: f64, reduced: bool) {
     dom::paint_slots(ctx, d, &mut |ctx, key, r| paint_slot(ctx, key, r, m, t, reduced));
@@ -515,6 +531,10 @@ pub fn paint(ctx: &mut dyn RenderContext, d: &Dom, m: &TrayModel, t: f64, reduce
 pub fn paint_slot(ctx: &mut dyn RenderContext, key: &str, r: Rect, m: &TrayModel, t: f64, reduced: bool) {
     let Some(i) = key.strip_prefix("@tw-critter:").and_then(|s| s.parse::<usize>().ok()) else { return };
     let Some(a) = m.agents.get(i) else { return };
+    if let Some(f) = CRITTER_PAINTER.with(|p| p.borrow().clone()) {
+        f(ctx, r, a, t, reduced);
+        return;
+    }
     let mut v = critter_view(&a.name, a.family);
     v.off = a.state == CritterState::Off;
     draw_critter_motion(ctx, r, &v, &CritterMotion { state: a.state, t, look_at: None, reduced });
@@ -618,6 +638,25 @@ pub fn ring_icon(px: u32, frac: f64, dark: bool, status: TrayStatus) -> RgbaIcon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_app_painter_draws_the_creatures() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let seen = Rc::new(Cell::new(0usize));
+        let s2 = seen.clone();
+        set_critter_painter(Some(Rc::new(move |_ctx: &mut dyn RenderContext, _r: Rect, a: &TrayAgent, _t: f64, _red: bool| {
+            assert_eq!(a.key, "k1");
+            s2.set(s2.get() + 1);
+        })));
+        let m = TrayModel { agents: vec![TrayAgent::new("k1", "one")], ..Default::default() };
+        let mut ctx = crate::testing::RecordingRenderContext::new();
+        paint_slot(&mut ctx, "@tw-critter:0", Rect::new(0.0, 0.0, 20.0, 20.0), &m, 0.0, false);
+        paint_slot(&mut ctx, "@tw-critter:5", Rect::new(0.0, 0.0, 20.0, 20.0), &m, 0.0, false);
+        set_critter_painter(None);
+        paint_slot(&mut ctx, "@tw-critter:0", Rect::new(0.0, 0.0, 20.0, 20.0), &m, 0.0, false);
+        assert_eq!(seen.get(), 1);
+    }
     use crate::ui::dom::lay_out_in;
 
     fn model() -> TrayModel {

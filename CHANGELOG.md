@@ -2,6 +2,16 @@
 
 All crates in the workspace share one version.
 
+## 1.5.34
+
+### Tray widgets: the app's own creatures (`uzor`)
+
+- `uzor::ui::tray::set_critter_painter`: an app draws the agents' creatures in the
+  tray widgets (flyout, taskbar thumbnail, frames) with its own painter, so they
+  look like its sidebar ones (shapes, eyes, expressions by state). Per thread;
+  `None` keeps uzor's critter. The painter gets the `TrayAgent` (its `key` is the
+  creature's identity), the slot rect, the clock and reduced motion.
+
 ## 1.5.33
 
 ### Tray widgets (`uzor`, `uzor-framework`, `uzor-examples`)
