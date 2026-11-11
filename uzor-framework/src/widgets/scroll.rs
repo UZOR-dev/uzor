@@ -128,7 +128,15 @@ pub fn $begin<S: Spec>(cx: &mut $cx<'_, S>, id: &str, viewport: Rect, sv: &mut S
     if wheel && p.is_some_and(|p| inside(viewport, p)) {
         let (_, dy) = cx.view.scroll();
         let owner = dy == 0.0 || wheel_owner(chain(cx.widgets.states, now), id, p.unwrap_or_default(), dy);
-        if owner && sv.wheel(dy, cx.view.scroll_precise(), now, st) {
+        // A finger's steps already carry the kernel's fling: no second inertia.
+        let touch_st;
+        let wst = if cx.view.scroll_touch() && st.fling {
+            touch_st = ScrollStyle { fling: false, ..st.clone() };
+            &touch_st
+        } else {
+            st
+        };
+        if owner && sv.wheel(dy, cx.view.scroll_precise(), now, wst) {
             cx.out.request_frame();
         }
     }

@@ -299,6 +299,14 @@ impl FocusOp {
 pub enum InputOp {
     /// Start tracking a window (conducted from `WindowEffect::Created`).
     Open(WindowId),
+    /// A touch long-press: the context-menu request a secondary click makes,
+    /// without the click (a long-press must not activate the widget).
+    Context {
+        /// The window.
+        win: WindowId,
+        /// Where the finger rests.
+        pos: crate::types::window::Point,
+    },
     /// The platform's paste gesture delivered text
     /// ([`crate::types::bus::InputEvent::Paste`]).
     Paste {
@@ -354,6 +362,9 @@ pub enum InputOp {
         win: WindowId,
         /// The event.
         input: WheelInput,
+        /// The step comes from a finger panning or flinging (the kernel's touch
+        /// route): scroll containers follow it 1:1 and add no inertia of their own.
+        touch: bool,
     },
     /// Routing key step 1: the focused text field's editing chords and
     /// text, and Tab / Shift+Tab. Anything else is answered by

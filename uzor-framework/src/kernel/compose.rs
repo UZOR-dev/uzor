@@ -402,10 +402,14 @@ impl<S: Spec> Kernel<S> {
         }
         view.scroll = iview.pending_scroll(win);
         view.scroll_precise = iview.pending_scroll_precise(win);
+        view.scroll_touch = iview.pending_scroll_touch(win);
         (view.pointer, view.button_down) = iview.pointer(win);
         view.press_origin = iview.press_origin(win);
         view.context = iview.context_click(win);
         view.selections = iview.selections(win).map(<[_]>::to_vec).unwrap_or_default();
+        // Gestures wait for the window's next compose (frames are paced; a tick
+        // without a frame must not drop them).
+        view.gestures = self.gestures.remove(&win).unwrap_or_default();
         view.open_overlays = self
             .overlays
             .view()

@@ -181,6 +181,8 @@ pub struct VisualView<S: Spec> {
     pub(crate) clicked: Vec<(WidgetId, u8)>,
     pub(crate) scroll: (f64, f64),
     pub(crate) scroll_precise: bool,
+    pub(crate) scroll_touch: bool,
+    pub(crate) gestures: Vec<crate::types::gesture::Gesture>,
     pub(crate) pointer: Option<(f64, f64)>,
     pub(crate) button_down: bool,
     pub(crate) press_origin: Option<(f64, f64)>,
@@ -206,6 +208,8 @@ impl<S: Spec> Default for VisualView<S> {
             clicked: Vec::new(),
             scroll: (0.0, 0.0),
             scroll_precise: false,
+            scroll_touch: false,
+            gestures: Vec::new(),
             pointer: None,
             button_down: false,
             press_origin: None,
@@ -345,6 +349,19 @@ impl<S: Spec> VisualView<S> {
     /// The frame's scroll came from pixel deltas (trackpad / smooth wheel).
     pub fn scroll_precise(&self) -> bool {
         self.scroll_precise
+    }
+
+    /// The frame's scroll came from a finger (a one-finger pan or its fling): it
+    /// already carries its own inertia, so scroll containers must not add theirs.
+    pub fn scroll_touch(&self) -> bool {
+        self.scroll_touch
+    }
+
+    /// Touch gestures recognised since the last tick (tap, long-press, pan, swipe,
+    /// pinch), oldest first. A drawer reads an edge `Swipe`, a nav stack the
+    /// left-edge `Pan` for its back-swipe, a zoomable view the `Pinch`.
+    pub fn gestures(&self) -> &[crate::types::gesture::Gesture] {
+        &self.gestures
     }
 
     /// Last pointer position in window coordinates, if known.

@@ -131,11 +131,45 @@ pub(crate) struct Kernel<S: Spec> {
     trace_max: usize,
     /// Live touch contacts (id -> last position); the first is the pointer.
     touches: Vec<(u64, crate::types::window::Point)>,
+    /// One-finger tap / long-press / pan / swipe and pinch recogniser.
+    gesture: crate::types::gesture::GestureRecognizer,
+    /// What the current touch sequence turned into (see `route_touch`).
+    touch_mode: TouchMode,
+    /// The window of the current touch sequence.
+    touch_win: Option<WindowId>,
+    /// Inertia after a one-finger pan: (window, where it scrolls, the fling).
+    fling: Option<(WindowId, crate::types::window::Point, crate::types::gesture::Fling)>,
+    /// The wheel step being routed comes from a finger.
+    touch_wheel: bool,
+    /// Clock of the last `touch_tick` (settle passes share their tick's clock).
+    touch_clock: Option<f64>,
+    /// Gestures recognised this tick, per window (`VisualView::gestures`).
+    gestures: VecMap<WindowId, Vec<crate::types::gesture::Gesture>>,
     /// Debug-only phase order assertions (design §4.2 `PhaseClock`).
     clock: PhaseClock,
     /// F12 inspector (feature `inspector`).
     #[cfg(feature = "inspector")]
     inspector: uzor::ui::inspector::Inspector,
+}
+
+/// What a touch sequence became once the recogniser decided.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TouchMode {
+    /// No finger down.
+    Idle,
+    /// The finger is down inside the slop: the press is delivered (pressed look),
+    /// lifting now clicks.
+    Press,
+    /// The finger left the slop over content that does not drag: the press was
+    /// cancelled and the motion scrolls (pixel wheel steps), then flings.
+    Scroll,
+    /// The finger left the slop on a drag-capturing widget (slider, splitter, text
+    /// selection, a layout zone): it keeps driving the pointer.
+    Drag,
+    /// A long-press fired (delivered as a secondary click); the rest is ignored.
+    Held,
+    /// Two fingers: pan scrolls, pinch is reported.
+    Multi,
 }
 
 impl<S: Spec> Kernel<S> {
@@ -159,6 +193,13 @@ impl<S: Spec> Kernel<S> {
             trace: Vec::new(),
             trace_max: 0,
             touches: Vec::new(),
+            gesture: Default::default(),
+            touch_mode: TouchMode::Idle,
+            touch_win: None,
+            fling: None,
+            touch_wheel: false,
+            touch_clock: None,
+            gestures: VecMap::new(),
             clock: PhaseClock::new(),
             #[cfg(feature = "inspector")]
             inspector: Default::default(),

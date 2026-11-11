@@ -21,13 +21,14 @@ use crate::types::ops::{
 use crate::types::spec::Spec;
 use crate::types::window::WindowCommand;
 
-use super::Kernel;
+use super::{Kernel, TouchMode};
 
 impl<S: Spec> Kernel<S> {
     /// Phase 3 — route every non-lifecycle event of the tick, in order.
     /// Each event starts a fresh `RouteTrace`; the longest one is kept for
     /// the hop-count assertion (design §4.4).
     pub(super) fn route(&mut self, now: Seconds, inputs: &mut Vec<InputEnvelope>) {
+        self.touch_tick(now);
         for env in inputs.drain(..) {
             self.trace.clear();
             let win = env.window;
@@ -55,59 +56,209 @@ impl<S: Spec> Kernel<S> {
         }
     }
 
-    /// Touch: the first contact drives the primary pointer (press, move,
-    /// release: taps click, drags drag); while a second contact is down the
-    /// contacts' mean motion scrolls as pixel wheel deltas (two-finger pan).
+    /// Touch (design: one recogniser, platform feel). The first finger presses at
+    /// once (pressed look, a tap clicks on lift). When it leaves the 8 px slop:
+    /// - on a widget that captured the drag (slider, splitter, text selection) or a
+    ///   layout zone, it keeps dragging the pointer;
+    /// - anywhere else the press is cancelled (no click) and the motion scrolls
+    ///   1:1 as pixel wheel steps marked as touch; on lift a fast finger flings
+    ///   (`types::gesture::Fling`, stepped every tick in `touch_tick`).
+    /// Holding still for 0.5 s is a long-press: the press is cancelled and a
+    /// secondary click is delivered (context menus open as on a right click).
+    /// A second finger cancels the press; the fingers' mean motion scrolls and
+    /// the pinch is reported. Every recognised gesture (tap, long-press, pan,
+    /// edge pan, swipe, pinch) is in `VisualView::gestures` for this tick.
     fn route_touch(&mut self, now: Seconds, win: WindowId, t: crate::types::bus::TouchInput) {
-        use crate::types::bus::{TouchInput as T, WheelDelta, WheelInput};
+        use crate::types::bus::TouchInput as T;
+        use crate::types::gesture::Gesture;
         let mods = uzor::input::ModifierKeys::default();
         let mean = |v: &[(u64, crate::types::window::Point)]| {
             let n = v.len().max(1) as f64;
             crate::types::window::Point::new(v.iter().map(|c| c.1.x).sum::<f64>() / n, v.iter().map(|c| c.1.y).sum::<f64>() / n)
         };
+        let ts = now.get();
         match t {
             T::Start { id, pos } => {
-                self.touches.push((id, pos));
-                if self.touches.len() == 1 {
+                if self.touches.is_empty() {
+                    // A finger on a flinging list stops it (and that touch does not click).
+                    let stopped = self.fling.take().is_some();
+                    if let Some(vp) = self.windows.view().window(win).map(|w| w.geometry().viewport) {
+                        self.gesture.set_viewport(vp.x + vp.width, vp.y + vp.height);
+                    }
+                    self.touch_win = Some(win);
+                    let g = self.gesture.start(id, pos, ts);
+                    self.touches.push((id, pos));
+                    self.push_gestures(win, g);
                     self.route_pointer(now, win, PointerInput::Moved { pos, mods });
-                    self.route_pointer(now, win, PointerInput::Down { pos, button: MouseButton::Left, mods });
-                } else if self.touches.len() == 2 {
-                    // A pan, not a drag: release the primary without a click.
-                    self.route_pointer(now, win, PointerInput::Cancelled);
+                    if stopped {
+                        self.touch_mode = TouchMode::Held;
+                    } else {
+                        self.touch_mode = TouchMode::Press;
+                        self.route_pointer(now, win, PointerInput::Down { pos, button: MouseButton::Left, mods });
+                    }
+                } else {
+                    let g = self.gesture.start(id, pos, ts);
+                    self.touches.push((id, pos));
+                    self.push_gestures(win, g);
+                    if self.touches.len() == 2 {
+                        // A pan, not a drag: release the primary without a click.
+                        if matches!(self.touch_mode, TouchMode::Press | TouchMode::Drag) {
+                            self.route_pointer(now, win, PointerInput::Cancelled);
+                        }
+                        self.touch_mode = TouchMode::Multi;
+                    }
                 }
             }
             T::Move { id, pos } => {
                 let before = mean(&self.touches);
                 let primary = self.touches.first().map(|c| c.0) == Some(id);
+                let prev = self.touches.iter().find(|c| c.0 == id).map(|c| c.1);
                 if let Some(c) = self.touches.iter_mut().find(|c| c.0 == id) {
                     c.1 = pos;
                 }
-                if self.touches.len() >= 2 {
-                    let after = mean(&self.touches);
-                    let (dx, dy) = (after.x - before.x, after.y - before.y);
-                    if dx != 0.0 || dy != 0.0 {
-                        self.route_wheel(now, win, WheelInput { pos: after, delta: WheelDelta::Pixels { x: dx, y: dy }, mods });
+                let g = self.gesture.moved(id, pos, ts);
+                let pan_started = g.iter().any(|e| matches!(e, Gesture::PanStart { .. }));
+                self.push_gestures(win, g);
+                match self.touch_mode {
+                    TouchMode::Multi => {
+                        let after = mean(&self.touches);
+                        let (dx, dy) = (after.x - before.x, after.y - before.y);
+                        if dx != 0.0 || dy != 0.0 {
+                            self.touch_scroll(now, win, after, dx, dy);
+                        }
                     }
-                } else if primary {
-                    self.route_pointer(now, win, PointerInput::Moved { pos, mods });
+                    TouchMode::Press if primary => {
+                        // Inside the slop the press follows the finger (drag-sensitive
+                        // widgets arm and may capture here).
+                        self.route_pointer(now, win, PointerInput::Moved { pos, mods });
+                        if pan_started {
+                            let captured = self.input.view().capture(win).is_some();
+                            let text_drag = self
+                                .input
+                                .view()
+                                .coordinator(win)
+                                .is_some_and(|c| c.text_fields().drag_active());
+                            if captured || text_drag {
+                                self.touch_mode = TouchMode::Drag;
+                            } else {
+                                self.route_pointer(now, win, PointerInput::Cancelled);
+                                self.touch_mode = TouchMode::Scroll;
+                            }
+                        }
+                    }
+                    TouchMode::Scroll if primary => {
+                        if let Some(p) = prev {
+                            let (dx, dy) = (pos.x - p.x, pos.y - p.y);
+                            if dx != 0.0 || dy != 0.0 {
+                                self.touch_scroll(now, win, pos, dx, dy);
+                            }
+                        }
+                    }
+                    TouchMode::Drag if primary => {
+                        self.route_pointer(now, win, PointerInput::Moved { pos, mods });
+                    }
+                    _ => {}
                 }
             }
             T::End { id, pos } => {
-                let n = self.touches.len();
                 let primary = self.touches.first().map(|c| c.0) == Some(id);
                 self.touches.retain(|c| c.0 != id);
-                if n == 1 && primary {
-                    self.route_pointer(now, win, PointerInput::Up { pos, button: MouseButton::Left, mods });
+                let g = self.gesture.end(id, pos, ts);
+                let release = g.iter().find_map(|e| match e {
+                    Gesture::PanEnd { velocity, .. } => Some(*velocity),
+                    _ => None,
+                });
+                self.push_gestures(win, g);
+                match self.touch_mode {
+                    TouchMode::Press | TouchMode::Drag if primary => {
+                        self.route_pointer(now, win, PointerInput::Moved { pos, mods });
+                        self.route_pointer(now, win, PointerInput::Up { pos, button: MouseButton::Left, mods });
+                    }
+                    TouchMode::Scroll if primary => {
+                        if let Some(v) = release {
+                            self.fling = crate::types::gesture::Fling::new(v, ts, self.gesture.config()).map(|f| (win, pos, f));
+                        }
+                    }
+                    _ => {}
+                }
+                if self.touches.is_empty() {
+                    self.touch_mode = TouchMode::Idle;
+                    self.touch_win = None;
                 }
             }
             T::Cancel { id } => {
-                let n = self.touches.len();
                 self.touches.retain(|c| c.0 != id);
-                if n == 1 {
+                let g = self.gesture.cancel(id);
+                self.push_gestures(win, g);
+                if matches!(self.touch_mode, TouchMode::Press | TouchMode::Drag) {
                     self.route_pointer(now, win, PointerInput::Cancelled);
+                }
+                if self.touches.is_empty() {
+                    self.touch_mode = TouchMode::Idle;
+                    self.touch_win = None;
+                } else {
+                    self.touch_mode = TouchMode::Held;
                 }
             }
         }
+    }
+
+    /// Clock-driven touch work, run at the start of every route phase: the
+    /// long-press deadline and one fling step.
+    pub(super) fn touch_tick(&mut self, now: Seconds) {
+        // Settle passes of the same tick re-run the route phase with the same
+        // clock: the fling steps once per tick.
+        if self.touch_clock == Some(now.get()) {
+            return;
+        }
+        self.touch_clock = Some(now.get());
+        if let (Some(win), Some(g)) = (self.touch_win, self.gesture.poll(now.get())) {
+            self.push_gestures(win, vec![g]);
+            if self.touch_mode == TouchMode::Press {
+                // A long-press is the touch context request: drop the press (no
+                // click) and report a context point where the finger rests, as a
+                // secondary click does, so context menus open.
+                let pos = match g {
+                    crate::types::gesture::Gesture::LongPress { pos } => pos,
+                    _ => return,
+                };
+                self.route_pointer(now, win, PointerInput::Cancelled);
+                let fx = self.input.apply(InputOp::Context { win, pos });
+                self.conduct_input(now, fx);
+                self.invalidate(win, None, InvalidateBits::MATERIAL);
+                self.touch_mode = TouchMode::Held;
+            }
+        }
+        if let Some((win, pos, mut f)) = self.fling.take() {
+            if let Some((dx, dy)) = f.step(now.get()) {
+                if dx != 0.0 || dy != 0.0 {
+                    self.touch_scroll(now, win, pos, dx, dy);
+                }
+                self.fling = Some((win, pos, f));
+            }
+        }
+    }
+
+    /// One finger-driven scroll step: content follows the finger (finger down =
+    /// content down = positive wheel y, winit's sign).
+    fn touch_scroll(&mut self, now: Seconds, win: WindowId, pos: crate::types::window::Point, dx: f64, dy: f64) {
+        use crate::types::bus::{WheelDelta, WheelInput};
+        self.touch_wheel = true;
+        self.route_wheel(now, win, WheelInput { pos, delta: WheelDelta::Pixels { x: dx, y: dy }, mods: Default::default() });
+        self.touch_wheel = false;
+    }
+
+    fn push_gestures(&mut self, win: WindowId, g: Vec<crate::types::gesture::Gesture>) {
+        if g.is_empty() {
+            return;
+        }
+        match self.gestures.get_mut(&win) {
+            Some(v) => v.extend(g),
+            None => {
+                self.gestures.insert(win, g);
+            }
+        }
+        self.invalidate(win, None, InvalidateBits::MATERIAL);
     }
 
     /// Pointer precedence (§4.3): cook -> capture -> overlay intercept ->
@@ -300,7 +451,7 @@ impl<S: Spec> Kernel<S> {
         match self.input.view().capture(win).cloned() {
             Some(Capture::Widget(_)) => {
                 self.trace_push("capture:widget");
-                let fx = self.input.apply(InputOp::Wheel { win, input });
+                let fx = self.input.apply(InputOp::Wheel { win, input, touch: self.touch_wheel });
                 self.conduct_wheel_content(now, win, input, fx);
             }
             Some(Capture::Engine(EngineTarget::Layout)) => {
@@ -328,7 +479,7 @@ impl<S: Spec> Kernel<S> {
                     Some(PointerRoute::Consumed) => self.trace_push("overlay:consumed"),
                     Some(PointerRoute::Overlay { .. }) | Some(PointerRoute::Pass) | None => {
                         self.trace_push("content");
-                        let fx = self.input.apply(InputOp::Wheel { win, input });
+                        let fx = self.input.apply(InputOp::Wheel { win, input, touch: self.touch_wheel });
                         self.conduct_wheel_content(now, win, input, fx);
                     }
                 }

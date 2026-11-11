@@ -50,7 +50,11 @@ impl<S: Spec> Kernel<S> {
         let window_commands = self.windows.drain();
         let surfaces = self.windows.view().surfaces();
         let background = clear_color(self.windows.view().tokens());
-        let animating = !self.anim.view().animating_windows().is_empty();
+        // A fling steps every frame; a finger inside the slop needs ticks to reach its
+        // long-press deadline.
+        let animating = !self.anim.view().animating_windows().is_empty()
+            || self.fling.is_some()
+            || self.gesture.deadline().is_some();
         let tick_view = CadenceTickView::new(&surfaces, background, animating);
         let frames = self.cadence.frames(now, &tick_view);
         let wake = self.cadence.next_wake(now, &tick_view);

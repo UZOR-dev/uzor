@@ -220,6 +220,8 @@ struct PointerAccum {
     scroll: (f64, f64),
     /// The scroll came (at least partly) as pixel deltas (trackpad / smooth wheel).
     scroll_precise: bool,
+    /// The scroll came from a touch pan or its fling.
+    scroll_touch: bool,
 }
 
 /// The focus the engine restores when a scope closes.
@@ -1172,6 +1174,7 @@ impl PerWindowInput {
         state.modifiers = self.pointer.mods;
         state.scroll_delta = std::mem::take(&mut self.pointer.scroll);
         self.pointer.scroll_precise = false;
+        self.pointer.scroll_touch = false;
         self.pointer.context = None;
         state.time = now.get();
         self.pointer.prev_pos = self.pointer.pos;
@@ -1715,8 +1718,9 @@ impl InputEngine {
                 }
                 None => false,
             },
-            InputOp::Wheel { win, input } => {
+            InputOp::Wheel { win, input, touch } => {
                 if let Some(w) = windows.get_mut(&win) {
+                    w.pointer.scroll_touch |= touch;
                     let target = w.wheel(input);
                     let changed = target.is_some();
                     fx.push(InputEffect::Content { win, target, changed });
@@ -1734,6 +1738,13 @@ impl InputEngine {
                 Some(w) => {
                     w.ime(win, input, &mut fx);
                     w.settle(win, now, &mut fx)
+                }
+                None => false,
+            },
+            InputOp::Context { win, pos } => match windows.get_mut(&win) {
+                Some(w) => {
+                    w.pointer.context = Some((pos.x, pos.y));
+                    true
                 }
                 None => false,
             },
@@ -1969,6 +1980,11 @@ impl<'a> InputEngineView<'a> {
     /// smooth wheel): scroll containers then follow 1:1 and fling on release.
     pub fn pending_scroll_precise(&self, win: WindowId) -> bool {
         self.w(win).is_some_and(|w| w.pointer.scroll_precise)
+    }
+
+    /// The pending scroll came from a touch pan or fling.
+    pub fn pending_scroll_touch(&self, win: WindowId) -> bool {
+        self.w(win).is_some_and(|w| w.pointer.scroll_touch)
     }
 
     /// Last pointer position in window coordinates and whether a button is

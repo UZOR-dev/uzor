@@ -100,6 +100,10 @@ struct TestApp {
     /// A scroll container (viewport, content height) and the key step queued for it.
     scroller: Option<(Rect, f64, crate::ScrollView)>,
     scroll_key: Option<crate::ScrollKey>,
+    /// Gestures the panel hook observed through `VisualView::gestures`.
+    seen_gestures: Vec<crate::types::gesture::Gesture>,
+    /// Context (secondary) clicks the panel hook observed.
+    seen_context: Vec<(f64, f64)>,
 }
 
 impl App for TestApp {
@@ -158,6 +162,8 @@ impl App for TestApp {
             crate::widgets::scroll_end(cx, "list", *vp, sv, &st);
         }
         self.seen_clicks.extend(cx.view.clicks().iter().cloned());
+        self.seen_gestures.extend(cx.view.gestures().iter().copied());
+        self.seen_context.extend(cx.view.context_click());
         if self.request_frame {
             cx.out.request_frame();
         }
@@ -1338,6 +1344,126 @@ fn touch_tap_clicks_content() {
     h.advance(0.017);
     let app = h.runtime().app();
     assert!(app.seen_clicks.iter().any(|(id, _)| *id == wid("btn")), "tap did not click: {:?}", app.seen_clicks);
+}
+
+/// A finger pan over a scroller scrolls it 1:1 past the slop, never clicks the
+/// button it started on, and a fast release flings on after the finger is gone.
+#[test]
+fn touch_pan_scrolls_without_clicking_and_flings() {
+    use crate::types::bus::TouchInput;
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    h.runtime_mut().app_mut().scroller = Some((Rect::new(0.0, 0.0, 400.0, 300.0), 3000.0, crate::ScrollView::default()));
+    h.runtime_mut().app_mut().panel_widgets.push((wid("row"), Rect::new(10.0, 150.0, 300.0, 40.0), Sense::CLICK));
+    h.runtime_mut().app_mut().request_frame = true;
+    h.advance(0.017);
+    let off = |h: &Host<TS, TestApp>| h.runtime().app().scroller.as_ref().unwrap().2.offset;
+    h.input(win, InputEvent::Touch(TouchInput::Start { id: 1, pos: Point::new(100.0, 250.0) }));
+    h.advance(0.008);
+    // Up 10 px per frame (~590 px/s): content follows the finger upwards.
+    let mut y = 250.0;
+    for _ in 0..15 {
+        y -= 10.0;
+        h.input(win, InputEvent::Touch(TouchInput::Move { id: 1, pos: Point::new(100.0, y) }));
+        h.advance(0.017);
+    }
+    let at_lift = off(&h);
+    // 150 px of finger travel; the 10 px that crossed the slop does not scroll.
+    assert!((at_lift - 140.0).abs() < 1.0, "1:1 after the slop: {at_lift}");
+    h.input(win, InputEvent::Touch(TouchInput::End { id: 1, pos: Point::new(100.0, y) }));
+    for _ in 0..30 {
+        h.advance(0.016);
+    }
+    let after = off(&h);
+    assert!(after > at_lift + 100.0, "fling carried on: {at_lift} -> {after}");
+    let app = h.runtime().app();
+    assert!(!app.seen_clicks.iter().any(|(id, _)| *id == wid("row")), "a pan never clicks: {:?}", app.seen_clicks);
+    assert!(app.seen_gestures.iter().any(|g| matches!(g, crate::types::gesture::Gesture::PanStart { axis: crate::types::gesture::Axis::Vertical, .. })));
+    // A finger on the flinging list stops it, and that touch does not click.
+    h.input(win, InputEvent::Touch(TouchInput::Start { id: 2, pos: Point::new(100.0, 170.0) }));
+    h.advance(0.017);
+    h.advance(0.017);
+    let stopped = off(&h);
+    h.input(win, InputEvent::Touch(TouchInput::End { id: 2, pos: Point::new(100.0, 170.0) }));
+    for _ in 0..10 {
+        h.advance(0.016);
+    }
+    assert!((off(&h) - stopped).abs() < 0.5, "stays where the finger stopped it");
+    assert!(!h.runtime().app().seen_clicks.iter().any(|(id, _)| *id == wid("row")));
+}
+
+/// A finger that rests before lifting does not fling (no drift under a held finger).
+#[test]
+fn touch_pan_that_rests_does_not_fling() {
+    use crate::types::bus::TouchInput;
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    h.runtime_mut().app_mut().scroller = Some((Rect::new(0.0, 0.0, 400.0, 300.0), 3000.0, crate::ScrollView::default()));
+    h.runtime_mut().app_mut().request_frame = true;
+    h.advance(0.017);
+    let off = |h: &Host<TS, TestApp>| h.runtime().app().scroller.as_ref().unwrap().2.offset;
+    h.input(win, InputEvent::Touch(TouchInput::Start { id: 1, pos: Point::new(100.0, 250.0) }));
+    h.advance(0.008);
+    let mut y = 250.0;
+    for _ in 0..10 {
+        y -= 10.0;
+        h.input(win, InputEvent::Touch(TouchInput::Move { id: 1, pos: Point::new(100.0, y) }));
+        h.advance(0.008);
+    }
+    for _ in 0..20 {
+        h.advance(0.016);
+    }
+    let held = off(&h);
+    h.input(win, InputEvent::Touch(TouchInput::End { id: 1, pos: Point::new(100.0, y) }));
+    for _ in 0..30 {
+        h.advance(0.016);
+    }
+    assert!((off(&h) - held).abs() < 0.5, "rested finger: {held} -> {}", off(&h));
+}
+
+/// Holding a finger still is a long-press: no left click, a context click at the finger.
+#[test]
+fn touch_long_press_is_a_context_click() {
+    use crate::types::bus::TouchInput;
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    h.runtime_mut().app_mut().panel_widgets.push((wid("btn"), Rect::new(10.0, 100.0, 60.0, 24.0), Sense::CLICK));
+    h.advance(0.017);
+    h.input(win, InputEvent::Touch(TouchInput::Start { id: 3, pos: Point::new(20.0, 112.0) }));
+    for _ in 0..40 {
+        h.advance(0.016);
+    }
+    h.input(win, InputEvent::Touch(TouchInput::End { id: 3, pos: Point::new(20.0, 112.0) }));
+    h.advance(0.016);
+    h.advance(0.016);
+    let app = h.runtime().app();
+    assert!(app.seen_gestures.iter().any(|g| matches!(g, crate::types::gesture::Gesture::LongPress { .. })), "{:?}", app.seen_gestures);
+    assert!(!app.seen_clicks.iter().any(|(id, _)| *id == wid("btn")), "a long-press never activates the widget");
+    assert_eq!(app.seen_context.first().copied(), Some((20.0, 112.0)));
+}
+
+/// A drag-sensitive widget keeps the finger: the drag drives it, nothing scrolls.
+#[test]
+fn touch_drag_on_a_drag_widget_drags_instead_of_scrolling() {
+    use crate::types::bus::TouchInput;
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    h.runtime_mut().app_mut().scroller = Some((Rect::new(0.0, 0.0, 400.0, 300.0), 3000.0, crate::ScrollView::default()));
+    h.runtime_mut().app_mut().panel_widgets.push((wid("slider"), Rect::new(10.0, 100.0, 300.0, 40.0), Sense::DRAG));
+    h.runtime_mut().app_mut().request_frame = true;
+    h.advance(0.017);
+    let off = |h: &Host<TS, TestApp>| h.runtime().app().scroller.as_ref().unwrap().2.offset;
+    h.input(win, InputEvent::Touch(TouchInput::Start { id: 1, pos: Point::new(50.0, 120.0) }));
+    h.advance(0.016);
+    for i in 1..=10 {
+        h.input(win, InputEvent::Touch(TouchInput::Move { id: 1, pos: Point::new(50.0 + i as f64 * 10.0, 120.0 - i as f64 * 3.0) }));
+        h.advance(0.016);
+    }
+    let captured = h.snapshot().windows[0].input.captured;
+    h.input(win, InputEvent::Touch(TouchInput::End { id: 1, pos: Point::new(150.0, 90.0) }));
+    h.advance(0.016);
+    assert!(captured, "the drag widget captured the finger");
+    assert!(off(&h).abs() < 0.5, "nothing scrolled: {}", off(&h));
 }
 
 /// F12 belongs to the inspector: it never reaches the app as an unhandled key.
