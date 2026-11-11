@@ -2,6 +2,50 @@
 
 All crates in the workspace share one version.
 
+## 1.5.30
+
+### Mobile shell kit (`uzor::ui::mobile`)
+
+- New DOM kit for phone layouts with one stylesheet, `MOBILE_CSS` (monochrome; only the small
+  status dots are coloured; only overlays use glass). `sheet_with(app_css)` stacks it on the
+  kit and touch sheets.
+- Builders: `tab_bar` (badges and dots), `large_title`, `top_bar` (back, title, subtitle,
+  actions), `drawer` (edge-swipe, with progress), `side_rail`, `fab` and `action_modal`,
+  `bottom_sheet` (peek, half and full detents), `swipe_row` (left and right actions),
+  `toast`, `segmented`, `composer`, `hero`, `quick_actions` and `kv_group` for agent cards.
+- Motion state with no clock of its own: `SheetState` (drag, fling and snap to a detent),
+  `DrawerState`, `SwipeState`, and `approach` for frame-rate independent easing.
+- `composer_bottom` and `reveal_above` place a composer over the soft keyboard and lift a
+  focused field above it.
+
+### CSS units (`uzor`)
+
+- `vh`, `vw`, `vmin`, `vmax` and `rem` lengths resolve against the media environment.
+
+### Mobile drivers (`uzor-framework::widgets::mobile`)
+
+- `DragTracker` turns touch pans and mouse drags into one `Drag` stream for a target rect or a
+  screen edge, and swallows the click after a mouse drag. `drive_sheet`, `drive_drawer` and
+  `drive_swipe` feed it into the kit states; `composer_rect` and `reveal_field` follow the
+  keyboard inset.
+- A touch drag that starts on a text field scrolls the view instead of selecting text.
+- Web host: keyboard height comes from `visualViewport`, and safe-area insets from `env()`;
+  both reach the app as `Insets` on resize and viewport scroll.
+
+### Touch and mobile platform (`uzor`, `uzor-framework`)
+
+- Suspend and resume survive on Android and iOS.
+- Touch gesture recogniser with release velocity and fling; one-finger scroll, fling,
+  long-press and gestures on touch.
+- CSS `@media` and `env()` evaluated against a media environment; safe-area and soft-keyboard
+  insets and coarse pointer in the view; touch-sized kit targets under `pointer: coarse`.
+- `native-lean` feature with only the backends a phone needs.
+
+### New crates
+
+- `uzor-window-mobile`: the thin mobile layer over `uzor-framework`.
+- `uzor-secure`: platform secure-store trait with a fail-closed unlock gate.
+
 ## 1.5.29
 
 ### Android native host (`uzor-framework`)
