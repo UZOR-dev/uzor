@@ -37,6 +37,11 @@ path = "src/bin/dom_gallery_frames.rs"
 required-features = ["png"]
 
 [[bin]]
+name = "mobile-gallery-frames"
+path = "src/bin/mobile_gallery_frames.rs"
+required-features = ["png"]
+
+[[bin]]
 name = "dom-widgets-frames"
 path = "src/bin/dom_widgets_frames.rs"
 required-features = ["png"]
