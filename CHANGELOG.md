@@ -2,6 +2,26 @@
 
 All crates in the workspace share one version.
 
+## 1.5.41
+
+### Plot math (`uzor-plot`)
+
+- New crate: nice-step ticks, label precision and culling; a value axis
+  (linear, log, percent, indexed) with auto-range, zoom and pan; a slot
+  viewport with kinetic panning; a calendar-aware time scale; and a
+  crosshair model with magnet snapping. No rendering, no DOM; optional
+  `serde`. Not in `default-members`; nothing in the workspace depends on
+  it yet, so HQ is unchanged.
+- Degenerate input (zero or sub-pixel lengths, `NaN`, infinite or swapped
+  limits, a zero step, huge spans, extreme calendar values) does not panic.
+  Tick grids that would need more than 10 000 steps return no ticks
+  (`MAX_TICKS`). Overscan is dropped on an axis shorter than 1 px
+  (`MIN_AXIS_PX`). `format_fixed` caps decimals at 64. Calendar conversion
+  is closed-form and saturates to a documented year window; `generate_ticks`
+  bounds walked ranges and viewport size.
+- Tests, including a public-API sweep over extreme inputs; examples
+  `axis_ticks`, `value_axis`, `time_axis`. Builds for `wasm32-unknown-unknown`.
+
 ## 1.5.40
 
 ### DOM toolbar (`uzor`, `uzor-framework`)
