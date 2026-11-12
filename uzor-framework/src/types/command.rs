@@ -211,6 +211,45 @@ pub enum WindowCmd {
         /// Requested mode.
         mode: CursorMode,
     },
+    /// The app's own cursor over content: `Some` holds it over every pointer move
+    /// that no layout zone (chrome, splitter, bezel) claims, until `None` hands the
+    /// cursor back to the widget under the pointer. For an app that draws its own
+    /// surface (one custom widget, a canvas) and knows what is under the pointer.
+    /// Off until the app sends it.
+    SetCursor {
+        /// Target window.
+        win: WindowId,
+        /// The icon, `None` = the framework decides again.
+        icon: Option<uzor::CursorIcon>,
+    },
+    /// Show or hide the cursor over the window.
+    SetCursorVisible {
+        /// Target window.
+        win: WindowId,
+        /// `false` hides it.
+        visible: bool,
+    },
+    /// Which pointer events over content no widget takes reach the app as
+    /// `UnhandledInput::Pointer`: by default only presses; `all: true` adds moves,
+    /// releases and leaves, so an app that hit-tests its own surface (a canvas, a
+    /// hosted legacy UI) sees the whole stream. Off until the app sends it.
+    UnhandledPointer {
+        /// Target window.
+        win: WindowId,
+        /// `true` = every event, `false` = presses only (the default).
+        all: bool,
+    },
+    /// Start an OS window move from the app's own chrome (send it on the press that
+    /// should drag, as a frameless window's title strip does). The host ends it when
+    /// the button goes up.
+    DragMove(WindowId),
+    /// Start an OS window resize from the app's own edge or corner (on the press).
+    DragResize {
+        /// Target window.
+        win: WindowId,
+        /// The edge or corner being dragged.
+        dir: uzor::ResizeDirection,
+    },
 }
 
 /// App-wide visual palette commands; applied by the WindowEngine (the one

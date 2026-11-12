@@ -469,7 +469,8 @@ impl<S: Spec> Kernel<S> {
 
     /// Content delivery answer: `None` on a press is routing step 6
     /// (reported, never dropped silently); anything else is quiet
-    /// (a `Moved` over nothing is not an event worth an intent).
+    /// (a `Moved` over nothing is not an event worth an intent) unless the app
+    /// asked for the whole stream (`WindowCmd::UnhandledPointer { all: true }`).
     fn conduct_routed_content(
         &mut self,
         now: Seconds,
@@ -494,7 +495,8 @@ impl<S: Spec> Kernel<S> {
         );
         // `Some(None)` = the engine answered "delivered to no widget"
         // (routing step 6); a missing Content effect is not a report.
-        if matches!(target, Some(None)) && matches!(input, PointerInput::Down { .. }) {
+        let all = || self.windows.view().window(win).is_some_and(|w| w.unhandled_pointer_all());
+        if matches!(target, Some(None)) && (matches!(input, PointerInput::Down { .. }) || all()) {
             self.outbox
                 .intents
                 .push(Intent::Unhandled(UnhandledInput::Pointer {
@@ -743,9 +745,12 @@ impl<S: Spec> Kernel<S> {
 
     fn update_cursor(&mut self, now: Seconds, win: WindowId, hit: &LayoutHit, pos: crate::types::window::Point) {
         // Layout zones decide first; over content the widget under the pointer does.
-        let icon = match hit.cursor() {
-            Some(i) => i,
-            None => self.input.view().coordinator(win).map_or(CursorIcon::Default, |c| content_cursor(c, pos)),
+        let app = self.windows.view().window(win).and_then(|w| w.app_cursor());
+        let icon = match (hit.cursor(), app) {
+            (Some(i), _) => i,
+            // The app holds the cursor over content (`WindowCmd::SetCursor`).
+            (None, Some(i)) => i,
+            (None, None) => self.input.view().coordinator(win).map_or(CursorIcon::Default, |c| content_cursor(c, pos)),
         };
         let current = self.windows.view().window(win).map(|w| w.cursor());
         if current != Some(icon) {
