@@ -234,6 +234,10 @@ name = "dom_toolbar"
 required-features = ["native"]
 
 [[example]]
+name = "dom_chart_icons"
+required-features = ["native"]
+
+[[example]]
 name = "dom_shadow_offset"
 required-features = ["native"]
 

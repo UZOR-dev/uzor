@@ -974,3 +974,19 @@ fn dom_toolbar_reports_tools_chevrons_and_hover() {
     let a11y = r.dom.a11y();
     assert!(a11y.iter().any(|n| n.id == "dtb:line:menu" && n.name == "Lines: more"));
 }
+
+#[test]
+fn dom_chart_icon_gallery_lays_out_every_icon() {
+    use uzor::ui::assets::icons::chart;
+    let sheet = uzor::ui::style::Sheet::parse("div.g { display: flex; flex-wrap: wrap; width: 320px } span.i { width: 24px; height: 24px; margin: 4px }").expect("css");
+    let mut g = uzor::ui::dom::El::new("div.g");
+    for (name, svg) in chart::ALL {
+        g = g.child(uzor::ui::dom::El::new("span.i").id(format!("icon:{name}")).name(*name).svg(*svg));
+    }
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let r = h.frame(&idle(), |cx| dom(Rect::new(0.0, 0.0, 320.0, 800.0), &sheet, g).build(cx));
+    assert_eq!(r.dom.hits().count(), chart::ALL.len());
+    let renko = r.dom.rect("icon:renko").expect("renko");
+    assert_eq!((renko.width, renko.height), (24.0, 24.0));
+    assert!(r.dom.hits().all(|(_, b)| b.x + b.width <= 320.0), "wrapped inside the gallery");
+}

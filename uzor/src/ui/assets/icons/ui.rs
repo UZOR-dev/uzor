@@ -1142,6 +1142,116 @@ pub const ICON_CHAT_BUBBLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" v
 /// Replace layout icon — bold geometric letter "R"
 pub const ICON_LAYOUT_REPLACE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h7.5a5.5 5.5 0 0 1 1.5 10.78L19.5 20h-3.7l-4-5H9.5v5H6V4zm3.5 3v5H13a2.5 2.5 0 0 0 0-5H9.5z"/></svg>"##;
 
+// =============================================================================
+// App / panel icons (mylittlechart)
+// =============================================================================
+
+/// Terminal prompt icon (lucide `terminal`) — agents PTY mode.
+pub const ICON_AGENT_TERMINAL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>"##;
+
+/// Chunky ring + 8 stub teeth — reads best at the smallest sizes.
+pub const ICON_SETTINGS_CHUNKY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+  <circle cx="12" cy="12" r="6.5" stroke-width="3"/>
+  <g stroke-width="2.4"><line x1="20.2" y1="12" x2="22.4" y2="12"/><line x1="3.8" y1="12" x2="1.6" y2="12"/><line x1="12" y1="20.2" x2="12" y2="22.4"/><line x1="12" y1="3.8" x2="12" y2="1.6"/><line x1="17.8" y1="17.8" x2="19.35" y2="19.35"/><line x1="6.2" y1="6.2" x2="4.65" y2="4.65"/><line x1="17.8" y1="6.2" x2="19.35" y2="4.65"/><line x1="6.2" y1="17.8" x2="4.65" y2="19.35"/></g>
+</svg>"##;
+
+/// Soft 8-lobe outline (tabler geometry) — cleaner outline than feather.
+pub const ICON_SETTINGS_OUTLINE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z"/>
+  <circle cx="12" cy="12" r="3"/>
+</svg>"##;
+
+/// Industrial: thick ring + 8 wide teeth — solid cog.
+pub const ICON_SETTINGS_INDUSTRIAL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+  <circle cx="12" cy="12" r="6.25" stroke-width="3.375"/>
+  <g stroke-width="2.7"><line x1="20.3" y1="12" x2="22.6" y2="12"/><line x1="3.7" y1="12" x2="1.4" y2="12"/><line x1="12" y1="20.3" x2="12" y2="22.6"/><line x1="12" y1="3.7" x2="12" y2="1.4"/><line x1="17.87" y1="17.87" x2="19.5" y2="19.5"/><line x1="6.13" y1="6.13" x2="4.5" y2="4.5"/><line x1="17.87" y1="6.13" x2="19.5" y2="4.5"/><line x1="6.13" y1="17.87" x2="4.5" y2="19.5"/></g>
+</svg>"##;
+
+/// System event log glyph (Lucide "History" silhouette) — clock face plus a
+/// counter-clockwise sweep arrow, distinct from the plain `ICON_CLOCK` used
+/// by the timeframe selector / bottom clock.
+pub const ICON_HISTORY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+  <path d="M3 3v5h5"/>
+  <path d="M12 7v5l4 2"/>
+</svg>"##;
+
+/// Envelope glyph (Lucide "Mail" silhouette) — right-toolbar Community
+/// (Forum + Messages) button.
+pub const ICON_MAIL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect width="20" height="16" x="2" y="4" rx="2"/>
+  <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+</svg>"##;
+
+/// Camcorder: body plus the side lens. Not the photo camera (`ICON_SCREENSHOT`).
+pub const ICON_VIDEO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="6" width="13" height="12" rx="2"/>
+  <path d="M15 10.2l6.2-3.4a.5.5 0 0 1 .8.4v9.6a.5.5 0 0 1-.8.4L15 13.8z"/>
+</svg>"##;
+
+/// Camcorder while the live socket is being opened: three dots in the body.
+pub const ICON_VIDEO_CONNECTING: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="6" width="13" height="12" rx="2"/>
+  <path d="M15 10.2l6.2-3.4a.5.5 0 0 1 .8.4v9.6a.5.5 0 0 1-.8.4L15 13.8z"/>
+  <circle cx="5.6" cy="12" r="0.9" fill="currentColor" stroke="none"/>
+  <circle cx="8.5" cy="12" r="0.9" fill="currentColor" stroke="none"/>
+  <circle cx="11.4" cy="12" r="0.9" fill="currentColor" stroke="none"/>
+</svg>"##;
+
+/// Camcorder while this tab publishes: a filled record dot in the body.
+pub const ICON_VIDEO_LIVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="6" width="13" height="12" rx="2"/>
+  <path d="M15 10.2l6.2-3.4a.5.5 0 0 1 .8.4v9.6a.5.5 0 0 1-.8.4L15 13.8z"/>
+  <circle cx="8.5" cy="12" r="2.4" fill="currentColor" stroke="none"/>
+</svg>"##;
+
+/// Camcorder while this tab only receives: a play triangle in the body.
+pub const ICON_VIDEO_VIEWING: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="6" width="13" height="12" rx="2"/>
+  <path d="M15 10.2l6.2-3.4a.5.5 0 0 1 .8.4v9.6a.5.5 0 0 1-.8.4L15 13.8z"/>
+  <path d="M7 9.4v5.2l4.4-2.6z" fill="currentColor" stroke="none"/>
+</svg>"##;
+
+/// Camcorder with a slash: the live socket keeps failing.
+pub const ICON_VIDEO_ERROR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="6" width="13" height="12" rx="2"/>
+  <path d="M15 10.2l6.2-3.4a.5.5 0 0 1 .8.4v9.6a.5.5 0 0 1-.8.4L15 13.8z"/>
+  <path d="M3 3l18 18"/>
+</svg>"##;
+
+/// Bot (mylittlechart).
+pub const ICON_BOT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><line x1="12" y1="7" x2="12" y2="11"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>"##;
+
+/// Screener panel rail button — "SCR" text chip (plan F, owner spec
+/// 2026-08-01: `docs/mlc/plans/orderflow-panels-arc2-2026-08-01.md` §F).
+/// Same rect+stroked-letter-path chip grammar as the typed-slot text chips
+/// above (copied from `ICON_SLOT_LIQ`'s grammar) even though Screener is a
+/// plain sidebar panel, not a typed slot — provisional icon, owner will
+/// rename/re-icon later.
+pub const ICON_SCREENER: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 4h18l-7 8.5V18l-4 2.5v-8z" fill="currentColor" opacity="0.15" stroke="none"/>
+  <path d="M3 4h18l-7 8.5V18l-4 2.5v-8z"/>
+</svg>"##;
+
+/// Performance panel — gauge / speedometer, distinct from `Signal` (Zap bolt).
+/// The two used to collide (Performance reused `ICON_SIGNAL` before the
+/// typed-slot redesign 2026-07-11).
+pub const ICON_GAUGE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4.5 17a8 8 0 1 1 15 0"/>
+  <line x1="12" y1="13" x2="15.5" y2="9"/>
+  <line x1="12" y1="17" x2="12" y2="17.01"/>
+</svg>"##;
+
+/// Pushpin outline — same 24x24 stroke style as [`ICON_STAR`] et al. Used
+/// for the `timeframe_selector` dropdown's FAVORITES-header pin toggle
+/// (user-granularity-templates-inner arc, кусок 3 — defect fix 2026-07-16
+/// replaced the 📌 text glyph with this native SVG). Color alone conveys
+/// ON/OFF state (accent vs theme secondary) — no separate filled variant.
+pub const ICON_PIN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 17v5"/>
+  <path d="M8 3h8l-1 6 3 3v2H6v-2l3-3-1-6z"/>
+</svg>"##;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1150,6 +1260,21 @@ mod tests {
     #[test]
     fn root_stroke_width_stays_thin() {
         let icons: &[(&str, &str)] = &[
+            ("ICON_AGENT_TERMINAL", ICON_AGENT_TERMINAL),
+            ("ICON_SETTINGS_CHUNKY", ICON_SETTINGS_CHUNKY),
+            ("ICON_SETTINGS_OUTLINE", ICON_SETTINGS_OUTLINE),
+            ("ICON_SETTINGS_INDUSTRIAL", ICON_SETTINGS_INDUSTRIAL),
+            ("ICON_HISTORY", ICON_HISTORY),
+            ("ICON_MAIL", ICON_MAIL),
+            ("ICON_VIDEO", ICON_VIDEO),
+            ("ICON_VIDEO_CONNECTING", ICON_VIDEO_CONNECTING),
+            ("ICON_VIDEO_LIVE", ICON_VIDEO_LIVE),
+            ("ICON_VIDEO_VIEWING", ICON_VIDEO_VIEWING),
+            ("ICON_VIDEO_ERROR", ICON_VIDEO_ERROR),
+            ("ICON_BOT", ICON_BOT),
+            ("ICON_SCREENER", ICON_SCREENER),
+            ("ICON_GAUGE", ICON_GAUGE),
+            ("ICON_PIN", ICON_PIN),
             ("ICON_HOME", ICON_HOME),
             ("ICON_SERVER", ICON_SERVER),
             ("ICON_FILE_TEXT", ICON_FILE_TEXT),

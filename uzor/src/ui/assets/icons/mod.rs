@@ -13,6 +13,7 @@ pub mod weather;
 pub mod infrastructure;
 pub mod military;
 pub mod ui;
+pub mod chart;
 
 /// Shared assertion for the per-module `root_stroke_width_stays_thin` tests below
 /// and in `crate::ui::themes::macos::icons::paths` — every icon's root `<svg>`
