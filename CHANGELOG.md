@@ -2,6 +2,93 @@
 
 All crates in the workspace share one version.
 
+## 1.5.37
+
+### Paint slots take the mouse drag and the wheel (`uzor-framework`)
+
+- A paint slot (`El::paint_slot`, `kit::paint_slot`) is registered with
+  `CLICK_AND_DRAG` and `SCROLL` as well as its captured fingers. `SlotFrame` and
+  `SlotResponse` gain `pressed` (the held mouse pointer; fingers never set it) and
+  `wheel` (mouse-wheel / trackpad over the slot; a finger's scroll is not reported).
+- `SlotFrame` implements `Default` (`SlotFrame<'static>`), so struct update syntax
+  stays valid when fields are added. `SlotResponse` already derived `Default`.
+
+### DOM scroll containers (`uzor-framework`)
+
+- Opt in with `kit::DomBuilder::dom_scroll` (off by default). An element with an
+  id and `overflow: auto | scroll` in that tree is then a framework-owned scroll
+  container, as in a browser: wheel, touchpad with fling, finger, keyboard steps,
+  a draggable thumb and nested chaining, all through the existing `ScrollView`
+  and scroll chain (`begin_parts` / `end_parts`, shared with the panel). The
+  offset lives in the widget state store; the tree is laid out at the new
+  `scrollTop` the same frame. `DomResponse::scrolls` reports the offsets (empty
+  when the flag is off), `dom_scroll_to` and `dom_scroll_top` move and read them.
+  An element given a non-zero `scroll_top` by the app, and `overflow: hidden`,
+  stay the app's. HQ already scrolls its own `overflow: auto` boxes (`@body` and
+  the like), so the default leaves them alone.
+- `ContentCx` gains defaulted `frame_now_ms`, `request_frame` and `is_overlay`.
+  Example: `dom_scroll`.
+- `DomBuilder::build` runs the number pass and the scroll walks in one
+  non-generic function, so they are not copied for each content type. The number
+  pass is skipped when there are no number fields; the scroll walks run only
+  when `dom_scroll` is on.
+
+### DOM number fields (`uzor`, `uzor-framework`)
+
+- `domkit::NumberSpec` (range, step, decimals; `accepts` / `sanitize` / `parse` /
+  `clamp` / `format` / `stepped` / `normalized`; a decimal comma reads as a point)
+  and `domkit::number_input`: the existing kit text input (`input(id, edit)`) with
+  up / down steppers (`{id}:inc`, `{id}:dec`), styled in `KIT_CSS`, plus `icons::UP`.
+- `kit::dom(..).number(id, spec)` makes that DOM text input a number field: its
+  text-store field takes only what the spec accepts, the steppers, ArrowUp /
+  ArrowDown (with `DomBuilder::key`) and the wheel over the focused field step it
+  on the spec's grid, a paste keeps only the number, and blur clamps and formats
+  it. Changes come back in `DomResponse::edited`; `DomResponse::key_used` tells the
+  key was taken. Example: `dom_number`.
+
+### tiny-skia: skip glyphs at a far-off pen (`uzor-render-tiny-skia`)
+
+- A glyph whose pen is huge or non-finite no longer overflows the pixel cast (a
+  panic in debug builds). The row / column adds saturate, and a non-finite pen
+  draws nothing.
+
+### App-side window commands (`uzor-framework`)
+
+- `WindowCmd::SetCursor { win, icon }`: the app's cursor over content; it holds
+  over every pointer move no layout zone claims until `None` hands it back to the
+  widget under the pointer.
+- `WindowCmd::SetCursorVisible { win, visible }`.
+- `WindowCmd::DragMove(win)` / `WindowCmd::DragResize { win, dir }`: start an OS
+  move or resize from the app's own chrome (the host commands `DragWindow` /
+  `DragResizeWindow` already existed).
+- `WindowCmd::UnhandledPointer { win, all }`: opt-in, off by default. Only presses
+  no widget takes reach the app as `UnhandledInput::Pointer`; `all: true` adds
+  moves, releases and leaves.
+- `NativeClipboard::read_text()`: a synchronous text read on desktop (the web
+  has no synchronous read; paste arrives as `UnhandledInput::Paste`). Off until
+  the app calls it. Example: `app_chrome`.
+
+### DOM box-shadow x offset (`uzor`)
+
+- The DOM painter honours the x offset of `box-shadow` (`shadow_dx`, the first of
+  three lengths) in both the uniform and the per-side frame paths. `dialog::Shadow`
+  is unchanged (no new public field); the card widgets still ignore x. Nothing is
+  added unless a box has a shadow. Example: `dom_shadow_offset`.
+
+### DOM background-clip (`uzor`)
+
+- `Style::background_clip` (`background-clip` / `-webkit-background-clip`, not
+  inherited) and `Style::background_inset`. `padding-box` / `content-box` fill the
+  inset rect with CSS's inner radii (the same `inner_radii` `overflow: hidden`
+  clips to). Unset = `border-box`, the old path; nothing runs unless a sheet uses
+  the property. Example: `dom_background_clip`.
+
+### Mobile kit (`uzor`)
+
+- `action_modal` is opaque (`div.m-sheet.m-solid`, theme `--m-solid`) instead of
+  glass, so a bottom sheet under it does not show through. The bottom sheet,
+  drawer and toast stay glass.
+
 ## 1.5.36
 
 ### Custom-paint slots (`uzor`, `uzor-framework`)
