@@ -280,3 +280,140 @@ fn drawer_avatar_paints_inside_the_drawer() {
     let scrim = at(&|b| b.id.as_deref() == Some("dr:scrim"));
     assert!(scrim < panel && panel < av, "scrim {scrim}, panel {panel}, avatar {av}");
 }
+
+// ---- virtual list + search bar ----
+
+fn items() -> Vec<String> {
+    let mut v: Vec<String> = (0..480).map(|i| format!("Instrument {i:03}")).collect();
+    v.extend(["RSI_14", "rsi-divergence", "Moving average", "Индекс относительной силы", "Объём", "BTC/USDT", "ETH/USDT", "Bollinger bands", "Stoch RSI", "MACD", "Ichimoku", "VWAP", "ATR", "OBV", "Pivot points", "Parabolic SAR", "Супертренд", "Keltner", "Donchian", "CCI"].map(String::from));
+    v
+}
+
+#[test]
+fn virtual_list_ranges_are_the_visible_rows_plus_overscan() {
+    let v = VirtualList::new(50.0).overscan(2);
+    assert_eq!(v.content_height(500), 25_000.0);
+    assert_eq!(v.max_scroll(500, 600.0), 24_400.0);
+    assert_eq!(v.visible(500, 0.0, 600.0), 0..12);
+    assert_eq!(v.range(500, 0.0, 600.0), 0..14);
+    assert_eq!(v.visible(500, 125.0, 600.0), 2..15, "partly visible rows count");
+    assert_eq!(v.range(500, 125.0, 600.0), 0..17);
+    assert_eq!(v.range(500, 1e9, 600.0), 486..500, "clamped to the end");
+    assert_eq!(v.range(500, -40.0, 600.0), 0..14, "and to the start");
+    assert_eq!(v.range(500, f64::NAN, 600.0), 0..14);
+    assert_eq!(v.range(0, 0.0, 600.0), 0..0);
+    assert_eq!(v.range(3, 0.0, 600.0), 0..3, "fewer rows than fit");
+    assert_eq!(v.max_scroll(3, 600.0), 0.0);
+}
+
+#[test]
+fn virtual_list_reveal_moves_as_little_as_needed() {
+    let v = VirtualList::new(50.0);
+    assert_eq!(v.reveal(500, 3, 0.0, 600.0), 0.0, "already visible");
+    assert_eq!(v.reveal(500, 20, 0.0, 600.0), 450.0, "brought to the bottom edge");
+    assert_eq!(v.reveal(500, 5, 1000.0, 600.0), 250.0, "brought to the top edge");
+    assert_eq!(v.reveal(500, 499, 0.0, 600.0), v.max_scroll(500, 600.0));
+    assert_eq!(v.reveal(500, 9999, 0.0, 600.0), v.max_scroll(500, 600.0), "out of range is the last row");
+}
+
+#[test]
+fn search_matches_any_case_and_script_and_ranks_prefixes_first() {
+    let l = items();
+    let hits = search_filter(&l, "rsi");
+    let names: Vec<&str> = hits.iter().map(|&i| l[i].as_str()).collect();
+    assert_eq!(names, ["RSI_14", "rsi-divergence", "Stoch RSI"], "prefix, then word prefix");
+    assert_eq!(search_filter(&l, "индекс").len(), 1, "Cyrillic, case-insensitive");
+    assert_eq!(search_filter(&l, "ОБЪЁМ").len(), 1);
+    assert_eq!(search_rank("BTC/USDT", "btc usdt"), Some(0), "/ counts as a space");
+    assert_eq!(search_rank("Moving average", "av mov"), Some(1), "every word starts a word, any order");
+    assert_eq!(search_rank("Moving average", "erag"), Some(2), "inside a word");
+    assert_eq!(search_rank("Moving average", "rsi"), None);
+    assert_eq!(search_filter(&l, "  ").len(), l.len(), "empty query keeps everything, in order");
+    assert_eq!(search_filter(&l, "  ")[..3], [0, 1, 2]);
+    let multi = search_filter(&l, "instrument 4");
+    assert_eq!(multi[..80], (400..480).collect::<Vec<_>>()[..], "multi-word: the word prefixes 400..479 first");
+    assert!(multi[80..].iter().all(|&i| search_rank(&l[i], "instrument 4") == Some(2)), "then the ones with a 4 inside");
+    assert!(search_filter(&l, "zzz").is_empty());
+}
+
+fn list_screen(env: &MediaEnv, query: &str, scroll: f64, vh: f64, labels: &[String], v: &VirtualList) -> (El, Vec<usize>) {
+    let hits = search_filter(labels, query);
+    let mut edit = Edit::new(query).placeholder("Поиск");
+    edit.caret = (!query.is_empty()).then_some(query.chars().count());
+    let list = v.el("list", hits.len(), scroll, vh, Some("Ничего не найдено"), |i| {
+        let mut r = Row::new(labels[hits[i]].clone());
+        r.sub = format!("#{}", hits[i]);
+        row(&format!("list:row:{}", hits[i]), &r)
+    });
+    let root = screen(true, [top_bar("nav", "Назад", "Инструменты", None, &[]), search_bar("q", edit, "Поиск", Some("Отмена")), list, tab_bar("tabs", &tabs(), 0)]).css("height: 844px");
+    (root, hits)
+}
+
+#[test]
+fn virtual_list_with_search_fits_a_phone_and_lays_out_only_what_shows() {
+    let env = phone();
+    let labels = items();
+    assert!(labels.len() >= 480);
+    let v = VirtualList::new(64.0);
+    let (root, hits) = list_screen(&env, "", 0.0, env.height, &labels, &v);
+    let d = lay(&root, &env);
+
+    let q = d.rect("q").expect("search input");
+    let nav = d.rect("nav:back").unwrap();
+    assert!(nav.y >= 47.0, "nav below the notch: {nav:?}");
+    assert!(q.y >= nav.y + nav.height - 0.5, "search bar under the nav: {q:?}");
+    assert!(q.x >= 16.0 && q.x + q.width <= 390.0, "input inside the screen: {q:?}");
+    assert!(d.rect("q:clear").is_none(), "no clear button while empty");
+    let cancel = d.rect("q:cancel").expect("cancel button");
+    assert!(cancel.x + cancel.width <= 390.0 - 15.5, "cancel not clipped: {cancel:?}");
+
+    let list = d.rect("list").unwrap();
+    let tab = d.rect("tabs:0").unwrap();
+    assert!(list.y >= q.y + q.height, "list under the search bar");
+    assert!(list.y + list.height <= tab.y + 0.5, "list ends above the tab bar: {list:?} {tab:?}");
+    assert!(tab.y + tab.height <= 844.0 - 34.0 + 0.5, "tabs above the home indicator: {tab:?}");
+    let body = d.get("list").unwrap();
+    assert!((body.scroll_height - v.content_height(hits.len())).abs() < 1.0, "scroll height is the whole list: {}", body.scroll_height);
+
+    let laid: Vec<&str> = d.hits().filter(|(id, _)| id.starts_with("list:row:")).map(|(id, _)| id).collect();
+    assert!(!laid.is_empty() && laid.len() <= v.range(hits.len(), 0.0, env.height).len(), "only a screenful: {}", laid.len());
+    let r0 = d.rect("list:row:0").unwrap();
+    assert!((r0.height - 64.0).abs() < 0.5 && (r0.y - list.y).abs() < 0.5, "first row at the top, full height: {r0:?}");
+    assert!(r0.x >= list.x && r0.x + r0.width <= list.x + list.width + 0.5, "row inside the list horizontally");
+
+    // At the very end the last row sits whole on the bottom edge of the list, above the tabs.
+    let vh = list.height;
+    // The host scrolls with the list's height from the last frame.
+    let (root, hits) = list_screen(&env, "", v.max_scroll(hits.len(), vh), vh, &labels, &v);
+    let d = lay(&root, &env);
+    let last = *hits.last().unwrap();
+    let lr = d.rect(&format!("list:row:{last}")).expect("last row laid out");
+    assert!((lr.y + lr.height - (list.y + list.height)).abs() < 0.5, "last row on the list's bottom edge: {lr:?} vs {list:?}");
+    assert!(lr.y + lr.height <= tab.y + 0.5, "and not under the tab bar");
+    assert!(d.rect("list:row:0").is_none(), "the top rows are gone");
+}
+
+#[test]
+fn searching_narrows_the_list_and_shows_clear() {
+    let env = phone();
+    let labels = items();
+    let v = VirtualList::new(64.0);
+    let (root, hits) = list_screen(&env, "rsi", 0.0, env.height, &labels, &v);
+    assert_eq!(hits.len(), 3);
+    let d = lay(&root, &env);
+    let q = d.rect("q").unwrap();
+    let clear = d.rect("q:clear").expect("clear button once typed");
+    assert!(clear.x >= q.x + q.width - 0.5 && clear.x + clear.width <= d.rect("q:cancel").unwrap().x, "clear between the field and cancel");
+    let rows: Vec<&str> = d.hits().filter(|(id, _)| id.starts_with("list:row:")).map(|(id, _)| id).collect();
+    assert_eq!(rows.len(), 3);
+    let rsi = labels.iter().position(|l| l == "RSI_14").unwrap();
+    assert!(d.rect(&format!("list:row:{rsi}")).unwrap().y < d.rect(&format!("list:row:{}", hits[2])).unwrap().y, "best match first");
+
+    let (root, hits) = list_screen(&env, "nothing like it", 0.0, env.height, &labels, &v);
+    assert!(hits.is_empty());
+    let d = lay(&root, &env);
+    let list = d.rect("list").unwrap();
+    let empty = d.boxes.iter().find(|p| p.text.as_deref() == Some("Ничего не найдено")).expect("the empty line");
+    assert!(empty.rect.y >= list.y && empty.rect.x >= list.x && empty.rect.x + empty.rect.width <= list.x + list.width + 0.5, "empty line inside the list: {:?}", empty.rect);
+    assert_eq!(d.hits().filter(|(id, _)| id.starts_with("list:row:")).count(), 0);
+}
