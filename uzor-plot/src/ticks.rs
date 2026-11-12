@@ -413,10 +413,15 @@ pub fn trim_padded_fraction(label: &str) -> String {
     }
 }
 
-/// `value` with exactly `decimals` fractional digits.
+/// Most fractional digits [`format_fixed`] (and so [`LabelPrecision::format`])
+/// writes; larger requests are capped. `f64` carries about 17 significant
+/// digits, and the formatter itself rejects precisions above `u16::MAX`.
+pub const MAX_DECIMALS: usize = 64;
+
+/// `value` with exactly `decimals` fractional digits (at most [`MAX_DECIMALS`]).
 #[inline]
 pub fn format_fixed(value: f64, decimals: usize) -> String {
-    format!("{:.prec$}", value, prec = decimals)
+    format!("{:.prec$}", value, prec = decimals.min(MAX_DECIMALS))
 }
 
 /// How many decimals an axis label shows.

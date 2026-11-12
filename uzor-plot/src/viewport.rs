@@ -311,7 +311,7 @@ impl SlotViewport {
 /// An exact hit is its index; a key between two items interpolates by key;
 /// a key before the first or after the last extrapolates with the average
 /// key step (whole series before, last step after), or `default_step` when
-/// there is one item.
+/// there is one item. Key differences saturate instead of overflowing.
 pub fn fractional_position<T>(items: &[T], key: i64, key_of: impl Fn(&T) -> i64, default_step: f64) -> f64 {
     if items.is_empty() {
         return 0.0;
@@ -320,9 +320,9 @@ pub fn fractional_position<T>(items: &[T], key: i64, key_of: impl Fn(&T) -> i64,
         Ok(i) => i as f64,
         Err(0) => {
             let first = key_of(&items[0]);
-            let dt = (key - first) as f64;
+            let dt = key.saturating_sub(first) as f64;
             let step = if items.len() >= 2 {
-                (key_of(&items[items.len() - 1]) - first) as f64 / (items.len() - 1).max(1) as f64
+                key_of(&items[items.len() - 1]).saturating_sub(first) as f64 / (items.len() - 1).max(1) as f64
             } else {
                 default_step
             };
@@ -334,9 +334,9 @@ pub fn fractional_position<T>(items: &[T], key: i64, key_of: impl Fn(&T) -> i64,
         }
         Err(i) if i >= items.len() => {
             let last = key_of(&items[items.len() - 1]);
-            let dt = (key - last) as f64;
+            let dt = key.saturating_sub(last) as f64;
             let step = if items.len() >= 2 {
-                (last - key_of(&items[items.len() - 2])) as f64
+                last.saturating_sub(key_of(&items[items.len() - 2])) as f64
             } else {
                 default_step
             };
