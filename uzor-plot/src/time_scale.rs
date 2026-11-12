@@ -142,77 +142,81 @@ pub fn days_in_month(year: i32, month: i32) -> i32 {
     }
 }
 
-/// Convert Unix timestamp (seconds) to date components
+/// Earliest year [`timestamp_to_date`] returns (`i32::MIN + 1`, so a caller
+/// stepping one year back cannot overflow).
+pub const MIN_DATE_YEAR: i32 = i32::MIN + 1;
+/// Latest year [`timestamp_to_date`] returns (`i32::MAX - 1`, so a caller
+/// stepping one year forward cannot overflow).
+pub const MAX_DATE_YEAR: i32 = i32::MAX - 1;
+/// First second of [`MIN_DATE_YEAR`]; earlier timestamps saturate to it.
+pub const MIN_DATE_TIMESTAMP: i64 = days_from_civil(MIN_DATE_YEAR as i64, 1, 1) * DAY;
+/// Last second of [`MAX_DATE_YEAR`]; later timestamps saturate to it.
+pub const MAX_DATE_TIMESTAMP: i64 = days_from_civil(MAX_DATE_YEAR as i64, 12, 31) * DAY + DAY - 1;
+
+/// Days from 1970-01-01 to `year-month-day` in the proleptic Gregorian
+/// calendar (Howard Hinnant's `days_from_civil`). `month` must be 1..=12;
+/// exact for any `i32` year in `i64`.
+const fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400; // [0, 399]
+    let mp = if month > 2 { month - 3 } else { month + 9 }; // March = 0
+    let doy = (153 * mp + 2) / 5 + day - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era * 146_097 + doe - 719_468
+}
+
+/// `(year, month 1-12, day 1-31)` for days from 1970-01-01 (Howard
+/// Hinnant's `civil_from_days`).
+const fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11], March = 0
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + if month <= 2 { 1 } else { 0 };
+    (year, month, day)
+}
+
+/// Convert Unix timestamp (seconds, UTC) to date components.
 /// Returns: (year, month 1-12, day 1-31, hour 0-23, minute 0-59, second 0-59)
+///
+/// Closed form, constant time. Timestamps outside
+/// [`MIN_DATE_TIMESTAMP`]`..=`[`MAX_DATE_TIMESTAMP`] (years
+/// [`MIN_DATE_YEAR`]`..=`[`MAX_DATE_YEAR`]) saturate to the nearest end.
 pub fn timestamp_to_date(ts: i64) -> (i32, i32, i32, i32, i32, i32) {
+    let ts = ts.clamp(MIN_DATE_TIMESTAMP, MAX_DATE_TIMESTAMP);
     let time_of_day = ts.rem_euclid(DAY);
     let hour = (time_of_day / HOUR) as i32;
     let minute = ((time_of_day % HOUR) / MINUTE) as i32;
     let second = (time_of_day % MINUTE) as i32;
 
-    let mut days = ts.div_euclid(DAY);
-
-    let mut year = 1970_i32;
-
-    if days >= 0 {
-        loop {
-            let days_in_year = if is_leap_year(year) { 366 } else { 365 };
-            if days < days_in_year as i64 {
-                break;
-            }
-            days -= days_in_year as i64;
-            year += 1;
-        }
-    } else {
-        loop {
-            year -= 1;
-            let days_in_year = if is_leap_year(year) { 366 } else { 365 };
-            days += days_in_year as i64;
-            if days >= 0 {
-                break;
-            }
-        }
-    }
-
-    let mut month = 1_i32;
-    loop {
-        let dim = days_in_month(year, month) as i64;
-        if days < dim {
-            break;
-        }
-        days -= dim;
-        month += 1;
-    }
-
-    let day = days as i32 + 1;
-
-    (year, month, day, hour, minute, second)
+    let (year, month, day) = civil_from_days(ts.div_euclid(DAY));
+    (year as i32, month as i32, day as i32, hour, minute, second)
 }
 
-/// Convert date components to Unix timestamp (seconds)
+/// Convert date components to Unix timestamp (seconds, UTC).
 /// month: 1-12, day: 1-31
+///
+/// Closed form, constant time, exact for every `i32` year (computed in
+/// `i64`, which cannot overflow for `i32` inputs). Out-of-range fields
+/// roll over linearly: a `day`, `hour`, `minute` or `second` past its
+/// range spills into the next unit; a month below 1 counts as January and
+/// a month above 12 as January of the next year.
 pub fn date_to_timestamp(year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32) -> i64 {
-    let mut days: i64 = 0;
-
-    if year >= 1970 {
-        for y in 1970..year {
-            days += if is_leap_year(y) { 366 } else { 365 };
-        }
+    let (y, m) = if month > 12 {
+        (year as i64 + 1, 1)
+    } else if month < 1 {
+        (year as i64, 1)
     } else {
-        for y in year..1970 {
-            days -= if is_leap_year(y) { 366 } else { 365 };
-        }
-    }
-
-    for m in 1..month {
-        days += days_in_month(year, m) as i64;
-    }
-
-    days += (day - 1) as i64;
-
+        (year as i64, month as i64)
+    };
+    let days = days_from_civil(y, m, 1) + (day as i64 - 1);
     days * DAY + hour as i64 * HOUR + minute as i64 * MINUTE + second as i64
 }
-
 
 /// LWC intraday divisor table (ms-per-boundary, ascending) — verbatim from
 /// `lightweight-charts/src/model/horz-scale-behavior-time/time-scale-point-weight-generator.ts`.

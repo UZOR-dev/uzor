@@ -206,3 +206,99 @@ fn degenerate_viewports_do_not_panic() {
         }
     }
 }
+
+/// The year-by-year conversion this crate used to ship (and the chart code
+/// it came from), kept as a reference for the closed form.
+fn naive_to_date(ts: i64) -> (i32, i32, i32, i32, i32, i32) {
+    let tod = ts.rem_euclid(86400);
+    let mut days = ts.div_euclid(86400);
+    let mut year = 1970_i32;
+    if days >= 0 {
+        loop {
+            let n = if is_leap_year(year) { 366 } else { 365 };
+            if days < n {
+                break;
+            }
+            days -= n;
+            year += 1;
+        }
+    } else {
+        loop {
+            year -= 1;
+            days += if is_leap_year(year) { 366 } else { 365 };
+            if days >= 0 {
+                break;
+            }
+        }
+    }
+    let mut month = 1;
+    while days >= days_in_month(year, month) as i64 {
+        days -= days_in_month(year, month) as i64;
+        month += 1;
+    }
+    (year, month, days as i32 + 1, (tod / 3600) as i32, ((tod % 3600) / 60) as i32, (tod % 60) as i32)
+}
+
+fn naive_to_ts(year: i32, month: i32, day: i32, h: i32, mi: i32, s: i32) -> i64 {
+    let mut days: i64 = 0;
+    if year >= 1970 {
+        for y in 1970..year {
+            days += if is_leap_year(y) { 366 } else { 365 };
+        }
+    } else {
+        for y in year..1970 {
+            days -= if is_leap_year(y) { 366 } else { 365 };
+        }
+    }
+    for m in 1..month {
+        days += days_in_month(year, m) as i64;
+    }
+    days += (day - 1) as i64;
+    days * 86400 + h as i64 * 3600 + mi as i64 * 60 + s as i64
+}
+
+#[test]
+fn closed_form_calendar_matches_year_by_year() {
+    // Every day from 1600 to 2400 (both leap-century rules), at a few times of day.
+    let lo = naive_to_ts(1600, 1, 1, 0, 0, 0);
+    let hi = naive_to_ts(2400, 12, 31, 0, 0, 0);
+    let mut ts = lo;
+    while ts <= hi {
+        for tod in [0, 1, 3599, 43_210, 86_399] {
+            let t = ts + tod;
+            let d = timestamp_to_date(t);
+            assert_eq!(d, naive_to_date(t), "ts {t}");
+            assert_eq!(date_to_timestamp(d.0, d.1, d.2, d.3, d.4, d.5), t, "round trip {t}");
+        }
+        ts += 86_400;
+    }
+    // Out-of-range fields roll over the same way as before.
+    for (y, m, d) in [(2024, 0, 1), (2024, 14, 1), (2023, 13, 5), (2024, 2, 30), (2024, 1, 0), (1969, 12, 32)] {
+        assert_eq!(date_to_timestamp(y, m, d, 25, 61, 61), naive_to_ts(y, m, d, 25, 61, 61), "{y}-{m}-{d}");
+    }
+}
+
+#[test]
+fn calendar_extremes_are_constant_time_and_saturate() {
+    // Used to step year by year: hang (i64 edges) or overflow (i32 years).
+    assert_eq!(timestamp_to_date(i64::MAX), timestamp_to_date(MAX_DATE_TIMESTAMP));
+    assert_eq!(timestamp_to_date(i64::MIN), timestamp_to_date(MIN_DATE_TIMESTAMP));
+    assert_eq!(timestamp_to_date(MAX_DATE_TIMESTAMP), (MAX_DATE_YEAR, 12, 31, 23, 59, 59));
+    assert_eq!(timestamp_to_date(MIN_DATE_TIMESTAMP), (MIN_DATE_YEAR, 1, 1, 0, 0, 0));
+    assert_eq!(date_to_timestamp(MAX_DATE_YEAR, 12, 31, 23, 59, 59), MAX_DATE_TIMESTAMP);
+    assert_eq!(date_to_timestamp(MIN_DATE_YEAR, 1, 1, 0, 0, 0), MIN_DATE_TIMESTAMP);
+    // Full i32 inputs do not overflow.
+    let _ = date_to_timestamp(i32::MAX, i32::MAX, i32::MAX, i32::MAX, i32::MAX, i32::MAX);
+    let _ = date_to_timestamp(i32::MIN, i32::MIN, i32::MIN, i32::MIN, i32::MIN, i32::MIN);
+    assert_eq!(date_to_timestamp(i32::MAX, 13, 1, 0, 0, 0) - date_to_timestamp(i32::MAX, 12, 1, 0, 0, 0), 31 * 86_400);
+    // Round trip at a far but in-window date.
+    let t = date_to_timestamp(-5_000_000, 2, 29, 12, 0, 0);
+    assert_eq!(timestamp_to_date(t), (-5_000_000, 2, 29, 12, 0, 0));
+    // Labels at the edges do not panic.
+    let l = CalendarLabels::default();
+    for ts in [i64::MIN, i64::MAX, 0, -1] {
+        let _ = l.full(ts);
+        let _ = l.label(ts, TickWeight::Day);
+        let _ = weekday_from_timestamp(ts);
+    }
+}
