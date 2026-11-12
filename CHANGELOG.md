@@ -2,6 +2,36 @@
 
 All crates in the workspace share one version.
 
+## 1.5.40
+
+### DOM toolbar (`uzor`, `uzor-framework`)
+
+- `domkit::toolbar(id, items, vertical)` builds a row or a column of `ToolItem`s:
+  icon/label buttons (`.on`, `.dis`), split buttons with a flyout chevron,
+  separators, and a fill that pins an end group to the far edge. Hits are
+  `{id}:{key}` and `{id}:{key}:menu`, read back by `picked_tool`; `flyout_at`
+  places a menu beside the tool.
+- The look is the opt-in `TOOLBAR_CSS`, appended with `sheet_with(TOOLBAR_CSS)`.
+  It is not part of `KIT_CSS`, so apps without a toolbar do not carry it.
+- Tests in `uzor` and `uzor-framework`; example `dom_toolbar`.
+
+### Chart and trading-tool icons (`uzor`)
+
+- `icons::chart`: bar types, drawing tools, harmonic / Elliott / SMC / order-flow
+  patterns, scanners, tool families and order-flow panel slots, with `ALL` for
+  galleries. 15 app/panel icons land in `icons::ui` (bot, gauge, history, mail,
+  pin, screener, settings variants, video states), plus `ICON_SETTINGS_FILLED`,
+  `ICON_SETTINGS_FEATHER` and `ICON_AGENT_CHAT`.
+- 27 drawing-tool marks that already lived in `icons::ui` (Fibonacci, Gann,
+  channels, curves, patterns, the info line and the long/short position marks)
+  move to `icons::chart` with the mylittlechart SVG and are re-exported from
+  `icons::ui`, so existing paths keep compiling. Generic UI marks (settings
+  outline, zoom, stars, collapse/expand, arrows, diamond, line-width, magnet)
+  stay as they were.
+- Thin-pen guard tests, a DOM gallery test in `uzor-framework`, the
+  `dom_chart_icons` example, and a tiny-skia render test (`icon_merge`) of every
+  replaced or added icon at 24 and 48 px.
+
 ## 1.5.39
 
 ### Raster images in the DOM (`uzor`)
