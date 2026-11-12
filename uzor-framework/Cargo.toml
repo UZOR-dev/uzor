@@ -240,3 +240,7 @@ required-features = ["native"]
 [[example]]
 name = "app_chrome"
 required-features = ["native"]
+
+[[example]]
+name = "dom_background_clip"
+required-features = ["native"]
