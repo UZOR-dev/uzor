@@ -158,11 +158,7 @@ pub const ICON_CROSS_LINE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" vi
   <circle cx="12" cy="12" r="2" fill="currentColor"/>
 </svg>"##;
 
-pub const ICON_INFO_LINE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 18L20 6"/>
-  <circle cx="4" cy="18" r="2" fill="currentColor"/>
-  <rect x="14" y="4" width="8" height="5" rx="1"/>
-</svg>"##;
+pub use super::chart::ICON_INFO_LINE;
 
 pub const ICON_TREND_ANGLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
   <path d="M4 18L18 6"/>
@@ -176,17 +172,11 @@ pub const ICON_TREND_ANGLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" v
 // Channel Icons
 // =============================================================================
 
-pub const ICON_REGRESSION_TREND: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M3 18L21 6"/><path d="M3 14L21 2" stroke-dasharray="2 2"/><path d="M3 22L21 10" stroke-dasharray="2 2"/>
-</svg>"##;
-
-pub const ICON_FLAT_TOP_BOTTOM: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M3 6h18"/><path d="M3 18h18"/><path d="M3 6L10 12L3 18"/>
-</svg>"##;
-
-pub const ICON_DISJOINT_CHANNEL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M3 18L12 10"/><path d="M12 14L21 6"/><path d="M3 10L12 2"/><path d="M12 6L21 14"/>
-</svg>"##;
+pub use super::chart::{
+    ICON_REGRESSION_TREND,
+    ICON_FLAT_TOP_BOTTOM,
+    ICON_DISJOINT_CHANNEL,
+};
 
 // =============================================================================
 // Pitchfork Icons
@@ -204,118 +194,41 @@ pub const ICON_PITCHFORK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" vie
 // Fibonacci Icons
 // =============================================================================
 
-pub const ICON_FIB_RETRACEMENT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 4h16"/>
-  <path d="M4 9h16" stroke-dasharray="4 2"/>
-  <path d="M4 14h16" stroke-dasharray="4 2"/>
-  <path d="M4 20h16"/>
-  <path d="M4 4v16"/>
-</svg>"##;
-
-pub const ICON_FIB_EXTENSION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 20L12 4L20 12"/>
-  <path d="M4 8h16" stroke-dasharray="2 2"/>
-  <path d="M4 14h16" stroke-dasharray="2 2"/>
-</svg>"##;
-
-pub const ICON_FIB_CHANNEL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2 20L22 8"/>
-  <path d="M2 14L22 2"/>
-  <path d="M6 12L22 5" stroke-dasharray="2 2"/>
-</svg>"##;
-
-pub const ICON_FIB_CIRCLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <circle cx="12" cy="12" r="9"/>
-  <circle cx="12" cy="12" r="6" stroke-dasharray="2 2"/>
-  <circle cx="12" cy="12" r="3" stroke-dasharray="2 2"/>
-  <circle cx="12" cy="12" r="1" fill="currentColor"/>
-</svg>"##;
-
-pub const ICON_FIB_SPIRAL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M12 12a5 5 0 0 1 5 5"/>
-  <path d="M12 12a8 8 0 0 0-8 8"/>
-  <path d="M12 12a3 3 0 0 1-3-3"/>
-  <path d="M12 12a2 2 0 0 0 2-2"/>
-  <circle cx="12" cy="12" r="1" fill="currentColor"/>
-</svg>"##;
-
-pub const ICON_FIB_TIME_ZONES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 4v16"/><path d="M8 4v16"/><path d="M13 4v16" stroke-dasharray="2 2"/><path d="M20 4v16" stroke-dasharray="2 2"/>
-</svg>"##;
-
-pub const ICON_FIB_SPEED_RESISTANCE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 20L20 4"/><path d="M4 20L20 10" stroke-dasharray="2 2"/><path d="M4 20L20 16" stroke-dasharray="2 2"/>
-  <circle cx="4" cy="20" r="2" fill="currentColor"/>
-</svg>"##;
-
-pub const ICON_FIB_TREND_TIME: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 18L12 6L20 14"/><path d="M4 18v-14"/><path d="M12 6v12" stroke-dasharray="2 2"/>
-</svg>"##;
-
-pub const ICON_FIB_ARCS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 20Q4 8 20 4"/><path d="M4 20Q4 12 14 8" stroke-dasharray="2 2"/><path d="M4 20Q4 16 10 14" stroke-dasharray="2 2"/>
-  <circle cx="4" cy="20" r="2" fill="currentColor"/>
-</svg>"##;
-
-pub const ICON_FIB_WEDGE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 20L20 4"/><path d="M4 20L20 12"/><path d="M4 20L20 8" stroke-dasharray="2 2"/>
-  <circle cx="4" cy="20" r="2" fill="currentColor"/>
-</svg>"##;
-
-pub const ICON_FIB_FAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 20L20 4"/><path d="M4 20L20 8" stroke-dasharray="2 2"/><path d="M4 20L20 12" stroke-dasharray="2 2"/><path d="M4 20L20 16" stroke-dasharray="2 2"/>
-  <circle cx="4" cy="20" r="2" fill="currentColor"/>
-</svg>"##;
+pub use super::chart::{
+    ICON_FIB_RETRACEMENT,
+    ICON_FIB_EXTENSION,
+    ICON_FIB_CHANNEL,
+    ICON_FIB_CIRCLE,
+    ICON_FIB_SPIRAL,
+    ICON_FIB_TIME_ZONES,
+    ICON_FIB_SPEED_RESISTANCE,
+    ICON_FIB_TREND_TIME,
+    ICON_FIB_ARCS,
+    ICON_FIB_WEDGE,
+    ICON_FIB_FAN,
+};
 
 // =============================================================================
 // Gann Icons
 // =============================================================================
 
-pub const ICON_GANN_BOX: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="4" y="4" width="16" height="16"/><path d="M4 4L20 20"/><path d="M20 4L4 20"/><path d="M12 4v16"/><path d="M4 12h16"/>
-</svg>"##;
-
-pub const ICON_GANN_SQUARE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="4" y="4" width="16" height="16"/><circle cx="12" cy="12" r="6" stroke-dasharray="2 2"/>
-  <path d="M4 4L20 20" stroke-dasharray="2 2"/><path d="M20 4L4 20" stroke-dasharray="2 2"/>
-</svg>"##;
-
-pub const ICON_GANN_FAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 20L20 4"/><path d="M4 20L20 8"/><path d="M4 20L20 12"/><path d="M4 20L20 16"/><path d="M4 20h16"/>
-  <circle cx="4" cy="20" r="2" fill="currentColor"/>
-</svg>"##;
+pub use super::chart::{
+    ICON_GANN_BOX,
+    ICON_GANN_SQUARE,
+    ICON_GANN_FAN,
+};
 
 // =============================================================================
 // Pattern Icons
 // =============================================================================
 
-pub const ICON_XABCD_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2 18L6 6L12 14L16 8L22 16"/>
-  <circle cx="2" cy="18" r="1.5" fill="currentColor"/><circle cx="6" cy="6" r="1.5" fill="currentColor"/>
-  <circle cx="12" cy="14" r="1.5" fill="currentColor"/><circle cx="16" cy="8" r="1.5" fill="currentColor"/>
-  <circle cx="22" cy="16" r="1.5" fill="currentColor"/>
-</svg>"##;
-
-pub const ICON_HEAD_SHOULDERS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2 16L6 10L10 14L12 4L14 14L18 10L22 16"/>
-  <path d="M6 14h12" stroke-dasharray="2 2"/>
-</svg>"##;
-
-pub const ICON_ABCD_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 18L8 6L16 14L20 6"/>
-  <circle cx="4" cy="18" r="1.5" fill="currentColor"/><circle cx="8" cy="6" r="1.5" fill="currentColor"/>
-  <circle cx="16" cy="14" r="1.5" fill="currentColor"/><circle cx="20" cy="6" r="1.5" fill="currentColor"/>
-</svg>"##;
-
-pub const ICON_TRIANGLE_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 8L8 16L12 8L16 16L20 12"/>
-  <path d="M4 6L20 10" stroke-dasharray="2 2"/><path d="M4 18L20 14" stroke-dasharray="2 2"/>
-</svg>"##;
-
-pub const ICON_THREE_DRIVES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2 20L6 8L10 14L14 6L18 12L22 4"/>
-  <circle cx="6" cy="8" r="1.5" fill="currentColor"/><circle cx="14" cy="6" r="1.5" fill="currentColor"/><circle cx="22" cy="4" r="1.5" fill="currentColor"/>
-</svg>"##;
+pub use super::chart::{
+    ICON_XABCD_PATTERN,
+    ICON_HEAD_SHOULDERS,
+    ICON_ABCD_PATTERN,
+    ICON_TRIANGLE_PATTERN,
+    ICON_THREE_DRIVES,
+};
 
 // =============================================================================
 // Elliott Wave Icons
@@ -384,16 +297,10 @@ pub const ICON_PATH: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox=
   <path d="M4 18Q8 4 12 12T20 6"/>
 </svg>"##;
 
-pub const ICON_CURVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 18Q12 2 20 18"/>
-  <path d="M4 18L12 2" stroke-dasharray="2 2"/><path d="M12 2L20 18" stroke-dasharray="2 2"/>
-  <circle cx="4" cy="18" r="1.5" fill="currentColor"/><circle cx="12" cy="2" r="1.5" fill="currentColor"/><circle cx="20" cy="18" r="1.5" fill="currentColor"/>
-</svg>"##;
-
-pub const ICON_DOUBLE_CURVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 12Q8 4 12 12T20 12"/>
-  <path d="M4 16Q8 8 12 16T20 16" stroke-dasharray="2 2"/>
-</svg>"##;
+pub use super::chart::{
+    ICON_CURVE,
+    ICON_DOUBLE_CURVE,
+};
 
 // =============================================================================
 // Arrow Icons
@@ -694,17 +601,10 @@ pub const ICON_CLOSE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox
 // Position Icons
 // =============================================================================
 
-pub const ICON_LONG_POSITION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M12 20V4"/>
-  <path d="M5 11l7-7 7 7"/>
-  <path d="M5 20h14"/>
-</svg>"##;
-
-pub const ICON_SHORT_POSITION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M12 4v16"/>
-  <path d="M5 13l7 7 7-7"/>
-  <path d="M5 4h14"/>
-</svg>"##;
+pub use super::chart::{
+    ICON_LONG_POSITION,
+    ICON_SHORT_POSITION,
+};
 
 // =============================================================================
 // Navigation Icons
@@ -1139,6 +1039,9 @@ pub const ICON_TERMINAL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" view
 /// Chat bubble icon (speech balloon)
 pub const ICON_CHAT_BUBBLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>"##;
 
+/// Chat bubble (message-square) for an agent's inline chat mode.
+pub const ICON_AGENT_CHAT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>"##;
+
 /// Replace layout icon — bold geometric letter "R"
 pub const ICON_LAYOUT_REPLACE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h7.5a5.5 5.5 0 0 1 1.5 10.78L19.5 20h-3.7l-4-5H9.5v5H6V4zm3.5 3v5H13a2.5 2.5 0 0 0 0-5H9.5z"/></svg>"##;
 
@@ -1165,6 +1068,17 @@ pub const ICON_SETTINGS_OUTLINE: &str = r##"<svg xmlns="http://www.w3.org/2000/s
 pub const ICON_SETTINGS_INDUSTRIAL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
   <circle cx="12" cy="12" r="6.25" stroke-width="3.375"/>
   <g stroke-width="2.7"><line x1="20.3" y1="12" x2="22.6" y2="12"/><line x1="3.7" y1="12" x2="1.4" y2="12"/><line x1="12" y1="20.3" x2="12" y2="22.6"/><line x1="12" y1="3.7" x2="12" y2="1.4"/><line x1="17.87" y1="17.87" x2="19.5" y2="19.5"/><line x1="6.13" y1="6.13" x2="4.5" y2="4.5"/><line x1="17.87" y1="6.13" x2="19.5" y2="4.5"/><line x1="6.13" y1="17.87" x2="4.5" y2="19.5"/></g>
+</svg>"##;
+
+/// Filled 8-tooth settings gear (Material geometry). The outline gear stays at [`ICON_SETTINGS`].
+pub const ICON_SETTINGS_FILLED: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke-width="1.25">
+  <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+</svg>"##;
+
+/// Feather-style outline settings gear (same mark as [`ICON_SETTINGS`]).
+pub const ICON_SETTINGS_FEATHER: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="12" cy="12" r="3"/>
+  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
 </svg>"##;
 
 /// System event log glyph (Lucide "History" silhouette) — clock face plus a
@@ -1252,6 +1166,14 @@ pub const ICON_PIN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="
   <path d="M8 3h8l-1 6 3 3v2H6v-2l3-3-1-6z"/>
 </svg>"##;
 
+/// Icons added in the icons-merge (filled gear, feather gear, agent chat).
+/// Together with [`super::chart::MERGE_SHOTS`], this is the regression shot list.
+pub const MERGE_ADDED: &[(&str, &str)] = &[
+    ("settings_filled", ICON_SETTINGS_FILLED),
+    ("settings_feather", ICON_SETTINGS_FEATHER),
+    ("agent_chat", ICON_AGENT_CHAT),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1260,6 +1182,9 @@ mod tests {
     #[test]
     fn root_stroke_width_stays_thin() {
         let icons: &[(&str, &str)] = &[
+            ("ICON_SETTINGS_FILLED", ICON_SETTINGS_FILLED),
+            ("ICON_SETTINGS_FEATHER", ICON_SETTINGS_FEATHER),
+            ("ICON_AGENT_CHAT", ICON_AGENT_CHAT),
             ("ICON_AGENT_TERMINAL", ICON_AGENT_TERMINAL),
             ("ICON_SETTINGS_CHUNKY", ICON_SETTINGS_CHUNKY),
             ("ICON_SETTINGS_OUTLINE", ICON_SETTINGS_OUTLINE),

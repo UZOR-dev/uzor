@@ -1,6 +1,7 @@
 //! Chart and trading-tool icons — bar types, drawing tools, harmonic / Elliott /
 //! SMC / order-flow patterns, scanners, tool families and order-flow panel slots.
-//! From the mylittlechart icon collection (the ones [`super::ui`] did not have yet).
+//! From the mylittlechart icon collection. Drawing-tool marks that used to live
+//! only in [`super::ui`] are defined here and re-exported from there.
 //! viewBox 0 0 24 24, `stroke="currentColor"`, thin (1.25) pen; plain consts, so an
 //! app pays only for the icons it names.
 
@@ -744,6 +745,284 @@ pub const ICON_FAMILY_CLASSIC: &str = r##"<svg xmlns="http://www.w3.org/2000/svg
   <path d="M4 15.5h16" stroke-dasharray="2 2"/>
 </svg>"##;
 
+
+// =============================================================================
+// Drawing-tool marks merged from icons::ui (mylittlechart SVG).
+// =============================================================================
+
+/// Info line (mylittlechart).
+pub const ICON_INFO_LINE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 18L16 6"/>
+  <circle cx="4" cy="18" r="2" fill="currentColor"/>
+  <rect x="13" y="1" width="10" height="6" rx="1.5"/>
+  <path d="M15.5 4h5" stroke-width="0.975"/>
+</svg>"##;
+
+/// Regression trend channel (mylittlechart).
+pub const ICON_REGRESSION_TREND: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 19L21 5"/>
+  <path d="M3 19L3 15" stroke-dasharray="2 2" opacity="0.6"/>
+  <path d="M21 5L21 9" stroke-dasharray="2 2" opacity="0.6"/>
+</svg>"##;
+
+/// Flat top/bottom channel (mylittlechart).
+pub const ICON_FLAT_TOP_BOTTOM: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 6h18"/>
+  <path d="M3 18L21 10"/>
+</svg>"##;
+
+/// Disjoint channel (mylittlechart).
+pub const ICON_DISJOINT_CHANNEL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 8L11 4L21 10"/>
+  <path d="M3 16L11 14L21 20"/>
+</svg>"##;
+
+/// Fibonacci retracement (mylittlechart).
+pub const ICON_FIB_RETRACEMENT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="4" y="5" width="16" height="4.5" fill="currentColor" opacity="0.15" stroke="none"/>
+  <rect x="4" y="14.5" width="16" height="4.5" fill="currentColor" opacity="0.15" stroke="none"/>
+  <path d="M4 5h16"/>
+  <path d="M4 9.5h16"/>
+  <path d="M4 14.5h16"/>
+  <path d="M4 19h16"/>
+  <path d="M4 19L20 5" stroke-dasharray="1.5 2"/>
+  <circle cx="4" cy="19" r="1.4" fill="currentColor"/>
+  <circle cx="20" cy="5" r="1.4" fill="currentColor"/>
+</svg>"##;
+
+/// Fibonacci extension (mylittlechart).
+pub const ICON_FIB_EXTENSION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="13" y="4" width="8" height="4" fill="currentColor" opacity="0.15" stroke="none"/>
+  <path d="M3 18l5-9 3.5 5"/>
+  <path d="M13 4h8"/>
+  <path d="M13 8h8"/>
+  <path d="M13 12h8" stroke-dasharray="2 2"/>
+  <circle cx="3" cy="18" r="1.4" fill="currentColor"/>
+  <circle cx="8" cy="9" r="1.4" fill="currentColor"/>
+  <circle cx="11.5" cy="14" r="1.4" fill="currentColor"/>
+</svg>"##;
+
+/// Fibonacci channel (mylittlechart).
+pub const ICON_FIB_CHANNEL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 13L15 4l6 6L9 19z" fill="currentColor" opacity="0.15" stroke="none"/>
+  <path d="M3 13L15 4"/>
+  <path d="M6 16l12-9" stroke-dasharray="2 2"/>
+  <path d="M9 19l12-9"/>
+  <circle cx="3" cy="13" r="1.4" fill="currentColor"/>
+  <circle cx="15" cy="4" r="1.4" fill="currentColor"/>
+</svg>"##;
+
+/// Fibonacci circle (mylittlechart).
+pub const ICON_FIB_CIRCLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="12" cy="12" r="9" fill="currentColor" opacity="0.1" stroke="none"/>
+  <circle cx="12" cy="12" r="9"/>
+  <circle cx="12" cy="12" r="5.5"/>
+  <circle cx="12" cy="12" r="3" stroke-dasharray="1.5 1.5"/>
+  <path d="M12 12l6.4-6.4"/>
+  <circle cx="12" cy="12" r="1.4" fill="currentColor"/>
+</svg>"##;
+
+/// Fibonacci spiral (mylittlechart).
+pub const ICON_FIB_SPIRAL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M13 11a1.5 1.5 0 0 0-1.5 1.5 3 3 0 0 0 3 3 5 5 0 0 0 5-5 8 8 0 0 0-8-8 10 10 0 0 0-8.5 5"/>
+  <rect x="3" y="3" width="18" height="18" rx="1" stroke-dasharray="2 2"/>
+</svg>"##;
+
+/// Fibonacci time zones (mylittlechart).
+pub const ICON_FIB_TIME_ZONES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 20.5h18"/>
+  <path d="M4 4v16"/>
+  <path d="M6 7v13"/>
+  <path d="M8.5 7v13"/>
+  <path d="M12 7v13"/>
+  <path d="M17 7v13"/>
+  <rect x="12" y="7" width="5" height="13" fill="currentColor" opacity="0.15" stroke="none"/>
+</svg>"##;
+
+/// Fibonacci speed resistance (mylittlechart).
+pub const ICON_FIB_SPEED_RESISTANCE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 21L21 4"/>
+  <path d="M3 21l18-7"/>
+  <path d="M3 21L10 4"/>
+  <path d="M3 21l18-11" stroke-dasharray="2 2"/>
+  <path d="M3 21L15 4" stroke-dasharray="2 2"/>
+  <path d="M3 21l18-17" />
+  <path d="M3 21L21 14 21 4z" fill="currentColor" opacity="0.15" stroke="none"/>
+  <circle cx="3" cy="21" r="1.4" fill="currentColor"/>
+</svg>"##;
+
+/// Fibonacci trend time (mylittlechart).
+pub const ICON_FIB_TREND_TIME: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 17l4-9 3.5 5"/>
+  <path d="M13 4v16" stroke-dasharray="2 2"/>
+  <path d="M16.5 4v16"/>
+  <path d="M21 4v16" stroke-dasharray="2 2"/>
+  <rect x="13" y="4" width="3.5" height="16" fill="currentColor" opacity="0.15" stroke="none"/>
+  <circle cx="3" cy="17" r="1.4" fill="currentColor"/>
+  <circle cx="7" cy="8" r="1.4" fill="currentColor"/>
+  <circle cx="10.5" cy="13" r="1.4" fill="currentColor"/>
+</svg>"##;
+
+/// Fibonacci arcs (mylittlechart).
+pub const ICON_FIB_ARCS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M14 19a5 5 0 0 1 5-5"/>
+  <path d="M10.5 19a8.5 8.5 0 0 1 8.5-8.5"/>
+  <path d="M6 19A13 13 0 0 1 19 6"/>
+  <path d="M6 19A13 13 0 0 1 19 6L19 10.5A8.5 8.5 0 0 0 10.5 19z" fill="currentColor" opacity="0.15" stroke="none"/>
+  <path d="M19 19L7 7" stroke-dasharray="1.5 2"/>
+  <circle cx="19" cy="19" r="1.4" fill="currentColor"/>
+  <circle cx="7" cy="7" r="1.4" fill="currentColor"/>
+</svg>"##;
+
+/// Fibonacci wedge (mylittlechart).
+pub const ICON_FIB_WEDGE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 12L20 5"/>
+  <path d="M4 12L20 19"/>
+  <path d="M11.3 8.8A8 8 0 0 1 11.3 15.2"/>
+  <path d="M15.9 6.8A13 13 0 0 1 15.9 17.2"/>
+  <path d="M11.3 8.8L15.9 6.8A13 13 0 0 1 15.9 17.2L11.3 15.2A8 8 0 0 0 11.3 8.8z" fill="currentColor" opacity="0.15" stroke="none"/>
+  <circle cx="4" cy="12" r="1.4" fill="currentColor"/>
+</svg>"##;
+
+/// Fibonacci fan (mylittlechart).
+pub const ICON_FIB_FAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 20L21 4l0 5z" fill="currentColor" opacity="0.15" stroke="none"/>
+  <path d="M3 20L21 4"/>
+  <path d="M3 20l18-11"/>
+  <path d="M3 20l18-7" stroke-dasharray="2 2"/>
+  <path d="M3 20l18-3"/>
+  <circle cx="3" cy="20" r="1.4" fill="currentColor"/>
+</svg>"##;
+
+/// Gann box (mylittlechart).
+pub const ICON_GANN_BOX: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="4" y="4" width="16" height="16" rx="0.5"/>
+  <path d="M8 4v16" stroke-dasharray="1.5 2"/>
+  <path d="M12 4v16"/>
+  <path d="M16 4v16" stroke-dasharray="1.5 2"/>
+  <path d="M4 8h16" stroke-dasharray="1.5 2"/>
+  <path d="M4 12h16"/>
+  <path d="M4 16h16" stroke-dasharray="1.5 2"/>
+  <path d="M4 20L20 4"/>
+  <rect x="4" y="12" width="8" height="8" fill="currentColor" opacity="0.15" stroke="none"/>
+</svg>"##;
+
+/// Gann square (mylittlechart).
+pub const ICON_GANN_SQUARE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="4" y="4" width="16" height="16" rx="0.5"/>
+  <circle cx="12" cy="12" r="8" fill="currentColor" opacity="0.12" stroke="none"/>
+  <circle cx="12" cy="12" r="8"/>
+  <path d="M4 4l16 16"/>
+  <path d="M20 4L4 20"/>
+</svg>"##;
+
+/// Gann fan (mylittlechart).
+pub const ICON_GANN_FAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 21L21 3"/>
+  <path d="M3 21l18-9"/>
+  <path d="M3 21l9-18"/>
+  <path d="M3 21l18-4.5" stroke-dasharray="2 2"/>
+  <path d="M3 21L7.5 3" stroke-dasharray="2 2"/>
+  <path d="M3 21L21 3 21 12z" fill="currentColor" opacity="0.15" stroke="none"/>
+  <circle cx="3" cy="21" r="1.4" fill="currentColor"/>
+</svg>"##;
+
+/// XABCD harmonic pattern (mylittlechart).
+pub const ICON_XABCD_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2 18L7 6L11 13L16 5L21 15"/>
+  <circle cx="2" cy="18" r="1.2" fill="currentColor"/><circle cx="7" cy="6" r="1.2" fill="currentColor"/><circle cx="11" cy="13" r="1.2" fill="currentColor"/><circle cx="16" cy="5" r="1.2" fill="currentColor"/><circle cx="21" cy="15" r="1.2" fill="currentColor"/>
+</svg>"##;
+
+/// Head and shoulders pattern (mylittlechart).
+pub const ICON_HEAD_SHOULDERS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2 18L6 9L10 15L12 4L14 15L18 9L22 18"/>
+  <path d="M6 15L18 15" stroke-width="0.9"/>
+  <circle cx="6" cy="9" r="1.2" fill="currentColor"/><circle cx="12" cy="4" r="1.2" fill="currentColor"/><circle cx="18" cy="9" r="1.2" fill="currentColor"/>
+</svg>"##;
+
+/// ABCD pattern (mylittlechart).
+pub const ICON_ABCD_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 18L9 6L15 15L20 5"/>
+  <circle cx="4" cy="18" r="1.2" fill="currentColor"/><circle cx="9" cy="6" r="1.2" fill="currentColor"/><circle cx="15" cy="15" r="1.2" fill="currentColor"/><circle cx="20" cy="5" r="1.2" fill="currentColor"/>
+</svg>"##;
+
+/// Triangle pattern (mylittlechart).
+pub const ICON_TRIANGLE_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 6L21 11" stroke-width="0.9"/>
+  <path d="M3 18L21 11" stroke-width="0.9"/>
+  <path d="M4 8L7 16L10 9L13 15L16 10L19 12"/>
+</svg>"##;
+
+/// Three drives pattern (mylittlechart).
+pub const ICON_THREE_DRIVES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2 20L6 12L8 15L12 8L14 11L18 4L22 7"/>
+  <circle cx="6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="8" r="1.3" fill="currentColor"/><circle cx="18" cy="4" r="1.3" fill="currentColor"/>
+</svg>"##;
+
+/// Curve drawing tool (mylittlechart).
+pub const ICON_CURVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 18Q12 2 20 18"/>
+  <circle cx="4" cy="18" r="1.5" fill="currentColor"/>
+  <circle cx="20" cy="18" r="1.5" fill="currentColor"/>
+  <circle cx="12" cy="2" r="1.2" fill="currentColor" fill-opacity="0.5"/>
+</svg>"##;
+
+/// Double curve drawing tool (mylittlechart).
+pub const ICON_DOUBLE_CURVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 9Q7 2 12 9T21 9"/>
+  <path d="M3 18Q7 11 12 18T21 18" stroke-dasharray="2 2"/>
+</svg>"##;
+
+/// Long position tool (mylittlechart).
+pub const ICON_LONG_POSITION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="2" width="18" height="7" stroke-width="0.9"/>
+  <rect x="3" y="9" width="18" height="5" stroke-width="0.9"/>
+  <line x1="3" y1="9" x2="21" y2="9"/>
+  <path d="M12 22v-5"/>
+  <path d="M9 20l3-3 3 3"/>
+</svg>"##;
+
+/// Short position tool (mylittlechart).
+pub const ICON_SHORT_POSITION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="10" width="18" height="5" stroke-width="0.9"/>
+  <rect x="3" y="15" width="18" height="7" stroke-width="0.9"/>
+  <line x1="3" y1="15" x2="21" y2="15"/>
+  <path d="M12 2v5"/>
+  <path d="M9 4l3 3 3-3"/>
+</svg>"##;
+
+/// Icons whose markup was replaced with mylittlechart's in the icons-merge.
+/// Together with [`super::ui::MERGE_ADDED`], this is the regression shot list.
+pub const MERGE_SHOTS: &[(&str, &str)] = &[
+    ("info_line", ICON_INFO_LINE),
+    ("regression_trend", ICON_REGRESSION_TREND),
+    ("flat_top_bottom", ICON_FLAT_TOP_BOTTOM),
+    ("disjoint_channel", ICON_DISJOINT_CHANNEL),
+    ("fib_retracement", ICON_FIB_RETRACEMENT),
+    ("fib_extension", ICON_FIB_EXTENSION),
+    ("fib_channel", ICON_FIB_CHANNEL),
+    ("fib_circle", ICON_FIB_CIRCLE),
+    ("fib_spiral", ICON_FIB_SPIRAL),
+    ("fib_time_zones", ICON_FIB_TIME_ZONES),
+    ("fib_speed_resistance", ICON_FIB_SPEED_RESISTANCE),
+    ("fib_trend_time", ICON_FIB_TREND_TIME),
+    ("fib_arcs", ICON_FIB_ARCS),
+    ("fib_wedge", ICON_FIB_WEDGE),
+    ("fib_fan", ICON_FIB_FAN),
+    ("gann_box", ICON_GANN_BOX),
+    ("gann_square", ICON_GANN_SQUARE),
+    ("gann_fan", ICON_GANN_FAN),
+    ("xabcd_pattern", ICON_XABCD_PATTERN),
+    ("head_shoulders", ICON_HEAD_SHOULDERS),
+    ("abcd_pattern", ICON_ABCD_PATTERN),
+    ("triangle_pattern", ICON_TRIANGLE_PATTERN),
+    ("three_drives", ICON_THREE_DRIVES),
+    ("curve", ICON_CURVE),
+    ("double_curve", ICON_DOUBLE_CURVE),
+    ("long_position", ICON_LONG_POSITION),
+    ("short_position", ICON_SHORT_POSITION),
+];
+
 /// Every icon here with its name (a gallery, a picker); naming one const instead
 /// keeps the rest out of the binary.
 pub const ALL: &[(&str, &str)] = &[
@@ -816,6 +1095,33 @@ pub const ALL: &[(&str, &str)] = &[
     ("family_order_flow", ICON_FAMILY_ORDER_FLOW),
     ("family_harmonics", ICON_FAMILY_HARMONICS),
     ("family_classic", ICON_FAMILY_CLASSIC),
+    ("info_line", ICON_INFO_LINE),
+    ("regression_trend", ICON_REGRESSION_TREND),
+    ("flat_top_bottom", ICON_FLAT_TOP_BOTTOM),
+    ("disjoint_channel", ICON_DISJOINT_CHANNEL),
+    ("fib_retracement", ICON_FIB_RETRACEMENT),
+    ("fib_extension", ICON_FIB_EXTENSION),
+    ("fib_channel", ICON_FIB_CHANNEL),
+    ("fib_circle", ICON_FIB_CIRCLE),
+    ("fib_spiral", ICON_FIB_SPIRAL),
+    ("fib_time_zones", ICON_FIB_TIME_ZONES),
+    ("fib_speed_resistance", ICON_FIB_SPEED_RESISTANCE),
+    ("fib_trend_time", ICON_FIB_TREND_TIME),
+    ("fib_arcs", ICON_FIB_ARCS),
+    ("fib_wedge", ICON_FIB_WEDGE),
+    ("fib_fan", ICON_FIB_FAN),
+    ("gann_box", ICON_GANN_BOX),
+    ("gann_square", ICON_GANN_SQUARE),
+    ("gann_fan", ICON_GANN_FAN),
+    ("xabcd_pattern", ICON_XABCD_PATTERN),
+    ("head_shoulders", ICON_HEAD_SHOULDERS),
+    ("abcd_pattern", ICON_ABCD_PATTERN),
+    ("triangle_pattern", ICON_TRIANGLE_PATTERN),
+    ("three_drives", ICON_THREE_DRIVES),
+    ("curve", ICON_CURVE),
+    ("double_curve", ICON_DOUBLE_CURVE),
+    ("long_position", ICON_LONG_POSITION),
+    ("short_position", ICON_SHORT_POSITION),
 ];
 
 #[cfg(test)]
@@ -825,7 +1131,8 @@ mod tests {
 
     #[test]
     fn root_stroke_width_stays_thin() {
-        assert_eq!(ALL.len(), 69, "the gallery lists them all");
+        assert_eq!(ALL.len(), 96, "the gallery lists them all");
+        assert_eq!(MERGE_SHOTS.len(), 27, "every replaced drawing-tool mark is in the shot list");
         let icons: &[(&str, &str)] = &[
             ("ICON_RANGE_BAR", ICON_RANGE_BAR),
             ("ICON_VOLUME_BAR", ICON_VOLUME_BAR),
@@ -896,6 +1203,33 @@ mod tests {
             ("ICON_FAMILY_ORDER_FLOW", ICON_FAMILY_ORDER_FLOW),
             ("ICON_FAMILY_HARMONICS", ICON_FAMILY_HARMONICS),
             ("ICON_FAMILY_CLASSIC", ICON_FAMILY_CLASSIC),
+            ("ICON_INFO_LINE", ICON_INFO_LINE),
+            ("ICON_REGRESSION_TREND", ICON_REGRESSION_TREND),
+            ("ICON_FLAT_TOP_BOTTOM", ICON_FLAT_TOP_BOTTOM),
+            ("ICON_DISJOINT_CHANNEL", ICON_DISJOINT_CHANNEL),
+            ("ICON_FIB_RETRACEMENT", ICON_FIB_RETRACEMENT),
+            ("ICON_FIB_EXTENSION", ICON_FIB_EXTENSION),
+            ("ICON_FIB_CHANNEL", ICON_FIB_CHANNEL),
+            ("ICON_FIB_CIRCLE", ICON_FIB_CIRCLE),
+            ("ICON_FIB_SPIRAL", ICON_FIB_SPIRAL),
+            ("ICON_FIB_TIME_ZONES", ICON_FIB_TIME_ZONES),
+            ("ICON_FIB_SPEED_RESISTANCE", ICON_FIB_SPEED_RESISTANCE),
+            ("ICON_FIB_TREND_TIME", ICON_FIB_TREND_TIME),
+            ("ICON_FIB_ARCS", ICON_FIB_ARCS),
+            ("ICON_FIB_WEDGE", ICON_FIB_WEDGE),
+            ("ICON_FIB_FAN", ICON_FIB_FAN),
+            ("ICON_GANN_BOX", ICON_GANN_BOX),
+            ("ICON_GANN_SQUARE", ICON_GANN_SQUARE),
+            ("ICON_GANN_FAN", ICON_GANN_FAN),
+            ("ICON_XABCD_PATTERN", ICON_XABCD_PATTERN),
+            ("ICON_HEAD_SHOULDERS", ICON_HEAD_SHOULDERS),
+            ("ICON_ABCD_PATTERN", ICON_ABCD_PATTERN),
+            ("ICON_TRIANGLE_PATTERN", ICON_TRIANGLE_PATTERN),
+            ("ICON_THREE_DRIVES", ICON_THREE_DRIVES),
+            ("ICON_CURVE", ICON_CURVE),
+            ("ICON_DOUBLE_CURVE", ICON_DOUBLE_CURVE),
+            ("ICON_LONG_POSITION", ICON_LONG_POSITION),
+            ("ICON_SHORT_POSITION", ICON_SHORT_POSITION),
         ];
         for (name, svg) in icons {
             assert!(svg.starts_with("<svg") && svg.trim_end().ends_with("</svg>"), "{name} is one svg");
