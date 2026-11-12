@@ -114,6 +114,111 @@ fn ids(id: &str) -> (WidgetId, WidgetId) {
     (WidgetId::from(format!("{id}:thumb").as_str()), WidgetId::from(format!("{id}:track").as_str()))
 }
 
+/// The input half of a scroll container, on the frame's pieces (shared by the panel and
+/// overlay entry points and by DOM scroll containers). Returns whether to request a frame.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn begin_parts<S: Spec>(
+    states: &mut uzor::app_context::state::StateRegistry,
+    view: &crate::handle::VisualView<S>,
+    now: f64,
+    id: &str,
+    viewport: Rect,
+    sv: &mut ScrollView,
+    content_h: f64,
+    wheel: bool,
+    st: &ScrollStyle,
+) -> bool {
+    let mut frame = false;
+    sv.set_extent(content_h, viewport.height);
+    let (thumb_id, track_id) = ids(id);
+    let track = sv.track(viewport, st);
+    let p = view.raw_pointer();
+    if wheel && p.is_some_and(|p| inside(viewport, p)) {
+        let (_, dy) = view.scroll();
+        let owner = dy == 0.0 || wheel_owner(chain(states, now), id, p.unwrap_or_default(), dy);
+        // A finger's steps already carry the kernel's fling: no second inertia.
+        let touch_st;
+        let wst = if view.scroll_touch() && st.fling {
+            touch_st = ScrollStyle { fling: false, ..st.clone() };
+            &touch_st
+        } else {
+            st
+        };
+        if owner && sv.wheel(dy, view.scroll_precise(), now, wst) {
+            frame = true;
+        }
+    }
+    if let Some(p) = p.filter(|p| inside(viewport, *p) && !view.clicks().is_empty()) {
+        // A click makes the innermost scrollable container under it the keyboard one.
+        let c = chain(states, now);
+        c.active = c.prev.iter().rev().find(|e| inside(e.1, p) && (e.2 || e.3)).map(|e| e.0.clone()).or(c.active.take());
+    }
+    let c = chain(states, now);
+    if let Some(k) = c.key {
+        if key_owner(c, p, k).as_deref() == Some(id) {
+            c.key = None;
+            if sv.key(k, true) {
+                frame = true;
+            }
+        }
+    }
+    if view.is_pressed(&thumb_id) && !sv.dragging() {
+        if let Some(p) = p {
+            sv.begin_drag(p.1);
+        }
+    }
+    if sv.dragging() {
+        if view.button_down() {
+            if let Some(p) = p {
+                sv.drag_to(p.1, track, st);
+            }
+        } else {
+            sv.end_drag();
+        }
+        frame = true;
+    }
+    if view.clicks().iter().any(|(w, _)| *w == track_id) {
+        if let Some(p) = p {
+            sv.page_towards(p.1, track, st);
+        }
+    }
+    if sv.tick(now, st) {
+        frame = true;
+    }
+    frame
+}
+
+/// The output half on the frame's pieces: joins the chain, registers the track and thumb
+/// above the content and paints the thumb (nothing when the content fits).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn end_parts<S: Spec>(
+    widgets: &mut crate::handle::Widgets<'_>,
+    render: &mut dyn uzor::render::RenderContext,
+    view: &crate::handle::VisualView<S>,
+    now: f64,
+    id: &str,
+    viewport: Rect,
+    sv: &ScrollView,
+    st: &ScrollStyle,
+    overlay: bool,
+) {
+    chain(widgets.states, now).cur.push((id.to_string(), viewport, sv.can_scroll(1.0), sv.can_scroll(-1.0), overlay, sv.overscroll.chains()));
+    let track = sv.track(viewport, st);
+    let Some(th) = sv.thumb(track, st) else { return };
+    let (thumb_id, track_id) = ids(id);
+    let layer = widgets.layer.clone();
+    // A slightly wider hit than the painted bar.
+    let grow = |r: Rect| Rect::new(r.x - 4.0, r.y, r.width + 7.0, r.height);
+    // Scrollbars keep the arrow (as the browser's); the thumb captures the pointer on drag.
+    widgets.coord.register_atomic(track_id, WidgetKind::ScrollbarTrack, grow(track), Sense::CLICK, &layer);
+    widgets.coord.register_atomic(thumb_id.clone(), WidgetKind::ScrollbarHandle, grow(th), Sense::CLICK_AND_DRAG, &layer);
+    let hot = sv.dragging() || view.is_hovered(&thumb_id) || view.raw_pointer().is_some_and(|p| inside(grow(track), p));
+    render.set_fill_color(if hot { st.thumb_hot } else { st.thumb });
+    render.begin_path();
+    render.rounded_rect(th.x, th.y, th.width, th.height, th.width / 2.0);
+    render.fill();
+}
+
 macro_rules! scroll_fns {
     ($cx:ident, $begin:ident, $end:ident, $overlay:expr) => {
 /// Input half: sets the extent, applies this frame's wheel when the pointer is
@@ -121,60 +226,7 @@ macro_rules! scroll_fns {
 /// drag, pages on a track press. Returns the offset to paint the content at.
 pub fn $begin<S: Spec>(cx: &mut $cx<'_, S>, id: &str, viewport: Rect, sv: &mut ScrollView, content_h: f64, wheel: bool, st: &ScrollStyle) -> f64 {
     let now = cx.time.now.0 * 1000.0;
-    sv.set_extent(content_h, viewport.height);
-    let (thumb_id, track_id) = ids(id);
-    let track = sv.track(viewport, st);
-    let p = cx.view.raw_pointer();
-    if wheel && p.is_some_and(|p| inside(viewport, p)) {
-        let (_, dy) = cx.view.scroll();
-        let owner = dy == 0.0 || wheel_owner(chain(cx.widgets.states, now), id, p.unwrap_or_default(), dy);
-        // A finger's steps already carry the kernel's fling: no second inertia.
-        let touch_st;
-        let wst = if cx.view.scroll_touch() && st.fling {
-            touch_st = ScrollStyle { fling: false, ..st.clone() };
-            &touch_st
-        } else {
-            st
-        };
-        if owner && sv.wheel(dy, cx.view.scroll_precise(), now, wst) {
-            cx.out.request_frame();
-        }
-    }
-    if let Some(p) = p.filter(|p| inside(viewport, *p) && !cx.view.clicks().is_empty()) {
-        // A click makes the innermost scrollable container under it the keyboard one.
-        let c = chain(cx.widgets.states, now);
-        c.active = c.prev.iter().rev().find(|e| inside(e.1, p) && (e.2 || e.3)).map(|e| e.0.clone()).or(c.active.take());
-    }
-    let c = chain(cx.widgets.states, now);
-    if let Some(k) = c.key {
-        if key_owner(c, p, k).as_deref() == Some(id) {
-            c.key = None;
-            if sv.key(k, true) {
-                cx.out.request_frame();
-            }
-        }
-    }
-    if cx.view.is_pressed(&thumb_id) && !sv.dragging() {
-        if let Some(p) = p {
-            sv.begin_drag(p.1);
-        }
-    }
-    if sv.dragging() {
-        if cx.view.button_down() {
-            if let Some(p) = p {
-                sv.drag_to(p.1, track, st);
-            }
-        } else {
-            sv.end_drag();
-        }
-        cx.out.request_frame();
-    }
-    if cx.view.clicks().iter().any(|(w, _)| *w == track_id) {
-        if let Some(p) = p {
-            sv.page_towards(p.1, track, st);
-        }
-    }
-    if sv.tick(now, st) {
+    if begin_parts(cx.widgets.states, cx.view, now, id, viewport, sv, content_h, wheel, st) {
         cx.out.request_frame();
     }
     sv.offset
@@ -184,22 +236,7 @@ pub fn $begin<S: Spec>(cx: &mut $cx<'_, S>, id: &str, viewport: Rect, sv: &mut S
 /// the thumb (nothing when the content fits).
 pub fn $end<S: Spec>(cx: &mut $cx<'_, S>, id: &str, viewport: Rect, sv: &ScrollView, st: &ScrollStyle) {
     let now = cx.time.now.0 * 1000.0;
-    chain(cx.widgets.states, now).cur.push((id.to_string(), viewport, sv.can_scroll(1.0), sv.can_scroll(-1.0), $overlay, sv.overscroll.chains()));
-    let track = sv.track(viewport, st);
-    let Some(th) = sv.thumb(track, st) else { return };
-    let (thumb_id, track_id) = ids(id);
-    let layer = cx.widgets.layer.clone();
-    // A slightly wider hit than the painted bar.
-    let grow = |r: Rect| Rect::new(r.x - 4.0, r.y, r.width + 7.0, r.height);
-    // Scrollbars keep the arrow (as the browser's); the thumb captures the pointer on drag.
-    cx.widgets.coord.register_atomic(track_id, WidgetKind::ScrollbarTrack, grow(track), Sense::CLICK, &layer);
-    cx.widgets.coord.register_atomic(thumb_id.clone(), WidgetKind::ScrollbarHandle, grow(th), Sense::CLICK_AND_DRAG, &layer);
-    let hot = sv.dragging() || cx.view.is_hovered(&thumb_id) || cx.view.raw_pointer().is_some_and(|p| inside(grow(track), p));
-    let ctx = &mut *cx.render;
-    ctx.set_fill_color(if hot { st.thumb_hot } else { st.thumb });
-    ctx.begin_path();
-    ctx.rounded_rect(th.x, th.y, th.width, th.height, th.width / 2.0);
-    ctx.fill();
+    end_parts(&mut cx.widgets, &mut *cx.render, cx.view, now, id, viewport, sv, st, $overlay);
 }
 
     };

@@ -28,10 +28,36 @@ pub trait ContentCx<'a> {
     /// Host clock in whole milliseconds. Same unit as
     /// `TextFieldStore::cursor_visible`.
     fn time_ms(&self) -> u64;
+
+    /// The frame clock in milliseconds, unrounded: the stamp scroll containers share
+    /// within one frame.
+    fn frame_now_ms(&self) -> f64 {
+        self.time_ms() as f64
+    }
+
+    /// Ask for another frame (an animation or a scroll is still moving).
+    fn request_frame(&mut self) {}
+
+    /// Painting into an overlay (a modal makes the page's scroll containers inert to keys).
+    fn is_overlay(&self) -> bool {
+        false
+    }
 }
 
 impl<'a, S: Spec> ContentCx<'a> for PanelCx<'a, S> {
     type Spec = S;
+
+    fn frame_now_ms(&self) -> f64 {
+        self.time.now.0 * 1000.0
+    }
+
+    fn request_frame(&mut self) {
+        self.out.request_frame();
+    }
+
+    fn is_overlay(&self) -> bool {
+        false
+    }
 
     fn ime_area(&mut self, rect: uzor::Rect) {
         self.out.ime_area(rect);
@@ -51,6 +77,18 @@ impl<'a, S: Spec> ContentCx<'a> for PanelCx<'a, S> {
 
 impl<'a, S: Spec> ContentCx<'a> for OverlayCx<'a, S> {
     type Spec = S;
+
+    fn frame_now_ms(&self) -> f64 {
+        self.time.now.0 * 1000.0
+    }
+
+    fn request_frame(&mut self) {
+        self.out.request_frame();
+    }
+
+    fn is_overlay(&self) -> bool {
+        true
+    }
 
     fn ime_area(&mut self, rect: uzor::Rect) {
         self.out.ime_area(rect);
