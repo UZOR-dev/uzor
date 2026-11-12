@@ -302,3 +302,85 @@ fn calendar_extremes_are_constant_time_and_saturate() {
         let _ = weekday_from_timestamp(ts);
     }
 }
+
+// Reviewer fuzz cases for generate_ticks: extreme item times and spans.
+
+fn run_all(items: &[i64], vp: &SlotViewport) -> Vec<Vec<TimeTick>> {
+    let labels = CalendarLabels::default();
+    [false, true]
+        .iter()
+        .map(|&irregular| TimeScale::new().generate_ticks(vp, items, measure, &labels, irregular))
+        .collect()
+}
+
+#[test]
+fn extreme_item_times_do_not_panic() {
+    let sets: [Vec<i64>; 6] = [
+        vec![i64::MIN, i64::MIN + 60, i64::MIN + 120],
+        vec![i64::MAX - 120, i64::MAX - 60, i64::MAX],
+        vec![i64::MIN / 2, 0, i64::MAX / 2],
+        vec![-(i64::MAX / 2), -(i64::MAX / 2) + 60, -(i64::MAX / 2) + 120],
+        vec![i64::MAX / 2, i64::MAX / 2 + 60, i64::MAX / 2 + 120],
+        // Unsorted, extreme values in the middle only.
+        vec![T0, i64::MAX, i64::MIN, T0 + 60, T0 + 120],
+    ];
+    for items in &sets {
+        for (start, spacing) in [(0.0, 6.0), (-1e6, 6.0), (1e6, 0.7), (-50.0, 600.0), (1e11, 1e-3)] {
+            let vp = SlotViewport::new(800.0).with_spacing(spacing).with_start(start).with_count(items.len());
+            for t in run_all(items, &vp) {
+                assert!(t.len() <= TICK_MAX_TICKS);
+                assert!(t.iter().all(|t| t.x.is_finite()));
+            }
+        }
+    }
+    // Out-of-window series give no ticks at all.
+    let vp = SlotViewport::new(800.0).with_spacing(6.0).with_count(3);
+    for items in &sets[..5] {
+        assert!(run_all(items, &vp).iter().all(|t| t.is_empty()), "{items:?}");
+    }
+}
+
+#[test]
+fn huge_spans_finish_quickly() {
+    // Three bars a trillion seconds apart, both paths.
+    for items in [vec![-1_000_000_000_000, 0, 1_000_000_000_000], vec![0, 1_000_000_000_000, 2_000_000_000_000]] {
+        for start in [0.0, -50.0, 1.0] {
+            let vp = SlotViewport::new(800.0).with_spacing(6.0).with_start(start).with_count(3);
+            let t0 = std::time::Instant::now();
+            let _ = run_all(&items, &vp);
+            assert!(t0.elapsed() < std::time::Duration::from_millis(100), "{items:?} took {:?}", t0.elapsed());
+        }
+    }
+    // Widest in-window span: year 0 to year 9999 in three bars. The walks
+    // hit their step cap instead of stepping through ~3.6 million days.
+    let items = vec![TICK_MIN_TIMESTAMP, 0, TICK_MAX_TIMESTAMP];
+    for (start, spacing) in [(0.0, 6.0), (-50.0, 300.0), (1.0, 1e5), (2.0, 1e9)] {
+        let vp = SlotViewport::new(800.0).with_spacing(spacing).with_start(start).with_count(3);
+        let t0 = std::time::Instant::now();
+        let _ = run_all(&items, &vp);
+        assert!(t0.elapsed() < std::time::Duration::from_millis(100), "spacing {spacing} took {:?}", t0.elapsed());
+    }
+}
+
+#[test]
+fn absurd_viewports_give_no_ticks() {
+    let items = regular(60, 500);
+    for (width, spacing, start) in [
+        (800.0, 6.0, 1e13),
+        (800.0, 6.0, -1e13),
+        (1e300, 1.0, 0.0),
+        (f64::INFINITY, 6.0, 0.0),
+        (800.0, 1e-300, 0.0),
+    ] {
+        let vp = SlotViewport::new(width).with_spacing(spacing).with_start(start).with_count(items.len());
+        assert!(run_all(&items, &vp).iter().all(|t| t.is_empty()), "{width} {spacing} {start}");
+    }
+}
+
+#[test]
+fn fill_weights_extreme_times_do_not_overflow() {
+    let mut pts = [(i64::MIN, TickWeight::Second), (0, TickWeight::Second), (i64::MAX, TickWeight::Second)];
+    fill_weights(&mut pts, 0);
+    fill_weights(&mut pts, 1);
+    let _ = weight_by_time(i64::MAX, i64::MIN);
+}

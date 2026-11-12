@@ -28,6 +28,23 @@ pub const HOUR: i64 = 3600;
 /// Seconds in a day.
 pub const DAY: i64 = 86400;
 
+/// Earliest item time [`TimeScale::generate_ticks`] accepts:
+/// 0000-01-01T00:00:00Z. Series starting earlier get no ticks.
+pub const TICK_MIN_TIMESTAMP: i64 = -62_167_219_200;
+/// Latest item time [`TimeScale::generate_ticks`] accepts:
+/// 9999-12-31T23:59:59Z. Series ending later get no ticks (this also
+/// catches millisecond timestamps passed as seconds).
+pub const TICK_MAX_TIMESTAMP: i64 = 253_402_300_799;
+/// Largest `|start|` and visible slot count (`width / spacing`) a viewport
+/// may have for [`TimeScale::generate_ticks`]; beyond it there are no ticks.
+pub const TICK_MAX_VIEWPORT_SLOTS: f64 = 1e12;
+/// Most steps one calendar walk (days, months, intraday boundaries) inside
+/// [`TimeScale::generate_ticks`] may take. A walk that would need more
+/// produces no ticks from that walk instead of a partial axis.
+pub const TICK_MAX_WALK_STEPS: usize = 100_000;
+/// Most ticks [`TimeScale::generate_ticks`] returns.
+pub const TICK_MAX_TICKS: usize = 2_000;
+
 /// Something placed on a time axis, with a Unix time in seconds.
 pub trait Timed {
     /// Unix time, seconds.
@@ -258,7 +275,7 @@ fn is_non_uniform<T: Timed>(bars: &[T]) -> bool {
     let start = n - sample;
     let mut gaps: Vec<i64> = Vec::with_capacity(sample - 1);
     for i in (start + 1)..n {
-        let g = (bars[i].time() - bars[i - 1].time()).abs();
+        let g = bars[i].time().saturating_sub(bars[i - 1].time()).saturating_abs();
         if g > 0 { gaps.push(g); }
     }
     if gaps.len() < 2 { return false; }
@@ -271,16 +288,17 @@ fn is_non_uniform<T: Timed>(bars: &[T]) -> bool {
 /// Fill per-bar weights given a sorted slice of `(timestamp_secs, weight)`
 /// tuples. `start` is the first index to (re-)compute (0 = full bulk pass,
 /// `N` = incremental tail re-weight after appending bars). Weights are
-/// written into `points[i].1`.
+/// written into `points[i].1`. A `start` past the end changes nothing;
+/// timestamps are converted to ms with saturating math.
 ///
 /// Mirrors LWC `fillWeightsForPoints` — first point gets a weight estimated
 /// from the average interval, and downstream points compare against their
 /// real predecessor.
 #[allow(clippy::needless_range_loop)]
 pub fn fill_weights(points: &mut [(i64, TickWeight)], start: usize) {
-    if points.is_empty() { return; }
+    if points.is_empty() || start > points.len() { return; }
     let mut prev_ms: Option<i64> = if start > 0 {
-        Some(points[start - 1].0 * 1000)
+        Some(points[start - 1].0.saturating_mul(1000))
     } else {
         None
     };
@@ -288,19 +306,20 @@ pub fn fill_weights(points: &mut [(i64, TickWeight)], start: usize) {
     let mut diff_count: i64 = 0;
 
     for i in start..points.len() {
-        let cur_ms = points[i].0 * 1000;
+        let cur_ms = points[i].0.saturating_mul(1000);
         if let Some(p) = prev_ms {
             points[i].1 = weight_by_time(cur_ms, p);
-            total_diff += cur_ms - p;
+            total_diff = total_diff.saturating_add(cur_ms.saturating_sub(p));
             diff_count += 1;
         }
         prev_ms = Some(cur_ms);
     }
 
     if start == 0 && points.len() > 1 && diff_count > 0 {
-        let avg = (total_diff + diff_count - 1) / diff_count;
-        let approx_prev_ms = points[0].0 * 1000 - avg;
-        points[0].1 = weight_by_time(points[0].0 * 1000, approx_prev_ms);
+        let avg = total_diff.saturating_add(diff_count - 1) / diff_count;
+        let first_ms = points[0].0.saturating_mul(1000);
+        let approx_prev_ms = first_ms.saturating_sub(avg);
+        points[0].1 = weight_by_time(first_ms, approx_prev_ms);
     }
 }
 
@@ -311,17 +330,17 @@ impl TimeScale {
     /// For indices outside that range extrapolates from the nearest edge using `bar_interval`.
     fn bar_idx_to_timestamp<T: Timed>(idx: i64, bars: &[T], first_ts: i64, bar_interval: i64) -> i64 {
         if bars.is_empty() {
-            return first_ts + idx * bar_interval;
+            return first_ts.saturating_add(idx.saturating_mul(bar_interval));
         }
         if idx >= 0 && (idx as usize) < bars.len() {
             return bars[idx as usize].time();
         }
         if idx < 0 {
-            first_ts + idx * bar_interval
+            first_ts.saturating_add(idx.saturating_mul(bar_interval))
         } else {
             let last_ts = bars[bars.len() - 1].time();
-            let beyond = idx - (bars.len() as i64 - 1);
-            last_ts + beyond * bar_interval
+            let beyond = idx.saturating_sub(bars.len() as i64 - 1);
+            last_ts.saturating_add(beyond.saturating_mul(bar_interval))
         }
     }
 
@@ -331,14 +350,14 @@ impl TimeScale {
     /// For timestamps outside the range extrapolates from the nearest edge.
     fn timestamp_to_bar_idx<T: Timed>(ts: i64, bars: &[T], first_ts: i64, bar_interval: i64) -> i64 {
         if bars.is_empty() || bar_interval <= 0 {
-            return (ts - first_ts) / bar_interval.max(1);
+            return ts.saturating_sub(first_ts) / bar_interval.max(1);
         }
         let last_ts = bars[bars.len() - 1].time();
         if ts < first_ts {
-            (ts - first_ts) / bar_interval
+            ts.saturating_sub(first_ts) / bar_interval
         } else if ts > last_ts {
-            let beyond_secs = ts - last_ts;
-            (bars.len() as i64 - 1) + beyond_secs / bar_interval
+            let beyond_secs = ts.saturating_sub(last_ts);
+            (bars.len() as i64 - 1).saturating_add(beyond_secs / bar_interval)
         } else {
             match bars.binary_search_by_key(&ts, |b| b.time()) {
                 Ok(idx) => idx as i64,
@@ -364,8 +383,8 @@ impl TimeScale {
             Err(idx) => {
                 let before = idx - 1;
                 let after = idx;
-                let d_before = (ts - bars[before].time()).abs();
-                let d_after = (bars[after].time() - ts).abs();
+                let d_before = ts.abs_diff(bars[before].time());
+                let d_after = bars[after].time().abs_diff(ts);
                 if d_before <= d_after { before } else { after }
             }
         }
@@ -445,8 +464,13 @@ impl TimeScale {
     ///   are not on a time cadence (they still need real timestamps).
     ///   Series with gaps over twice the median take that path on their own.
     ///
-    /// Returns no ticks for no items, or for a viewport whose spacing is not
-    /// positive and finite or whose start is not finite.
+    /// Returns no ticks for no items, for a viewport whose spacing is not
+    /// positive and finite or whose start is not finite, when the first or
+    /// last item lies outside [`TICK_MIN_TIMESTAMP`]`..=`[`TICK_MAX_TIMESTAMP`],
+    /// or when `|start|` or the visible slot count exceeds
+    /// [`TICK_MAX_VIEWPORT_SLOTS`]. Calendar walks are bounded by
+    /// [`TICK_MAX_WALK_STEPS`] and the result by [`TICK_MAX_TICKS`], so the
+    /// cost does not grow with the time span.
     ///
     /// Regular series measure how many pixels a day spans: over 200 px use
     /// intraday steps, otherwise day steps from the 1st of each month (or
@@ -471,6 +495,17 @@ impl TimeScale {
             && viewport.spacing > 0.0
             && viewport.start.is_finite();
         if bars.is_empty() || !usable_viewport {
+            return ticks;
+        }
+        let in_window = |ts: i64| (TICK_MIN_TIMESTAMP..=TICK_MAX_TIMESTAMP).contains(&ts);
+        if !in_window(bars[0].time()) || !in_window(bars[bars.len() - 1].time()) {
+            return ticks;
+        }
+        let slots = viewport.width / viewport.spacing;
+        if viewport.start.abs() > TICK_MAX_VIEWPORT_SLOTS
+            || slots.is_nan()
+            || slots > TICK_MAX_VIEWPORT_SLOTS
+        {
             return ticks;
         }
 
@@ -520,7 +555,7 @@ impl TimeScale {
         let bar_interval = if bars.len() >= 2 {
             let sample_count = bars.len().min(10);
             let sample_start = bars.len() - sample_count;
-            let total_time = bars[bars.len() - 1].time() - bars[sample_start].time();
+            let total_time = bars[bars.len() - 1].time().saturating_sub(bars[sample_start].time());
             (total_time / (sample_count - 1) as i64).max(1)
         } else {
             HOUR
@@ -532,8 +567,10 @@ impl TimeScale {
         let start_bar = viewport.start.floor() as i64;
         let end_bar = (viewport.start + visible_bars as f64).ceil() as i64;
 
-        let start_ts = Self::bar_idx_to_timestamp(start_bar - 50, bars, first_ts, bar_interval);
-        let end_ts = Self::bar_idx_to_timestamp(end_bar + 50, bars, first_ts, bar_interval);
+        let start_ts = Self::bar_idx_to_timestamp(start_bar - 50, bars, first_ts, bar_interval)
+            .clamp(TICK_MIN_TIMESTAMP, TICK_MAX_TIMESTAMP);
+        let end_ts = Self::bar_idx_to_timestamp(end_bar + 50, bars, first_ts, bar_interval)
+            .clamp(TICK_MIN_TIMESTAMP, TICK_MAX_TIMESTAMP);
 
         let bars_per_day = DAY / bar_interval;
         let day_width_px = bars_per_day as f64 * viewport.spacing;
@@ -637,7 +674,7 @@ impl TimeScale {
 
         let mut gaps: Vec<i64> = Vec::with_capacity(end_bar - start_bar);
         for i in (start_bar + 1)..=end_bar {
-            let g = bars[i].time() - bars[i - 1].time();
+            let g = bars[i].time().saturating_sub(bars[i - 1].time());
             if g > 0 { gaps.push(g); }
         }
         if gaps.is_empty() {
@@ -646,8 +683,8 @@ impl TimeScale {
         gaps.sort_unstable();
         let median_interval = gaps[gaps.len() / 2].max(1);
 
-        let start_ts = bars[start_bar].time();
-        let mut end_ts = bars[end_bar].time();
+        let start_ts = bars[start_bar].time().clamp(TICK_MIN_TIMESTAMP, TICK_MAX_TIMESTAMP);
+        let mut end_ts = bars[end_bar].time().clamp(TICK_MIN_TIMESTAMP, TICK_MAX_TIMESTAMP);
         if end_ts <= start_ts {
             return;
         }
@@ -656,7 +693,10 @@ impl TimeScale {
         let end_bar_vp = (viewport.start + visible_bars as f64).ceil() as i64 + 50;
         if end_bar_vp > last_real_idx {
             let beyond = end_bar_vp - last_real_idx;
-            let extrapolated_end_ts = bars[last_real_idx as usize].time() + beyond * median_interval;
+            let extrapolated_end_ts = bars[last_real_idx as usize]
+                .time()
+                .saturating_add(beyond.saturating_mul(median_interval))
+                .min(TICK_MAX_TIMESTAMP);
             if extrapolated_end_ts > end_ts {
                 end_ts = extrapolated_end_ts;
             }
@@ -701,7 +741,10 @@ impl TimeScale {
                 }
                 day_ts = date_to_timestamp(year, month, day, 0, 0, 0);
             }
+            let mut walk = 0usize;
             while day_ts <= end_ts {
+                walk += 1;
+                if walk > TICK_MAX_WALK_STEPS { return; }
                 let w = if day == 1 { TickWeight::Month } else { TickWeight::Day };
                 boundaries.push((day_ts, w));
                 day += 1;
@@ -716,7 +759,10 @@ impl TimeScale {
             const DAY_SEC: i64 = 86_400;
             let first_boundary = (start_ts / time_interval) * time_interval;
             let mut boundary_ts = first_boundary;
+            let mut walk = 0usize;
             while boundary_ts <= end_ts {
+                walk += 1;
+                if walk > TICK_MAX_WALK_STEPS { return; }
                 if boundary_ts.rem_euclid(DAY_SEC) != 0 {
                     boundaries.push((boundary_ts, weight));
                 }
@@ -738,7 +784,10 @@ impl TimeScale {
 
             if step_days == 0 {
                 let (mut year, mut month, _, _, _, _) = timestamp_to_date(start_ts);
+                let mut walk = 0usize;
                 loop {
+                    walk += 1;
+                    if walk > TICK_MAX_WALK_STEPS { return; }
                     let ts = date_to_timestamp(year, month, 1, 0, 0, 0);
                     if ts > end_ts { break; }
                     if ts >= start_ts - 31 * DAY {
@@ -751,7 +800,10 @@ impl TimeScale {
                 let (mut year, mut month, _, _, _, _) = timestamp_to_date(start_ts);
                 month -= 1;
                 if month < 1 { year -= 1; month = 12; }
+                let mut walk = 0usize;
                 loop {
+                    walk += 1;
+                    if walk > TICK_MAX_WALK_STEPS { return; }
                     let month_start = date_to_timestamp(year, month, 1, 0, 0, 0);
                     if month_start > end_ts + 31 * DAY { break; }
                     if month_start >= start_ts - 31 * DAY {
@@ -779,7 +831,7 @@ impl TimeScale {
         let mut by_bar: Vec<(i64, i64, TickWeight)> = Vec::with_capacity(boundaries.len());
         for (ts, weight) in boundaries {
             let idx: i64 = if ts > last_ts {
-                end_bar as i64 + (ts - last_ts) / median_interval
+                (end_bar as i64).saturating_add(ts.saturating_sub(last_ts) / median_interval)
             } else {
                 Self::timestamp_to_bar_idx_nearest_clamped(ts, &bars[..=end_bar]) as i64
             };
@@ -849,11 +901,16 @@ impl TimeScale {
 
         let mut candidates: Vec<(i64, f64, TickWeight, i64)> = Vec::new();
 
-        self.add_day_boundaries(&mut candidates, start_ts, end_ts, bars, first_ts, bar_interval, viewport);
+        if !self.add_day_boundaries(&mut candidates, start_ts, end_ts, bars, first_ts, bar_interval, viewport) {
+            return;
+        }
 
         let first_boundary = (start_ts / time_interval) * time_interval;
         let mut boundary_ts = first_boundary;
+        let mut walk = 0usize;
         while boundary_ts <= end_ts {
+            walk += 1;
+            if walk > TICK_MAX_WALK_STEPS { return; }
             let bar_idx = Self::timestamp_to_bar_idx(boundary_ts, bars, first_ts, bar_interval);
             let x = viewport.pos_to_x(bar_idx as f64);
 
@@ -898,7 +955,10 @@ impl TimeScale {
         if month < 1 { year -= 1; month = 12; }
 
         let mut months_in_range: Vec<(i32, i32)> = Vec::new();
+        let mut walk = 0usize;
         loop {
+            walk += 1;
+            if walk > TICK_MAX_WALK_STEPS { return; }
             let ts = date_to_timestamp(year, month, 1, 0, 0, 0);
             if ts > end_ts + 31 * DAY { break; }
             if ts >= start_ts - 31 * DAY {
@@ -972,6 +1032,10 @@ impl TimeScale {
                     TickWeight::Day
                 };
 
+                if ticks.len() >= TICK_MAX_TICKS {
+                    ticks.clear();
+                    return;
+                }
                 let label = labels.label(ts, weight);
                 ticks.push(TimeTick {
                     slot: bar_idx,
@@ -983,7 +1047,8 @@ impl TimeScale {
         }
     }
 
-    /// Add day boundaries (midnight UTC)
+    /// Add day boundaries (midnight UTC). Returns `false`, having added
+    /// nothing, when the walk would pass [`TICK_MAX_WALK_STEPS`].
     #[allow(clippy::too_many_arguments)]
     fn add_day_boundaries<T: Timed>(
         &self,
@@ -994,7 +1059,8 @@ impl TimeScale {
         first_ts: i64,
         bar_interval: i64,
         viewport: &SlotViewport,
-    ) {
+    ) -> bool {
+        let added_from = candidates.len();
         let (mut year, mut month, mut day, _, _, _) = timestamp_to_date(start_ts);
         let mut ts = date_to_timestamp(year, month, day, 0, 0, 0);
 
@@ -1008,7 +1074,13 @@ impl TimeScale {
             ts = date_to_timestamp(year, month, day, 0, 0, 0);
         }
 
+        let mut walk = 0usize;
         while ts <= end_ts {
+            walk += 1;
+            if walk > TICK_MAX_WALK_STEPS {
+                candidates.truncate(added_from);
+                return false;
+            }
             let bar_idx = Self::timestamp_to_bar_idx(ts, bars, first_ts, bar_interval);
             let x = viewport.pos_to_x(bar_idx as f64);
 
@@ -1025,6 +1097,7 @@ impl TimeScale {
             }
             ts = date_to_timestamp(year, month, day, 0, 0, 0);
         }
+        true
     }
 
     /// Select ticks with proper spacing.
@@ -1064,6 +1137,7 @@ impl TimeScale {
         let bar_spacing = viewport.spacing.max(1e-6);
         let max_indexes_per_mark = ((label_px / bar_spacing).ceil() as i64).max(1);
 
+        let ticks_from = ticks.len();
         let mut accepted: Vec<i64> = Vec::new();
         let mut accepted_labels: Vec<String> = Vec::new();
         let mut used_positions: Vec<(f64, f64)> = Vec::new();
@@ -1103,6 +1177,10 @@ impl TimeScale {
                 continue;
             }
 
+            if accepted.len() >= TICK_MAX_TICKS {
+                ticks.truncate(ticks_from);
+                return;
+            }
             used_positions.push((x, half_width));
 
             let pos = accepted.binary_search(&bar_idx).unwrap_or_else(|p| p);
