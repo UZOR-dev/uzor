@@ -1760,6 +1760,33 @@ pub struct DomBuilder<'a> {
     root: uzor::ui::dom::El,
     scroll: f64,
     viewport: Option<Rect>,
+    slots: Option<&'a mut dyn FnMut(&mut dyn RenderContext, &SlotFrame<'_>)>,
+}
+
+/// One custom-paint slot as the host paints it this frame ([`DomBuilder::paint_slots`],
+/// [`paint_slot`]).
+#[derive(Clone, Debug)]
+pub struct SlotFrame<'k> {
+    /// The slot key ([`uzor::ui::dom::El::slot`] / [`uzor::ui::dom::El::paint_slot`]).
+    pub key: &'k str,
+    /// The content box to paint into (window coordinates); painting is clipped to it
+    /// and to the element's scroll containers.
+    pub rect: Rect,
+    /// The gestures of the fingers the slot captured since the last frame, oldest
+    /// first, in window coordinates ([`SlotFrame::local`] maps a point into the slot).
+    pub gestures: Vec<crate::types::gesture::Gesture>,
+    /// The pointer (mouse, or the finger on the slot) over the slot, z-order safe:
+    /// `None` under a popover or a sheet.
+    pub pointer: Option<(f64, f64)>,
+    /// The slot was clicked or tapped this frame.
+    pub clicked: bool,
+}
+
+impl SlotFrame<'_> {
+    /// `(x, y)` relative to the slot's top-left corner.
+    pub fn local(&self, x: f64, y: f64) -> (f64, f64) {
+        (x - self.rect.x, y - self.rect.y)
+    }
 }
 
 /// What a [`dom`] tree did this frame.
@@ -1769,6 +1796,9 @@ pub struct DomResponse {
     pub dom: uzor::ui::dom::Dom,
     /// The element id clicked this frame (topmost first).
     pub clicked: Option<String>,
+    /// Gestures captured by the tree's touch targets (`touch-action: none`, paint
+    /// slots) since the last frame: `(element id, gesture)`, oldest first.
+    pub captured: Vec<(String, crate::types::gesture::Gesture)>,
     /// The element id under the pointer.
     pub hovered: Option<String>,
     /// The focused element id.
@@ -1790,7 +1820,7 @@ pub struct DomResponse {
 ///
 /// [`El::name`]: uzor::ui::dom::El::name
 pub fn dom<'a>(rect: Rect, sheet: &'a uzor::ui::style::Sheet, root: uzor::ui::dom::El) -> DomBuilder<'a> {
-    DomBuilder { rect, sheet, root, scroll: 0.0, viewport: None }
+    DomBuilder { rect, sheet, root, scroll: 0.0, viewport: None, slots: None }
 }
 
 impl<'a> DomBuilder<'a> {
@@ -1804,13 +1834,21 @@ impl<'a> DomBuilder<'a> {
         self.viewport = Some(r);
         self
     }
+    /// Paint the tree's embed slots with `paint` *in paint order*: each slot's content
+    /// is drawn right after its box, clipped to it and to its scroll containers, so a
+    /// popover, a fixed sheet or a toast declared later stays on top. A paint slot
+    /// ([`uzor::ui::dom::El::paint_slot`]) also gets the gestures it captured.
+    pub fn paint_slots(mut self, paint: &'a mut dyn FnMut(&mut dyn RenderContext, &SlotFrame<'_>)) -> Self {
+        self.slots = Some(paint);
+        self
+    }
 
     /// Paint the tree and register its hit targets and fields.
     pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> DomResponse {
         use uzor::ui::dom::{Control, El};
         use uzor::ui::style::State;
         let now_ms = cx.time_ms();
-        let DomBuilder { rect, sheet, mut root, scroll, viewport } = self;
+        let DomBuilder { rect, sheet, mut root, scroll, viewport, mut slots } = self;
         let (resp, ime) = cx.with_paint(|render, widgets, v, _| {
             let (coord, _, layer) = parts(widgets);
             let mut edited = Vec::new();
@@ -1872,7 +1910,22 @@ impl<'a> DomBuilder<'a> {
             render.begin_path();
             render.rect(rect.x, rect.y, rect.width, rect.height);
             render.clip();
-            uzor::ui::dom::paint(render, &d);
+            match slots.as_mut() {
+                Some(paint) => {
+                    uzor::ui::dom::paint_slots(render, &d, &mut |ctx, key, content| {
+                        let id = d.boxes.iter().find(|b| b.slot.as_deref() == Some(key)).and_then(|b| b.id.as_deref()).unwrap_or(key);
+                        let wid = WidgetId::from(id);
+                        let frame = SlotFrame { key, rect: content, gestures: v.captured_gestures(&wid), pointer: v.pointer_over(&wid), clicked: v.clicked(&wid) };
+                        ctx.save();
+                        ctx.begin_path();
+                        ctx.rect(content.x, content.y, content.width, content.height);
+                        ctx.clip();
+                        paint(ctx, &frame);
+                        ctx.restore();
+                    });
+                }
+                None => uzor::ui::dom::paint(render, &d),
+            }
             render.restore();
             coord.set_default_layer(Some(layer.clone()));
             let mut ime = None;
@@ -1925,11 +1978,64 @@ impl<'a> DomBuilder<'a> {
             let clicked = ids.iter().find(|i| v.clicked(&WidgetId::from(**i))).map(|s| s.to_string());
             let hovered = ids.iter().find(|i| v.is_hovered(&WidgetId::from(**i))).map(|s| s.to_string());
             let focused = ids.iter().find(|i| v.is_focused(&WidgetId::from(**i))).map(|s| s.to_string());
-            (DomResponse { dom: d, clicked, hovered, focused, edited }, ime)
+            let captured = d
+                .touch_targets()
+                .flat_map(|(id, _)| v.captured_gestures(&WidgetId::from(id)).into_iter().map(move |g| (id.to_string(), g)))
+                .collect();
+            (DomResponse { dom: d, clicked, captured, hovered, focused, edited }, ime)
         });
         if let Some(at) = ime {
             cx.ime_area(at);
         }
         resp
+    }
+}
+
+// -- custom-paint slots outside a DOM tree --------------------------------------
+
+/// A custom-paint area (a chart, an order book) outside a DOM tree. Start with
+/// [`paint_slot`]. Inside a DOM tree use [`uzor::ui::dom::El::paint_slot`] with
+/// [`DomBuilder::paint_slots`] instead.
+pub struct PaintSlot<'k> {
+    id: &'k str,
+    rect: Rect,
+}
+
+/// What a [`paint_slot`] reported this frame.
+#[derive(Clone, Debug, Default)]
+pub struct SlotResponse {
+    /// The gestures the slot captured since the last frame (window coordinates).
+    pub gestures: Vec<crate::types::gesture::Gesture>,
+    /// The pointer over the slot (z-order safe).
+    pub pointer: Option<(f64, f64)>,
+    /// Clicked or tapped.
+    pub clicked: bool,
+}
+
+/// A custom-paint slot `id` at `rect`: registered as a click target that captures touch
+/// (`Sense::touch`, so a finger on it pans / pinches it and never scrolls what is under
+/// it), painted by the closure given to [`PaintSlot::paint`], clipped to `rect`.
+/// Widgets registered after it (buttons drawn over a chart) stay ordinary targets.
+pub fn paint_slot(id: &str, rect: Rect) -> PaintSlot<'_> {
+    PaintSlot { id, rect }
+}
+
+impl PaintSlot<'_> {
+    /// Register the slot and paint it with `paint`.
+    pub fn paint<'c, C: ContentCx<'c>>(self, cx: &mut C, paint: impl FnOnce(&mut dyn RenderContext, &SlotFrame<'_>)) -> SlotResponse {
+        let PaintSlot { id, rect } = self;
+        cx.with_paint(|render, widgets, v, _| {
+            let (coord, _, layer) = parts(widgets);
+            let wid = WidgetId::from(id);
+            coord.register_atomic(wid.clone(), WidgetKind::Button, rect, (Sense::CLICK | Sense::HOVER).with_touch().with_gesture(), layer);
+            let frame = SlotFrame { key: id, rect, gestures: v.captured_gestures(&wid), pointer: v.pointer_over(&wid), clicked: v.clicked(&wid) };
+            render.save();
+            render.begin_path();
+            render.rect(rect.x, rect.y, rect.width, rect.height);
+            render.clip();
+            paint(render, &frame);
+            render.restore();
+            SlotResponse { gestures: frame.gestures, pointer: frame.pointer, clicked: frame.clicked }
+        })
     }
 }

@@ -106,6 +106,9 @@ struct TestApp {
     top_widgets: Vec<(WidgetId, Rect, Sense)>,
     /// Captured gestures the panel hook observed (`VisualView::captured_gestures`).
     seen_captured: Vec<(WidgetId, crate::types::gesture::Gesture)>,
+    /// A `kit::paint_slot` drawn last in the panel, and the gestures it reported.
+    paint_slot: Option<Rect>,
+    seen_slot: Vec<crate::types::gesture::Gesture>,
     /// Context (secondary) clicks the panel hook observed.
     seen_context: Vec<(f64, f64)>,
     /// Safe area, keyboard and pointer kind the panel hook last observed.
@@ -175,6 +178,10 @@ impl App for TestApp {
         }
         for (id, rect, sense) in &self.top_widgets {
             cx.widgets.coord.register_on_layer(id.clone(), *rect, *sense, &cx.widgets.layer);
+        }
+        if let Some(r) = self.paint_slot {
+            let resp = crate::widgets::kit::paint_slot("slot", r).paint(cx, |_, _| {});
+            self.seen_slot.extend(resp.gestures);
         }
         self.seen_clicks.extend(cx.view.clicks().iter().cloned());
         self.seen_gestures.extend(cx.view.gestures().iter().copied());
@@ -1828,4 +1835,34 @@ fn touch_capture_long_press_drags_instead_of_context() {
     assert!(app.seen_context.is_empty(), "no context click: {:?}", app.seen_context);
     assert!(!app.seen_clicks.iter().any(|(id, _)| *id == wid("chart")));
     assert_eq!(off(&h), 0.0);
+}
+
+/// A `kit::paint_slot` over a scroller gets a two-finger pinch end to end; the
+/// scroller under it does not move.
+#[test]
+fn paint_slot_gets_the_pinch_and_the_scroller_stays() {
+    use crate::types::bus::TouchInput as T;
+    use crate::types::gesture::Gesture as G;
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    let app = h.runtime_mut().app_mut();
+    app.scroller = Some((Rect::new(0.0, 0.0, 390.0, 600.0), 3000.0, crate::ScrollView::default()));
+    app.paint_slot = Some(Rect::new(0.0, 100.0, 390.0, 400.0));
+    app.request_frame = true;
+    h.advance(0.017);
+    touch(&mut h, win, T::Start { id: 1, pos: Point::new(150.0, 300.0) });
+    touch(&mut h, win, T::Start { id: 2, pos: Point::new(240.0, 300.0) });
+    for i in 1..=6 {
+        let d = i as f64 * 5.0;
+        touch(&mut h, win, T::Move { id: 1, pos: Point::new(150.0 - d, 300.0 + d) });
+        touch(&mut h, win, T::Move { id: 2, pos: Point::new(240.0 + d, 300.0 + d) });
+    }
+    touch(&mut h, win, T::End { id: 1, pos: Point::new(120.0, 330.0) });
+    touch(&mut h, win, T::End { id: 2, pos: Point::new(270.0, 330.0) });
+    h.advance(0.017);
+    let app = h.runtime().app();
+    assert_eq!(app.scroller.as_ref().unwrap().2.offset, 0.0);
+    assert!(app.seen_slot.iter().any(|g| matches!(g, G::Pinch { scale, .. } if *scale > 1.5)), "{:?}", app.seen_slot);
+    assert!(app.seen_slot.iter().any(|g| matches!(g, G::PinchPan { .. })));
+    assert!(app.seen_slot.iter().any(|g| matches!(g, G::PinchEnd { .. })));
 }

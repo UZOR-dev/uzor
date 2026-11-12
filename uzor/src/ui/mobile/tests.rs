@@ -307,3 +307,21 @@ fn touch_action_none_is_a_capture_target_inside_the_safe_area() {
     assert_eq!(plain.touch_targets().count(), 0);
     assert!(!plain.get("x").unwrap().captures_touch());
 }
+
+/// `El::paint_slot` is an id, a slot and a touch capture; a style may opt it back out.
+#[test]
+fn paint_slot_is_a_slot_and_a_touch_target() {
+    let env = phone();
+    let root = screen(true, [
+        El::new("div").paint_slot("chart").css("height: 400px"),
+        El::new("div").paint_slot("plain").css("height: 100px; touch-action: auto"),
+    ])
+    .css("height: 844px");
+    let d = lay(&root, &env);
+    let slots: Vec<&str> = d.slots().map(|(k, _)| k).collect();
+    assert_eq!(slots, vec!["chart", "plain"]);
+    let targets: Vec<&str> = d.touch_targets().map(|(k, _)| k).collect();
+    assert_eq!(targets, vec!["chart"]);
+    let r = d.rect("chart").unwrap();
+    assert!(r.y >= 47.0 && (r.height - 400.0).abs() < 0.5 && r.width > 389.0, "{r:?}");
+}

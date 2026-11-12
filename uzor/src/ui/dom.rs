@@ -93,6 +93,9 @@ pub struct El {
     pub slot: Option<String>,
     /// Vertical scroll offset of an overflow container ([`El::scroll_top`]).
     pub scroll_top: f64,
+    /// The element takes its fingers whole ([`El::paint_slot`]): `touch-action: none`
+    /// unless the style sets `touch-action` itself.
+    pub touch_capture: bool,
 }
 
 /// Built-in control content of an element, painted into its content box after the
@@ -419,6 +422,20 @@ impl El {
     /// (or anything else) there.
     pub fn slot(mut self, key: impl Into<String>) -> Self {
         self.slot = Some(key.into());
+        self
+    }
+    /// A custom-paint slot for a chart, an order book, a map: id and slot key `key`,
+    /// and it captures touch (`touch-action: none` unless the style says otherwise),
+    /// so its pans, pinches, long-press drags and double-taps are delivered to it as
+    /// gestures and never scroll the page. Size it with CSS like any box (`flex-grow:
+    /// 1; min-height: 0` to take the rest of a column); the host paints into its
+    /// content box, clipped, in paint order (`uzor_framework::widgets::kit::dom`
+    /// with `paint_slots`).
+    pub fn paint_slot(mut self, key: impl Into<String>) -> Self {
+        let key = key.into();
+        self.id = Some(key.clone());
+        self.slot = Some(key);
+        self.touch_capture = true;
         self
     }
     /// Append `c` when `cond` (conditional markup).
@@ -993,6 +1010,9 @@ fn resolve<'e>(
             let v = sheet.subst_with(v, &s.custom);
             apply_decl(&mut s, k, &v);
         }
+    }
+    if el.touch_capture && s.touch_action.is_none() {
+        s.touch_action = Some("none".into());
     }
     if s.display.as_deref() == Some("none") {
         return None;

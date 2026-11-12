@@ -572,3 +572,82 @@ fn dom_touch_action_none_registers_a_touch_capture() {
     assert_eq!(h.coord.touch_capture_at(195.0, 20.0), None);
     assert_eq!(h.coord.touch_capture_at(195.0, 830.0), None);
 }
+
+/// A phone screen (390×844, notch 47, home indicator 34) with a paint slot between the
+/// top bar and the tab bar: the slot is painted once, into its whole content box (not
+/// clipped by the bars or the safe area), clipped to it, under a popover declared later;
+/// it captures touch and gets its gestures.
+#[test]
+fn paint_slot_in_a_phone_dom_paints_in_order_and_gets_its_gestures() {
+    use crate::types::gesture::Gesture as G;
+    use crate::types::window::Point;
+    use uzor::testing::DrawOp;
+    use uzor::ui::dom::El;
+    use uzor::ui::media::{Edges, MediaEnv};
+    use uzor::ui::mobile::{self as m, icons, Tab};
+    let env = MediaEnv::touch(390.0, 844.0, Edges::new(47.0, 0.0, 34.0, 0.0));
+    let sheet = uzor::ui::style::Sheet::parse_with(&[domkit::KIT_CSS, domkit::KIT_TOUCH_CSS, m::MOBILE_CSS].concat(), &env).unwrap();
+    let tabs = [Tab::new(icons::CHAT, "График"), Tab::new(icons::TASKS, "Вотчлист"), Tab::new(icons::GEAR, "Ещё")];
+    let tree = m::screen(true, [
+        m::top_bar("nav", "Назад", "BTCUSDT", None, &[]),
+        El::new("div.m-content").child(El::new("div").paint_slot("chart").css("flex-grow: 1; min-height: 0")),
+        m::tab_bar("tabs", &tabs, 0),
+        El::new("div").id("pop").css("position: fixed; left: 20px; top: 300px; width: 200px; height: 100px; background: #fefefe"),
+    ])
+    .css("height: 844px");
+    let mut v = VisualView::<K>::default();
+    let pinch = G::Pinch { center: Point::new(195.0, 400.0), scale: 1.25 };
+    v.captured_gestures = vec![(WidgetId::from("chart"), pinch), (WidgetId::from("other"), G::Tap { pos: Point::new(1.0, 1.0) })];
+    let mut h = Harness { keep_coord: true, record: Some(uzor::testing::RecordingRenderContext::with_char_width(8.0)), ..Default::default() };
+    let mut seen: Vec<(String, Rect, Vec<G>)> = Vec::new();
+    let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &SlotFrame<'_>| {
+        seen.push((f.key.to_string(), f.rect, f.gestures.clone()));
+        ctx.set_fill_color("#abcdef");
+        ctx.fill_rect(f.rect.x, f.rect.y, f.rect.width, f.rect.height);
+    };
+    let r = h.frame(&v, |cx| dom(Rect::new(0.0, 0.0, 390.0, 844.0), &sheet, tree).paint_slots(&mut painter).build(cx));
+    assert_eq!(seen.len(), 1, "painted once");
+    let (key, rect, gestures) = &seen[0];
+    assert_eq!(key, "chart");
+    assert_eq!(gestures, &vec![pinch], "only its own gestures");
+    assert_eq!(r.captured, vec![("chart".to_string(), pinch)]);
+    // Whole content box: between the bars, inside the safe area, full width.
+    let content = r.dom.slots().find(|(k, _)| *k == "chart").unwrap().1;
+    assert_eq!(*rect, content);
+    let back = r.dom.rect("nav:back").unwrap();
+    let tab = r.dom.rect("tabs:0").unwrap();
+    assert!(back.y >= 47.0, "{back:?}");
+    assert!(rect.y >= back.y + back.height - 0.5, "{rect:?} under {back:?}");
+    assert!(rect.y + rect.height <= tab.y + 0.5, "{rect:?} above {tab:?}");
+    assert!(tab.y + tab.height <= 844.0 - 34.0 + 0.5);
+    assert!(rect.x >= 0.0 && rect.x + rect.width <= 390.5 && rect.width > 380.0 && rect.height > 500.0, "{rect:?}");
+    // Clipped to its box, and painted before the popover declared after it.
+    let ops = &h.record.as_ref().unwrap().ops;
+    let fill = ops.iter().position(|o| matches!(o, DrawOp::FillColor(c) if c == "#abcdef")).expect("slot painted");
+    let clip = ops[..fill].iter().rposition(|o| matches!(o, DrawOp::Clip)).expect("clipped");
+    assert!(ops[..clip].iter().rev().take(3).any(|o| matches!(o, DrawOp::Rect { x, y, w, h } if (*x, *y, *w, *h) == (rect.x, rect.y, rect.width, rect.height))), "clip is the slot box");
+    let pop = ops.iter().rposition(|o| format!("{o:?}").to_ascii_lowercase().contains("fefefe")).expect("popover painted");
+    assert!(fill < pop, "the popover paints over the slot");
+    // It captures touch; the bars do not.
+    assert_eq!(h.coord.touch_capture_at(195.0, rect.y + rect.height / 2.0), Some(WidgetId::from("chart")));
+    assert_eq!(h.coord.touch_capture_at(tab.x + 5.0, tab.y + 5.0), None);
+}
+
+/// The standalone [`paint_slot`]: registers a touch capture, clips, reports its gestures.
+#[test]
+fn standalone_paint_slot_captures_and_reports() {
+    use crate::types::gesture::Gesture as G;
+    use crate::types::window::Point;
+    let mut v = VisualView::<K>::default();
+    let g = G::LongPressDrag { pos: Point::new(60.0, 70.0), delta: (5.0, 0.0) };
+    v.captured_gestures = vec![(WidgetId::from("book"), g)];
+    v.clicked = vec![(WidgetId::from("book"), 1)];
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let area = Rect::new(10.0, 20.0, 370.0, 300.0);
+    let mut local = None;
+    let r = h.frame(&v, |cx| paint_slot("book", area).paint(cx, |_, f| local = Some(f.local(60.0, 70.0))));
+    assert_eq!(r.gestures, vec![g]);
+    assert!(r.clicked);
+    assert_eq!(local, Some((50.0, 50.0)));
+    assert_eq!(h.coord.touch_capture_at(100.0, 100.0), Some(WidgetId::from("book")));
+}

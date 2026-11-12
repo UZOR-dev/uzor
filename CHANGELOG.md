@@ -4,6 +4,19 @@ All crates in the workspace share one version.
 
 ## Unreleased
 
+### Custom-paint slots (`uzor`, `uzor-framework`)
+
+- `El::paint_slot(key)`: a DOM element that is an embed slot (id and key `key`) and a
+  touch capture (`touch-action: none` unless the style sets `touch-action`). Size it
+  with CSS like any box.
+- `kit::DomBuilder::paint_slots(&mut |render, &SlotFrame|)`: the tree's slots are painted
+  in paint order, right after their box and clipped to it and to its scroll containers,
+  so popovers and sheets declared later stay on top. `SlotFrame` has the key, the
+  content rect, the slot's captured gestures, the z-order-safe pointer, `clicked` and
+  `local(x, y)`. `DomResponse::captured` lists the gestures of the tree's touch targets.
+- `kit::paint_slot(id, rect).paint(cx, |render, &SlotFrame|) -> SlotResponse`: the same
+  outside a DOM tree (registered with `Sense::touch`, clipped).
+
 ### Touch capture and gestures (`uzor`, `uzor-framework`)
 
 - Touch capture: a widget registered with `Sense::touch` (`Sense::CLICK.with_touch()`)
