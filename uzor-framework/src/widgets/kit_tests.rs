@@ -679,3 +679,41 @@ fn dom_search_bar_and_virtual_list_are_live_controls() {
     assert!(h.coord.text_fields().field_state(&WidgetId::from("q")).is_some(), "the input is a text-store field (it owns the typing)");
     assert!(h.coord.widget_rect(&WidgetId::from("t:490")).is_some() && h.coord.widget_rect(&WidgetId::from("t:2")).is_none());
 }
+
+/// A DOM number field: the steppers, the arrow keys and the wheel over the focused field
+/// step it on the spec's grid, a paste keeps only what may be typed, and blur tidies it.
+#[test]
+fn dom_number_field_steps_filters_and_tidies() {
+    use uzor::input::keyboard::KeyCode;
+    use uzor::ui::domkit::{number_input, NumberSpec};
+    let sheet = domkit::sheet();
+    let spec = NumberSpec::new().range(0.0, 10.0).step(0.5);
+    let tree = || uzor::ui::dom::El::new("div.k-col").child(number_input("qty", uzor::ui::dom::Edit::new("3"), "Quantity"));
+    let area = Rect::new(0.0, 0.0, 400.0, 300.0);
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let qty = WidgetId::from("qty");
+    // First frame seeds the store.
+    h.frame(&VisualView::<K>::default(), |cx| dom(area, &sheet, tree()).number("qty", spec).build(cx));
+    let r = h.frame(&click("qty:inc"), |cx| dom(area, &sheet, tree()).number("qty", spec).build(cx));
+    assert_eq!(r.edited, vec![("qty".to_string(), "3.5".to_string())]);
+    let mut v = VisualView::<K>::default();
+    v.focused = Some(qty.clone());
+    let down = key(KeyCode::ArrowDown, None);
+    let r = h.frame(&v, |cx| dom(area, &sheet, tree()).number("qty", spec).key(Some(&down)).build(cx));
+    assert!(r.key_used);
+    assert_eq!(r.edited.last().map(|e| e.1.as_str()), Some("3"));
+    // The wheel over the focused field (up = more).
+    v.hovered = Some(qty.clone());
+    v.pointer = Some((20.0, 10.0));
+    v.scroll = (0.0, 1.0);
+    let r = h.frame(&v, |cx| dom(area, &sheet, tree()).number("qty", spec).build(cx));
+    assert_eq!(r.edited.last().map(|e| e.1.as_str()), Some("3.5"));
+    // A paste of junk: only the number stays; leaving the field clamps and formats it.
+    v.scroll = (0.0, 0.0);
+    h.coord.text_fields_mut().set_text(&qty, "12,50 kg");
+    let r = h.frame(&v, |cx| dom(area, &sheet, tree()).number("qty", spec).build(cx));
+    assert_eq!(r.edited.last().map(|e| e.1.as_str()), Some("12,50"));
+    let r = h.frame(&VisualView::<K>::default(), |cx| dom(area, &sheet, tree()).number("qty", spec).build(cx));
+    assert_eq!(r.edited.last().map(|e| e.1.as_str()), Some("10"));
+    assert!(h.coord.widget_sense(&WidgetId::from("qty:inc")).is_some(), "the steppers are click targets");
+}
