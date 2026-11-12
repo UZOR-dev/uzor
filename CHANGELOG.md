@@ -2,6 +2,24 @@
 
 All crates in the workspace share one version.
 
+## 1.5.38
+
+### DOM `scrollbar-width: none` (`uzor`, `uzor-framework`)
+
+- `Style::scrollbar_width` (`scrollbar-width`, not inherited). On a framework-owned
+  scroll container (`DomBuilder::dom_scroll`), `none` skips painting and registering
+  the host's thumb and track, so an app can draw its own bar; the wheel, touch and
+  keys still scroll it. Unset / `auto` / `thin` keep the host's bar, the old path.
+  Regular (non-DOM) scroll views are unchanged. Example: `dom_scroll`.
+
+### `dom_scroll_to` before the first frame (`uzor-framework`)
+
+- `ScrollView::scroll_to` (and any other jump through `moved`) before the extent is
+  known no longer treats every offset as "at the end" of an empty view. The asked
+  offset is kept and clamped once `set_extent` runs, so an app that restores a
+  saved position with `dom_scroll_to` before the container's first frame lands
+  there instead of jumping to the end.
+
 ## 1.5.37
 
 ### Paint slots take the mouse drag and the wheel (`uzor-framework`)
