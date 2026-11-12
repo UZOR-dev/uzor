@@ -62,6 +62,8 @@ members = [
     "uzor-export",
     # JS-authored animations: page engine on web, optional QuickJS on native
     "uzor-anim-js",
+    # Plot math (ticks, value/time scales, viewport, crosshair); no render or DOM deps
+    "uzor-plot",
     # Data-figure engine core (scales/coord/marks/guides/figures)
     "uzor-figures",
     # Serde-able spec/IR registry for uzor-figures (authored .figure.json
@@ -130,6 +132,7 @@ uzor-framework = { version = "1.5.40", path = "./uzor-framework" }
 uzor-devtools = { version = "1.5.40", path = "./uzor-devtools" }
 uzor-graph = { version = "1.5.40", path = "./uzor-graph" }
 uzor-export = { version = "1.5.40", path = "./uzor-export" }
+uzor-plot = { version = "1.5.40", path = "./uzor-plot" }
 uzor-figures = { version = "1.5.40", path = "./uzor-figures" }
 uzor-figures-registry = { version = "1.5.40", path = "./uzor-figures-registry" }
 uzor-text = { version = "1.5.40", path = "./uzor-text" }

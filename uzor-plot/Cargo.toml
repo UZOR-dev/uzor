@@ -1,0 +1,19 @@
+[package]
+name = "uzor-plot"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Plot math for uzor: nice-step ticks, label precision, value scales (linear, log, percent, indexed), auto-range, time scales, viewport and crosshair models. No rendering, no DOM."
+keywords = ["chart", "scale", "ticks", "axis", "uzor"]
+categories = ["visualization", "mathematics"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+
+[features]
+default = []
+# Serialize/Deserialize on the plain model types (modes, scales, settings).
+serde = ["dep:serde"]
