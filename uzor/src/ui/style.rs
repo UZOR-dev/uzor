@@ -148,6 +148,9 @@ pub struct Style {
     /// `touch-action` (not inherited). `none`: a finger that lands on the element is
     /// the element's (gestures, no scrolling), see [`crate::ui::dom::Placed::captures_touch`].
     pub touch_action: Option<String>,
+    /// `object-fit` (not inherited) of a raster element ([`crate::ui::dom::El::image`]):
+    /// `fill` (unset), `contain`, `cover`, `none`, `scale-down`.
+    pub object_fit: Option<String>,
     pub text_align: Option<String>,
     /// `white-space` (inherited): `normal` lets [`crate::ui::dom`] text wrap; unset or
     /// `nowrap` keeps one line (ellipsized when it does not fit).
@@ -1080,6 +1083,7 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         "backdrop-filter" | "-webkit-backdrop-filter" => s.backdrop_blur = backdrop_blur(v),
         "cursor" => s.cursor = Some(v.into()),
         "touch-action" => s.touch_action = Some(v.trim().to_ascii_lowercase()),
+        "object-fit" => s.object_fit = Some(v.trim().to_ascii_lowercase()),
         "text-align" => s.text_align = Some(v.into()),
         "white-space" => s.white_space = Some(v.into()),
         "line-clamp" | "-webkit-line-clamp" => s.line_clamp = v.parse::<f64>().ok().filter(|n| *n >= 1.0).map(|n| n.min(999.0) as u16),

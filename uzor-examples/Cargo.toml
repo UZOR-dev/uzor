@@ -14,7 +14,7 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-uzor = { workspace = true, features = ["flow-flex", "flow-grid"] }
+uzor = { workspace = true, features = ["flow-flex", "flow-grid", "dom-image"] }
 uzor-framework = { workspace = true }
 env_logger = { version = "0.11", optional = true }
 uzor-render-tiny-skia = { workspace = true, optional = true }
@@ -49,6 +49,11 @@ required-features = ["png"]
 [[bin]]
 name = "dom-slots-frames"
 path = "src/bin/dom_slots_frames.rs"
+required-features = ["png"]
+
+[[bin]]
+name = "dom-images-frames"
+path = "src/bin/dom_images_frames.rs"
 required-features = ["png"]
 
 [[bin]]

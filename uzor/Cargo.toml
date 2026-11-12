@@ -50,6 +50,9 @@ shaper = ["dep:cosmic-text"]
 testing = []
 # DevTools-like overlay (`uzor::ui::inspector`). Off by default; adds nothing when off.
 inspector = []
+# Raster images in the DOM (`ui::dom::El::image`). Off by default: an app without
+# images (HQ) does not carry the field or its painting.
+dom-image = []
 
 [dev-dependencies]
 env_logger = "0.10"

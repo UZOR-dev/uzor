@@ -17,3 +17,4 @@ pub mod dom_widgets;
 pub mod mobile_gallery;
 pub mod tray_widgets;
 pub mod dom_slots;
+pub mod dom_images;

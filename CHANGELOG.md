@@ -4,6 +4,18 @@ All crates in the workspace share one version.
 
 ## Unreleased
 
+### Raster images in the DOM (`uzor`)
+
+- `El::image(ImageRef)` (feature `dom-image`, off by default): a raster image drawn into the element's content box.
+  `ImageRef::Rgba` (decoded pixels, shared) or `ImageRef::Id` (an image the backend
+  caches by id, with its intrinsic size when known). CSS `object-fit` (`fill`,
+  `contain`, `cover`, `none`, `scale-down`; centred) places it, and it is clipped to
+  the content box and the rounded padding edge (`border-radius: 999px` makes a round
+  avatar). Until the backend has the image, the element's background shows. Sized by
+  CSS like any box; role `img`. `dom::object_fit_rect` is the placement on its own.
+- Example `dom-images-frames` (`uzor-examples`, feature `png`) and CPU reference
+  renders in `uzor-examples/tests/dom_images_frames.rs`.
+
 ### Paint slots by registered painters (`uzor`, `uzor-framework`)
 
 - `uzor::ui::dom::SlotPainter`: what paints a paint slot (`paint`), handles its

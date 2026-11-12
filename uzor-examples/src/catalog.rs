@@ -148,6 +148,17 @@ pub const EXAMPLES: &[Example] = &[
         args: &["uzor-dom-slots"],
     },
     Example {
+        name: "Image frames",
+        bin: "dom-images-frames",
+        path: "uzor-examples/src/dom_images.rs",
+        kind: Kind::Offscreen,
+        icon: icons::DOWNLOAD,
+        blurb: "Raster images in the DOM, rendered to PNG on the CPU.",
+        shows: &["El::image with RGBA pixels or a backend image id", "object-fit cover / contain, round avatar by border-radius", "The box background while an image is not loaded"],
+        cmd: "cargo run -p uzor-examples --release --features png --bin dom-images-frames -- out",
+        args: &["uzor-dom-images"],
+    },
+    Example {
         name: "Framework demo",
         bin: "demo_native",
         path: "uzor-framework/examples/demo",

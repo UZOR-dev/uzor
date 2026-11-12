@@ -66,7 +66,9 @@ use crate::ui::flow::{layout_in, LBox, Laid};
 use crate::ui::style::{apply_decl, Node, Sheet, State, Style, StyleField};
 use crate::ui::widgets::composite::dialog::{fill_round_rect, path_round_rect, Shadow};
 
+mod image;
 mod slots;
+pub use image::{object_fit_rect, ImageRef};
 pub use slots::{SlotAction, SlotEvent, SlotInput, SlotPaint, SlotPainter, SlotRegistry, SlotValue};
 
 /// One element: `spec` is `kind#id.class.class` as in a selector (`div.card`, `button.pbtn`).
@@ -84,6 +86,9 @@ pub struct El {
     pub name: Option<String>,
     /// Inline `<svg>` markup drawn into the content box (stroke = the text colour).
     pub svg: Option<String>,
+    /// A raster image drawn into the content box ([`El::image`], feature `dom-image`).
+    #[cfg(feature = "dom-image")]
+    pub image: Option<ImageRef>,
     /// Animated content ([`El::anim`]).
     pub anim: Option<AnimNode>,
     pub children: Vec<El>,
@@ -388,6 +393,18 @@ impl El {
         self.name = Some(n.into());
         self
     }
+    /// A raster image (an avatar, a cover, a screenshot) drawn into the content box,
+    /// placed by CSS `object-fit` (`fill` default, `contain`, `cover`, `none`,
+    /// `scale-down`; centred) and clipped to the box's rounded padding edge, so
+    /// `border-radius: 999px` makes a round avatar. Size the element with CSS like any box
+    /// (the image does not size it). Until the backend has the image (an id it has not
+    /// loaded, or no image support) the element's own background shows. Its role is
+    /// `img`; name it with [`El::name`]. Feature `dom-image`.
+    #[cfg(feature = "dom-image")]
+    pub fn image(mut self, img: ImageRef) -> Self {
+        self.image = Some(img);
+        self
+    }
     /// Inline `<svg>` content (an icon), drawn in the content box in `color`.
     pub fn svg(mut self, markup: impl Into<String>) -> Self {
         self.svg = Some(markup.into());
@@ -474,6 +491,9 @@ pub struct Placed {
     pub tab: bool,
     pub name: Option<String>,
     pub svg: Option<String>,
+    /// A raster image ([`El::image`], feature `dom-image`).
+    #[cfg(feature = "dom-image")]
+    pub image: Option<ImageRef>,
     pub anim: Option<AnimNode>,
     /// Laid-out inline runs ([`El::runs`]).
     pub inline: Option<Box<Inline>>,
@@ -507,6 +527,8 @@ impl Default for Placed {
             tab: false,
             name: None,
             svg: None,
+            #[cfg(feature = "dom-image")]
+            image: None,
             anim: None,
             inline: None,
             control: None,
@@ -738,6 +760,8 @@ struct Resolved {
     tab: bool,
     name: Option<String>,
     svg: Option<String>,
+    #[cfg(feature = "dom-image")]
+    image: Option<ImageRef>,
     anim: Option<AnimNode>,
     /// Measured text: break units and line height.
     measured: Option<(Units, f64)>,
@@ -1064,6 +1088,8 @@ fn resolve<'e>(
         tab: el.tab,
         name: el.name.clone(),
         svg: el.svg.clone(),
+        #[cfg(feature = "dom-image")]
+        image: el.image.clone(),
         anim: el.anim.clone(),
         measured,
         space,
@@ -1235,6 +1261,8 @@ fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(bool, i
         tab: r.tab,
         name: r.name,
         svg: r.svg,
+        #[cfg(feature = "dom-image")]
+        image: r.image,
         anim: r.anim,
         inline,
         control: r.control,
@@ -1461,6 +1489,10 @@ fn paint_box_unclipped(ctx: &mut dyn RenderContext, b: &Placed) {
         } else {
             crate::render::draw_svg_icon(ctx, svg, content.x, content.y, content.width, content.height, color);
         }
+    }
+    #[cfg(feature = "dom-image")]
+    if let Some(img) = &b.image {
+        paint_image(ctx, b, img, content);
     }
     if let Some(ctl) = &b.control {
         paint_control(ctx, b, ctl, content, color);
@@ -1762,6 +1794,46 @@ fn radii_segments(r: Rect, rad: [[f64; 2]; 4]) -> ((f64, f64), Vec<[(f64, f64); 
     v.push(line((x0, y1 - bl[1]), (x0, y0 + tl[1])));
     v.push([(x0, y0 + tl[1] - tl[1] * K), (x0 + tl[0] - tl[0] * K, y0), (x0 + tl[0], y0)]);
     ((x0 + tl[0], y0), v)
+}
+
+#[cfg(feature = "dom-image")]
+/// Draw `b`'s raster image into its content box ([`El::image`]): placed by
+/// `object-fit`, clipped to the content box and the rounded padding edge.
+fn paint_image(ctx: &mut dyn RenderContext, b: &Placed, img: &ImageRef, content: Rect) {
+    if content.width <= 0.0 || content.height <= 0.0 {
+        return;
+    }
+    let s = &b.style;
+    let dst = object_fit_rect(content, img.size(), s.object_fit.as_deref());
+    // The padding edge: the border box less the borders, radii less the border widths.
+    let e = s.border_edges();
+    let pad = Rect::new(b.rect.x + e[3], b.rect.y + e[0], (b.rect.width - e[1] - e[3]).max(0.0), (b.rect.height - e[0] - e[2]).max(0.0));
+    let rad = s.radii();
+    let inner = [
+        [(rad[0][0] - e[3]).max(0.0), (rad[0][1] - e[0]).max(0.0)],
+        [(rad[1][0] - e[1]).max(0.0), (rad[1][1] - e[0]).max(0.0)],
+        [(rad[2][0] - e[1]).max(0.0), (rad[2][1] - e[2]).max(0.0)],
+        [(rad[3][0] - e[3]).max(0.0), (rad[3][1] - e[2]).max(0.0)],
+    ];
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(content.x, content.y, content.width, content.height);
+    ctx.clip();
+    if inner.iter().any(|c| c[0] > 0.0 || c[1] > 0.0) {
+        ctx.begin_path();
+        add_radii_path(ctx, pad, fit_radii(pad, inner), false);
+        ctx.close_path();
+        ctx.clip();
+    }
+    if let Some(ip) = ctx.image_painter() {
+        match img {
+            ImageRef::Id { id, .. } => {
+                ip.draw_image(id, dst.x, dst.y, dst.width, dst.height);
+            }
+            ImageRef::Rgba { data, width, height } => ip.draw_image_rgba(data, *width, *height, dst.x, dst.y, dst.width, dst.height),
+        }
+    }
+    ctx.restore();
 }
 
 /// Add a per-corner rounded rect to the current path; `reverse` winds it
