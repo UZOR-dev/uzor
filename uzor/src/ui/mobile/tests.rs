@@ -381,7 +381,7 @@ fn search_matches_any_case_and_script_and_ranks_prefixes_first() {
     assert!(search_filter(&l, "zzz").is_empty());
 }
 
-fn list_screen(env: &MediaEnv, query: &str, scroll: f64, vh: f64, labels: &[String], v: &VirtualList) -> (El, Vec<usize>) {
+fn list_screen(_env: &MediaEnv, query: &str, scroll: f64, vh: f64, labels: &[String], v: &VirtualList) -> (El, Vec<usize>) {
     let hits = search_filter(labels, query);
     let mut edit = Edit::new(query).placeholder("Поиск");
     edit.caret = (!query.is_empty()).then_some(query.chars().count());
