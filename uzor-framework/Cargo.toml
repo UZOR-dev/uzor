@@ -230,6 +230,10 @@ name = "dom_number"
 required-features = ["native"]
 
 [[example]]
+name = "dom_shadow_offset"
+required-features = ["native"]
+
+[[example]]
 name = "image_viewer"
 required-features = ["native"]
 
