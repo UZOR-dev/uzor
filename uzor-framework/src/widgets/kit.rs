@@ -1808,6 +1808,20 @@ impl SlotFrame<'_> {
     }
 }
 
+impl Default for SlotFrame<'static> {
+    fn default() -> Self {
+        Self {
+            key: "",
+            rect: Rect::default(),
+            gestures: Vec::new(),
+            pointer: None,
+            clicked: false,
+            pressed: None,
+            wheel: (0.0, 0.0),
+        }
+    }
+}
+
 /// What a [`dom`] tree did this frame.
 #[derive(Clone, Debug, Default)]
 pub struct DomResponse {
@@ -2040,10 +2054,12 @@ pub struct SlotResponse {
     pub wheel: (f64, f64),
 }
 
-/// A custom-paint slot `id` at `rect`: registered as a click target that captures touch
-/// (`Sense::touch`, so a finger on it pans / pinches it and never scrolls what is under
-/// it), painted by the closure given to [`PaintSlot::paint`], clipped to `rect`.
-/// Widgets registered after it (buttons drawn over a chart) stay ordinary targets.
+/// A custom-paint slot `id` at `rect`: registered as a click, drag and wheel target
+/// that also captures touch (`Sense::touch`, so a finger on it pans / pinches it and
+/// never scrolls what is under it), painted by the closure given to [`PaintSlot::paint`],
+/// clipped to `rect`. The mouse drag and the wheel are [`SlotFrame::pressed`] and
+/// [`SlotFrame::wheel`]. Widgets registered after it (buttons drawn over a chart) stay
+/// ordinary targets.
 pub fn paint_slot(id: &str, rect: Rect) -> PaintSlot<'_> {
     PaintSlot { id, rect }
 }
