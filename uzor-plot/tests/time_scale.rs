@@ -160,3 +160,49 @@ fn labels() {
     let custom = |t: i64, _w: TickWeight| format!("t{t}");
     assert_eq!(custom.label(5, TickWeight::Day), "t5");
 }
+
+#[test]
+fn days_in_month_out_of_range_is_zero() {
+    assert_eq!(days_in_month(2024, 2), 29);
+    assert_eq!(days_in_month(2023, 12), 31);
+    for m in [0, 13, -1, i32::MIN, i32::MAX] {
+        assert_eq!(days_in_month(2024, m), 0, "month {m}");
+    }
+    // Months past 12 add no days instead of panicking.
+    assert_eq!(date_to_timestamp(2024, 14, 1, 0, 0, 0), date_to_timestamp(2025, 1, 1, 0, 0, 0));
+}
+
+#[test]
+fn twelve_hour_markers_are_configurable() {
+    let l = CalendarLabels::default().with_24h(false);
+    assert_eq!(l.label(T0, TickWeight::Hour), "7:26 PM");
+    assert_eq!(l.full(T0), "14 Nov 7:26 PM");
+    let ru = l.with_am_pm("ДП", "ПП");
+    assert_eq!(ru.label(T0, TickWeight::Hour), "7:26 ПП");
+    assert_eq!(ru.label(T0 - 12 * 3600, TickWeight::Second), "7:26:40 ДП");
+    assert_eq!(ru.full(T0 - 19 * 3600), "14 Nov 12:26 ДП");
+}
+
+#[test]
+fn degenerate_viewports_do_not_panic() {
+    let items = regular(60, 500);
+    let labels = CalendarLabels::default();
+    for (width, spacing, start) in [
+        (0.0, 6.0, 0.0),
+        (800.0, 0.0, 0.0),
+        (800.0, f64::NAN, 10.0),
+        (f64::NAN, 6.0, 10.0),
+        (800.0, 6.0, f64::NAN),
+        (800.0, 6.0, -1e6),
+        (800.0, 6.0, 1e6),
+    ] {
+        let vp = SlotViewport::new(width).with_spacing(spacing).with_start(start).with_count(items.len());
+        for irregular in [false, true] {
+            let t = TimeScale::new().generate_ticks(&vp, &items, measure, &labels, irregular);
+            assert!(t.iter().all(|t| !t.x.is_nan()), "{width} {spacing} {start} {irregular}");
+            if spacing.is_nan() || spacing <= 0.0 || start.is_nan() {
+                assert!(t.is_empty(), "{width} {spacing} {start} {irregular}");
+            }
+        }
+    }
+}

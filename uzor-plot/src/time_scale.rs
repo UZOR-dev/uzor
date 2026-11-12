@@ -129,9 +129,13 @@ pub fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
-/// Get days in a specific month (1-indexed, handles leap years)
+/// Get days in a specific month (1-indexed, handles leap years).
+///
+/// A `month` outside `1..=12` has no days: returns 0 instead of panicking.
 pub fn days_in_month(year: i32, month: i32) -> i32 {
-    if month == 2 && is_leap_year(year) {
+    if !(1..=12).contains(&month) {
+        0
+    } else if month == 2 && is_leap_year(year) {
         29
     } else {
         DAYS_IN_MONTH[(month - 1) as usize]
@@ -437,6 +441,9 @@ impl TimeScale {
     ///   are not on a time cadence (they still need real timestamps).
     ///   Series with gaps over twice the median take that path on their own.
     ///
+    /// Returns no ticks for no items, or for a viewport whose spacing is not
+    /// positive and finite or whose start is not finite.
+    ///
     /// Regular series measure how many pixels a day spans: over 200 px use
     /// intraday steps, otherwise day steps from the 1st of each month (or
     /// months only once three or more month starts are visible).
@@ -454,7 +461,12 @@ impl TimeScale {
         let bars = items;
         let mut ticks = Vec::new();
 
-        if bars.is_empty() {
+        // No ticks for no data or a viewport that cannot place a slot
+        // (spacing not positive and finite, start not finite).
+        let usable_viewport = viewport.spacing.is_finite()
+            && viewport.spacing > 0.0
+            && viewport.start.is_finite();
+        if bars.is_empty() || !usable_viewport {
             return ticks;
         }
 
@@ -1145,7 +1157,8 @@ pub enum DateOrder {
 ///
 /// Year ticks show the year, month ticks the month name, day ticks the date
 /// in [`DateOrder`] (optionally prefixed with the weekday), hour and minute
-/// ticks `HH:MM` or `h:MM AM`, second ticks add `:SS`.
+/// ticks `HH:MM` or `h:MM AM`, second ticks add `:SS`. The 12-hour
+/// markers are [`Self::am`] and [`Self::pm`] (`AM` / `PM` by default).
 ///
 /// ```
 /// use uzor_plot::time_scale::{CalendarLabels, TickWeight, TimeLabeler};
@@ -1153,6 +1166,8 @@ pub enum DateOrder {
 /// assert_eq!(l.label(1_700_000_000, TickWeight::Day), "14 Nov");
 /// assert_eq!(l.label(1_700_000_000, TickWeight::Hour), "22:13");
 /// assert_eq!(l.with_24h(false).label(1_700_000_000, TickWeight::Hour), "10:13 PM");
+/// let lower = l.with_24h(false).with_am_pm("am", "pm");
+/// assert_eq!(lower.label(1_700_000_000, TickWeight::Hour), "10:13 pm");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1167,6 +1182,10 @@ pub struct CalendarLabels<'a> {
     pub use_24h: bool,
     /// Prefix day ticks with the weekday.
     pub show_weekday: bool,
+    /// 12-hour marker before noon. Default `AM`.
+    pub am: &'a str,
+    /// 12-hour marker from noon. Default `PM`.
+    pub pm: &'a str,
 }
 
 impl Default for CalendarLabels<'static> {
@@ -1176,9 +1195,18 @@ impl Default for CalendarLabels<'static> {
 }
 
 impl<'a> CalendarLabels<'a> {
-    /// Labels with these names, `21 Jan` dates, 24-hour clock, no weekday.
+    /// Labels with these names, `21 Jan` dates, 24-hour clock, no weekday,
+    /// `AM` / `PM` markers for the 12-hour clock.
     pub fn new(month_names: &'a [&'a str; 12], weekday_names: &'a [&'a str; 7]) -> Self {
-        Self { month_names, weekday_names, date_order: DateOrder::DayMonthName, use_24h: true, show_weekday: false }
+        Self {
+            month_names,
+            weekday_names,
+            date_order: DateOrder::DayMonthName,
+            use_24h: true,
+            show_weekday: false,
+            am: "AM",
+            pm: "PM",
+        }
     }
     /// Set the day tick format.
     pub fn with_date_order(mut self, order: DateOrder) -> Self {
@@ -1195,6 +1223,25 @@ impl<'a> CalendarLabels<'a> {
         self.show_weekday = on;
         self
     }
+    /// Set the 12-hour clock markers (before noon, from noon).
+    pub fn with_am_pm(mut self, am: &'a str, pm: &'a str) -> Self {
+        self.am = am;
+        self.pm = pm;
+        self
+    }
+
+    /// `hour` (0-23) on the 12-hour clock with its marker.
+    fn twelve_hour(&self, hour: i32) -> (i32, &'a str) {
+        if hour == 0 {
+            (12, self.am)
+        } else if hour < 12 {
+            (hour, self.am)
+        } else if hour == 12 {
+            (12, self.pm)
+        } else {
+            (hour - 12, self.pm)
+        }
+    }
 
     /// Full date and time, for a crosshair readout (`21.01 14:05` style,
     /// per [`Self::date_order`] and the clock setting).
@@ -1203,7 +1250,7 @@ impl<'a> CalendarLabels<'a> {
         let time_str = if self.use_24h {
             format!("{:02}:{:02}", hour, minute)
         } else {
-            let (h12, ampm) = twelve_hour(hour);
+            let (h12, ampm) = self.twelve_hour(hour);
             format!("{}:{:02} {}", h12, minute, ampm)
         };
         let date_str = match self.date_order {
@@ -1216,23 +1263,11 @@ impl<'a> CalendarLabels<'a> {
     }
 }
 
-fn twelve_hour(hour: i32) -> (i32, &'static str) {
-    if hour == 0 {
-        (12, "AM")
-    } else if hour < 12 {
-        (hour, "AM")
-    } else if hour == 12 {
-        (12, "PM")
-    } else {
-        (hour - 12, "PM")
-    }
-}
-
 impl TimeLabeler for CalendarLabels<'_> {
     fn label(&self, ts: i64, weight: TickWeight) -> String {
         let (year, month, day, hour, minute, second) = timestamp_to_date(ts);
         let month_name = self.month_names[(month - 1) as usize];
-        let (h12, ampm) = twelve_hour(hour);
+        let (h12, ampm) = self.twelve_hour(hour);
         match weight {
             TickWeight::Year => format!("{}", year),
             TickWeight::Month => month_name.to_string(),
