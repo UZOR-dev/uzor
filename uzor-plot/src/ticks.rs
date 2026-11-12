@@ -17,7 +17,8 @@ pub const NICE_MULTIPLIERS: [f64; 3] = [2.0, 2.5, 2.0];
 /// The nice ladder value closest to `value` from the `1, 2, 5 × 10^n` rungs.
 ///
 /// Returns the rung just below `value` when it is at least 80% of `value`,
-/// otherwise the first rung at or above it. Non-positive input gives `1.0`.
+/// otherwise the first rung at or above it. Non-positive or non-finite
+/// input (`NaN`, `±inf`) gives `1.0`.
 ///
 /// ```
 /// use uzor_plot::ticks::nice_number;
@@ -25,7 +26,7 @@ pub const NICE_MULTIPLIERS: [f64; 3] = [2.0, 2.5, 2.0];
 /// assert_eq!(nice_number(7.0), 10.0);  // 5 < 0.8 * 7, so the next rung
 /// ```
 pub fn nice_number(value: f64) -> f64 {
-    if value <= 0.0 {
+    if !value.is_finite() || value <= 0.0 {
         return 1.0;
     }
 
@@ -103,7 +104,8 @@ pub fn nice_step_ceil(range: f64, min_step: f64, target_count: f64) -> f64 {
 /// How dense an axis' ticks are, in pixels.
 ///
 /// The target tick count is `length_px / spacing_px` clamped to
-/// `[min_ticks, max_ticks]`. Generated ticks run `overscan_px` worth of
+/// `[min_ticks, max_ticks]` (bounds given the wrong way round are swapped;
+/// a `NaN` count, e.g. `0 / 0`, gives the lower bound). Generated ticks run `overscan_px` worth of
 /// value past both ends, so labels reach the edges while panning.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -146,7 +148,21 @@ impl TickDensity {
     /// Target tick count for an axis `length_px` long.
     #[inline]
     pub fn target_ticks(&self, length_px: f64) -> f64 {
-        (length_px / self.spacing_px).clamp(self.min_ticks, self.max_ticks)
+        let (lo, hi) = if self.min_ticks <= self.max_ticks {
+            (self.min_ticks, self.max_ticks)
+        } else {
+            (self.max_ticks, self.min_ticks)
+        };
+        let raw = length_px / self.spacing_px;
+        // Same result as `f64::clamp` for ordered bounds, but no panic on
+        // `NaN` or swapped bounds.
+        if raw.is_nan() || raw < lo {
+            lo
+        } else if raw > hi {
+            hi
+        } else {
+            raw
+        }
     }
 
     /// Nice step for `range` on an axis `length_px` long.
@@ -176,11 +192,19 @@ impl TickDensity {
     }
 }
 
+/// Upper bound on [`step_ticks`]' up-front allocation; longer runs grow as usual.
+const STEP_TICKS_PREALLOC: i32 = 1024;
+
 /// Multiples of `step` in `[lo, hi)`, computed by index (no accumulation).
+///
+/// Empty when `step` is not positive and finite or either end is not finite.
 pub fn step_ticks(lo: f64, hi: f64, step: f64) -> Vec<f64> {
+    if !(step.is_finite() && step > 0.0 && lo.is_finite() && hi.is_finite()) {
+        return Vec::new();
+    }
     let first = (lo / step).ceil() * step;
     let num_ticks = ((hi - first) / step).ceil() as i32 + 1;
-    let mut ticks = Vec::with_capacity(num_ticks.max(0) as usize);
+    let mut ticks = Vec::with_capacity(num_ticks.clamp(0, STEP_TICKS_PREALLOC) as usize);
     for i in 0..num_ticks {
         let v = first + (i as f64) * step;
         if v >= hi {
@@ -192,11 +216,11 @@ pub fn step_ticks(lo: f64, hi: f64, step: f64) -> Vec<f64> {
 }
 
 /// Nice ticks strictly inside `[min, max]` (both ends inclusive within
-/// `1e-9 × step`), about `target_count` intervals. Empty for an empty range
-/// or a zero target.
+/// `1e-9 × step`), about `target_count` intervals. Empty for an empty or
+/// non-finite range or a zero target.
 pub fn bounded_ticks(min: f64, max: f64, target_count: usize) -> Vec<f64> {
     let range = max - min;
-    if range <= 0.0 || target_count == 0 {
+    if !range.is_finite() || range <= 0.0 || target_count == 0 {
         return Vec::new();
     }
 
@@ -227,7 +251,10 @@ pub fn bounded_ticks(min: f64, max: f64, target_count: usize) -> Vec<f64> {
 // ---------------------------------------------------------------------------
 
 /// A candidate axis label: its value and the pixel coordinate of its centre.
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// Build it with [`AxisLabel::new`] or [`Default`] (value and position 0).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct AxisLabel {
     /// Data value.
     pub value: f64,

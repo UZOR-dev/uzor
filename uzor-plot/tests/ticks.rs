@@ -122,3 +122,64 @@ fn label_precision_auto_and_pinned() {
     assert_eq!(trim_padded_fraction("6.500"), "6.5");
     assert_eq!(trim_padded_fraction("12"), "12");
 }
+
+// Degenerate input: no panics, no NaN/inf leaking out.
+
+#[test]
+fn nice_number_non_finite_is_one() {
+    assert_eq!(nice_number(f64::NAN), 1.0);
+    assert_eq!(nice_number(f64::INFINITY), 1.0);
+    assert_eq!(nice_number(f64::NEG_INFINITY), 1.0);
+    assert_eq!(nice_step(0.0, 0.0), 1.0); // 0 / 0
+    assert_eq!(nice_step(10.0, 0.0), 1.0); // 10 / 0 = inf
+}
+
+#[test]
+fn target_ticks_nan_and_swapped_bounds() {
+    let d = TickDensity::default();
+    assert_eq!(d.target_ticks(f64::NAN), 4.0);
+    assert_eq!(d.with_spacing_px(0.0).target_ticks(0.0), 4.0); // 0 / 0
+    assert_eq!(d.with_spacing_px(f64::NAN).target_ticks(300.0), 4.0);
+    assert_eq!(d.with_spacing_px(0.0).target_ticks(300.0), 20.0); // inf clamps to max
+    let swapped = d.with_tick_bounds(20.0, 4.0);
+    assert_eq!(swapped.target_ticks(30.0), 4.0);
+    assert_eq!(swapped.target_ticks(3000.0), 20.0);
+    assert_eq!(swapped.target_ticks(300.0), 10.0);
+    let (step, t) = d.with_spacing_px(0.0).ticks(0.0, 0.0, 0.0);
+    assert!(step.is_finite());
+    assert!(t.iter().all(|v| v.is_finite()));
+}
+
+#[test]
+fn step_ticks_degenerate_step_is_empty() {
+    assert!(step_ticks(0.0, 10.0, 0.0).is_empty());
+    assert!(step_ticks(0.0, 10.0, -1.0).is_empty());
+    assert!(step_ticks(0.0, 10.0, f64::NAN).is_empty());
+    assert!(step_ticks(0.0, 10.0, f64::INFINITY).is_empty());
+    assert!(step_ticks(f64::NAN, 10.0, 1.0).is_empty());
+    assert!(step_ticks(0.0, f64::INFINITY, 1.0).is_empty());
+    assert!(step_ticks(f64::NEG_INFINITY, 0.0, 1.0).is_empty());
+    assert_eq!(step_ticks(0.0, 3.0, 1.0), vec![0.0, 1.0, 2.0]);
+}
+
+#[test]
+fn density_ticks_non_finite_range_is_empty() {
+    let d = TickDensity::default();
+    assert!(d.ticks(f64::NAN, 100.0, 300.0).1.is_empty());
+    assert!(d.ticks(0.0, f64::INFINITY, 300.0).1.is_empty());
+    assert!(d.ticks(0.0, 100.0, f64::NAN).1.iter().all(|v| v.is_finite()));
+}
+
+#[test]
+fn bounded_ticks_non_finite_is_empty() {
+    assert!(bounded_ticks(0.0, f64::INFINITY, 4).is_empty());
+    assert!(bounded_ticks(f64::NAN, 1.0, 4).is_empty());
+    assert!(bounded_ticks(f64::NEG_INFINITY, f64::INFINITY, 4).is_empty());
+}
+
+#[test]
+fn axis_label_default_and_new() {
+    let l = AxisLabel::default();
+    assert_eq!((l.value, l.pos), (0.0, 0.0));
+    assert_eq!(AxisLabel::new(1.0, 2.0).pos, 2.0);
+}
