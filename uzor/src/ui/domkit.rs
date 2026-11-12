@@ -8,6 +8,7 @@
 //! | switch | [`switch`] | `button.k-switch` + [`Control::Switch`] (`:checked`) | `id` |
 //! | checkbox | [`checkbox`] | `div.k-check` > `span.k-box` + [`Control::Checkbox`] | `id` |
 //! | text input | [`input`] | `div.k-input` + [`Control::Input`] (`:focus`) | `id` |
+//! | number field | [`number_input`] + [`NumberSpec`] | `div.k-num` > `div.k-input`, `div.k-steps` > `button.k-step` | `id`, `{id}:inc`, `{id}:dec` |
 //! | spinner | [`spinner`] | `span.k-spinner` + [`Control::Spinner`] | — |
 //! | select trigger | [`select_trigger`] | `select.k-select` (`.open`) | `id` |
 //! | select popover | [`select_popover`] | fixed `div.k-pop` > `div.k-opt` (`.sel`, `.dis`) > label + `div.k-sub` | `{id}:opt:{i}` (enabled rows only) |
@@ -67,6 +68,13 @@ div.k-input { height: 32px; padding: 0 10px; border-radius: 8px; background: var
               --placeholder: var(--k-muted); --selection: rgba(59,130,246,0.4); --caret: var(--k-fg) }
 div.k-input:hover { border-color: var(--k-track) }
 div.k-input:focus { border-color: var(--k-accent) }
+div.k-num { display: flex; align-items: stretch; height: 32px }
+div.k-num > div.k-input { flex-grow: 1; border-radius: 8px 0px 0px 8px }
+div.k-steps { display: flex; flex-direction: column; width: 22px; flex-shrink: 0; border: 1px solid var(--k-line); border-left: none;
+              border-radius: 0px 8px 8px 0px; background: var(--k-btn); overflow: hidden }
+button.k-step { flex-grow: 1; display: flex; align-items: center; justify-content: center; color: var(--k-muted); padding: 0px }
+button.k-step:hover { background: var(--k-btn-hover); color: var(--k-fg) }
+button.k-step > span { width: 12px; height: 12px }
 span.k-spinner { width: 18px; height: 18px; color: var(--k-accent); --spin-track: var(--k-line); --spin-speed: 1.2 }
 select.k-select { height: 32px; padding: 0 30px 0 12px; border-radius: 8px; background: var(--k-btn); color: var(--k-fg); --chevron: var(--k-muted) }
 select.k-select:hover { background: var(--k-btn-hover) }
@@ -249,6 +257,7 @@ pub mod icons {
     pub const CLOSE: &str = r#"<path d="M6 6l12 12M18 6L6 18"/>"#;
     pub const RIGHT: &str = r#"<path d="M9 6l6 6-6 6"/>"#;
     pub const DOWN: &str = r#"<path d="M6 9l6 6 6-6"/>"#;
+    pub const UP: &str = r#"<path d="M6 15l6-6 6 6"/>"#;
     pub const REPLY: &str = r#"<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v3"/>"#;
     pub const COPY: &str = r#"<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>"#;
     pub const SMILE: &str = r#"<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/>"#;
@@ -307,6 +316,145 @@ pub fn spinner(t: f64) -> El {
 /// A single-line text input showing `edit`.
 pub fn input(id: &str, edit: Edit) -> El {
     El::new("div.k-input").id(id).tab().control(Control::input(edit))
+}
+
+/// The rules of a number field ([`number_input`]): range, step, shown decimals. The
+/// value stays text while it is typed (`-`, `1.` and an empty field are fine); the app
+/// reads it with [`NumberSpec::parse`], the steppers and the arrow keys go through
+/// [`NumberSpec::stepped`], and leaving the field tidies it with
+/// [`NumberSpec::normalized`] (uzor-framework's `kit::dom` does all three).
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct NumberSpec {
+    /// Smallest value (inclusive).
+    pub min: Option<f64>,
+    /// Largest value (inclusive).
+    pub max: Option<f64>,
+    /// One stepper / arrow-key step.
+    pub step: f64,
+    /// Decimals shown after a step or on leaving the field (`None`: as many as needed).
+    pub decimals: Option<u32>,
+}
+
+impl Default for NumberSpec {
+    fn default() -> Self {
+        NumberSpec { min: None, max: None, step: 1.0, decimals: None }
+    }
+}
+
+impl NumberSpec {
+    /// Any number, step 1.
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Whole numbers only (no decimal point is typed), step 1.
+    pub fn integer() -> Self {
+        NumberSpec { decimals: Some(0), ..Self::default() }
+    }
+    /// The range `min..=max`.
+    pub fn range(mut self, min: f64, max: f64) -> Self {
+        self.min = Some(min.min(max));
+        self.max = Some(max.max(min));
+        self
+    }
+    /// The smallest value.
+    pub fn min(mut self, v: f64) -> Self {
+        self.min = Some(v);
+        self
+    }
+    /// The largest value.
+    pub fn max(mut self, v: f64) -> Self {
+        self.max = Some(v);
+        self
+    }
+    /// One step.
+    pub fn step(mut self, v: f64) -> Self {
+        if v.is_finite() && v > 0.0 {
+            self.step = v;
+        }
+        self
+    }
+    /// Decimals shown.
+    pub fn decimals(mut self, n: u32) -> Self {
+        self.decimals = Some(n);
+        self
+    }
+
+    /// Whether `c` may be typed: digits, a sign, a decimal point (`.` or `,`) unless whole
+    /// numbers only, and an exponent.
+    pub fn accepts(&self, c: char) -> bool {
+        c.is_ascii_digit() || matches!(c, '-' | '+' | 'e' | 'E') || (self.decimals != Some(0) && matches!(c, '.' | ','))
+    }
+
+    /// `text` with what may not be typed taken out (a paste of `"1 234,5 $"` → `"1234,5"`).
+    pub fn sanitize(&self, text: &str) -> String {
+        text.chars().filter(|c| self.accepts(*c)).collect()
+    }
+
+    /// The value `text` holds, inside the range; `None` while it is not a number yet.
+    /// A decimal comma reads as a point.
+    pub fn parse(&self, text: &str) -> Option<f64> {
+        let t: String = self.sanitize(text).replace(',', ".");
+        let v: f64 = t.parse().ok().filter(|v: &f64| v.is_finite())?;
+        Some(self.clamp(v))
+    }
+
+    /// `v` inside the range.
+    pub fn clamp(&self, v: f64) -> f64 {
+        let v = self.min.map_or(v, |m| v.max(m));
+        self.max.map_or(v, |m| v.min(m))
+    }
+
+    /// `v` as text: with [`NumberSpec::decimals`] places, else as short as it reads.
+    pub fn format(&self, v: f64) -> String {
+        match self.decimals {
+            Some(n) => format!("{v:.*}", n as usize),
+            None => {
+                // Up to the step's decimals and no float noise (0.1 + 0.2).
+                let places = decimals_of(self.step).max(decimals_of(v)).min(10);
+                let s = format!("{v:.places$}");
+                if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
+            }
+        }
+    }
+
+    /// The text after `n` steps from `text` (an unreadable text steps from the range's
+    /// start, or 0), snapped to the step grid and clamped.
+    pub fn stepped(&self, text: &str, n: i32) -> String {
+        let from = self.parse(text).unwrap_or_else(|| self.min.unwrap_or(0.0).max(self.max.map_or(f64::MIN, |m| m.min(0.0))));
+        let base = self.min.unwrap_or(0.0);
+        let k = ((from - base) / self.step).round();
+        let at_grid = (base + k * self.step - from).abs() < self.step * 1e-9;
+        let k = if at_grid { k + n as f64 } else if n > 0 { ((from - base) / self.step).floor() + n as f64 } else { ((from - base) / self.step).ceil() + n as f64 };
+        self.format(self.clamp(base + k * self.step))
+    }
+
+    /// The text tidied on leaving the field: the clamped value formatted, or the text
+    /// unchanged when it is not a number (empty stays empty).
+    pub fn normalized(&self, text: &str) -> String {
+        match self.parse(text) {
+            Some(v) => self.format(v),
+            None => text.to_string(),
+        }
+    }
+}
+
+fn decimals_of(v: f64) -> usize {
+    let s = format!("{}", v.abs());
+    s.split_once('.').map_or(0, |(_, f)| f.len())
+}
+
+/// A number field: a text input (`id`) with up / down steppers (`{id}:inc`, `{id}:dec`).
+/// The rules are a [`NumberSpec`]; in uzor-framework register them with
+/// `kit::dom(..).number(id, spec)`, which filters typing, steps on the buttons, the
+/// arrow keys and the wheel over the focused field, and tidies the text on blur.
+pub fn number_input(id: &str, edit: Edit, name: &str) -> El {
+    let step = |dir: &str, label: &str, body: &str| {
+        El::new("button.k-step").id(format!("{id}:{dir}")).name(format!("{name} {label}")).child(El::new("span").svg(icon(body)))
+    };
+    El::new("div.k-num")
+        .child(input(id, edit).name(name))
+        .child(El::new("div.k-steps").child(step("inc", "+", icons::UP)).child(step("dec", "−", icons::DOWN)))
 }
 
 /// One option of a select.
@@ -944,6 +1092,42 @@ mod tests {
     use crate::testing::NullRenderContext;
     use crate::ui::dom::lay_out_in;
     use crate::ui::style::State;
+
+    #[test]
+    fn number_spec_parses_steps_and_tidies() {
+        let s = NumberSpec::new().range(0.0, 10.0).step(0.5);
+        assert_eq!(s.parse("3,5"), Some(3.5), "a decimal comma reads as a point");
+        assert_eq!(s.parse("42"), Some(10.0), "clamped");
+        assert_eq!(s.parse("-"), None, "not a number yet");
+        assert_eq!(s.sanitize("1 234,5 $"), "1234,5");
+        assert_eq!(s.stepped("3.5", 1), "4");
+        assert_eq!(s.stepped("3.2", 1), "3.5", "off the grid: up to the next step");
+        assert_eq!(s.stepped("3.2", -1), "3", "and down to the previous one");
+        assert_eq!(s.stepped("9.8", 3), "10", "clamped at the top");
+        assert_eq!(s.stepped("", 1), "0.5", "an empty field steps from the start");
+        assert_eq!(s.normalized("7,25"), "7.25");
+        assert_eq!(s.normalized("abc"), "abc");
+        let i = NumberSpec::integer().min(1.0);
+        assert!(!i.accepts('.') && i.accepts('7'));
+        assert_eq!(i.stepped("0", 1), "2", "from below the range: clamped, then a step");
+        assert_eq!(NumberSpec::new().step(0.1).stepped("0.2", 1), "0.3", "no float noise");
+        assert_eq!(NumberSpec::new().decimals(2).format(1.0), "1.00");
+    }
+
+    #[test]
+    fn number_input_has_the_field_and_steppers() {
+        fn walk(e: &El, out: &mut Vec<String>) {
+            if let Some(i) = &e.id {
+                out.push(i.clone());
+            }
+            for c in &e.children {
+                walk(c, out);
+            }
+        }
+        let mut ids = Vec::new();
+        walk(&number_input("qty", Edit::new("3"), "Quantity"), &mut ids);
+        assert_eq!(ids, ["qty", "qty:inc", "qty:dec"]);
+    }
 
     #[test]
     fn markdown_bold_italic_code_links() {

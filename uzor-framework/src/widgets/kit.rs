@@ -1774,7 +1774,21 @@ pub struct DomBuilder<'a> {
     scroll: f64,
     viewport: Option<Rect>,
     slots: Option<&'a mut dyn FnMut(&mut dyn RenderContext, &SlotFrame<'_>)>,
+    numbers: Vec<(String, uzor::ui::domkit::NumberSpec)>,
+    key: Option<&'a KeyInput>,
 }
+
+fn number_char(c: char) -> bool {
+    uzor::ui::domkit::NumberSpec::new().accepts(c)
+}
+
+fn integer_char(c: char) -> bool {
+    uzor::ui::domkit::NumberSpec::integer().accepts(c)
+}
+
+/// Whether a number field had focus last frame (to tidy it on blur).
+#[derive(Default)]
+struct NumberFocus(bool);
 
 /// One custom-paint slot as the host paints it this frame ([`DomBuilder::paint_slots`],
 /// [`paint_slot`]).
@@ -1841,6 +1855,8 @@ pub struct DomResponse {
     /// The framework-owned scroll containers of the tree (`overflow: auto | scroll` with
     /// an id, see [`dom`]) and their `scrollTop` after this frame, in tree order.
     pub scrolls: Vec<(String, f64)>,
+    /// The key given to [`DomBuilder::key`] was used (an arrow key stepped a number field).
+    pub key_used: bool,
 }
 
 /// The scroll state of one framework-owned DOM scroll container.
@@ -1894,7 +1910,7 @@ pub fn dom_scroll_top<'c, C: ContentCx<'c>>(cx: &mut C, id: &str) -> f64 {
 ///
 /// [`El::name`]: uzor::ui::dom::El::name
 pub fn dom<'a>(rect: Rect, sheet: &'a uzor::ui::style::Sheet, root: uzor::ui::dom::El) -> DomBuilder<'a> {
-    DomBuilder { rect, sheet, root, scroll: 0.0, viewport: None, slots: None }
+    DomBuilder { rect, sheet, root, scroll: 0.0, viewport: None, slots: None, numbers: Vec::new(), key: None }
 }
 
 impl<'a> DomBuilder<'a> {
@@ -1917,6 +1933,25 @@ impl<'a> DomBuilder<'a> {
         self
     }
 
+    /// Make the text input `id` a number field ([`uzor::ui::domkit::number_input`]):
+    /// only what `spec` accepts can be typed, `{id}:inc` / `{id}:dec`, ArrowUp / ArrowDown
+    /// (with [`DomBuilder::key`]) and the wheel over the focused field step it, and
+    /// leaving it tidies the text ([`NumberSpec::normalized`]). Every change comes back in
+    /// [`DomResponse::edited`]; read the value with [`NumberSpec::parse`].
+    ///
+    /// [`NumberSpec::normalized`]: uzor::ui::domkit::NumberSpec::normalized
+    /// [`NumberSpec::parse`]: uzor::ui::domkit::NumberSpec::parse
+    pub fn number(mut self, id: impl Into<String>, spec: uzor::ui::domkit::NumberSpec) -> Self {
+        self.numbers.push((id.into(), spec));
+        self
+    }
+    /// This frame's key press, if any (the app forwards keys it did not use): the arrow
+    /// keys step a focused number field ([`DomResponse::key_used`]).
+    pub fn key(mut self, k: Option<&'a KeyInput>) -> Self {
+        self.key = k.filter(|k| k.state != crate::KeyState::Up);
+        self
+    }
+
     /// Paint the tree and register its hit targets and fields.
     pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> DomResponse {
         use uzor::ui::dom::{Control, El};
@@ -1924,8 +1959,55 @@ impl<'a> DomBuilder<'a> {
         let now_ms = cx.time_ms();
         let frame_now = cx.frame_now_ms();
         let overlay = cx.is_overlay();
-        let DomBuilder { rect, sheet, mut root, scroll, viewport, mut slots } = self;
+        let DomBuilder { rect, sheet, mut root, scroll, viewport, mut slots, numbers, key } = self;
         let (resp, ime, more) = cx.with_paint(|render, widgets, v, _| {
+            // Number fields: steps (buttons, arrow keys, wheel over the focused field), what
+            // could not be typed (a paste) and the tidy-up on blur go into the text store,
+            // so the walk below reports them as edits.
+            let mut key_used = false;
+            let mut num_edits: Vec<(String, String)> = Vec::new();
+            for (id, spec) in &numbers {
+                let wid = WidgetId::from(id.as_str());
+                let Some(text) = widgets.coord.text_fields().field_state(&wid).map(|s| s.text.clone()) else { continue };
+                let focused = v.is_focused(&wid);
+                let mut n = 0i32;
+                if v.clicked(&WidgetId::from(format!("{id}:inc"))) {
+                    n += 1;
+                }
+                if v.clicked(&WidgetId::from(format!("{id}:dec"))) {
+                    n -= 1;
+                }
+                if focused {
+                    use uzor::input::keyboard::KeyCode as Kc;
+                    match key.map(|k| k.code) {
+                        Some(Kc::ArrowUp) => {
+                            n += 1;
+                            key_used = true;
+                        }
+                        Some(Kc::ArrowDown) => {
+                            n -= 1;
+                            key_used = true;
+                        }
+                        _ => {}
+                    }
+                    let dy = v.scroll_over(&wid).1;
+                    if dy != 0.0 && !v.scroll_touch() {
+                        n += if dy > 0.0 { 1 } else { -1 };
+                    }
+                }
+                let was = std::mem::replace(&mut widgets.states.get_or_insert_with(WidgetId::from(format!("{id}:num-focus")), NumberFocus::default).0, focused);
+                let next = if n != 0 {
+                    spec.stepped(&text, n)
+                } else if was && !focused {
+                    spec.normalized(&text)
+                } else {
+                    spec.sanitize(&text)
+                };
+                if next != text {
+                    widgets.coord.text_fields_mut().set_text(&wid, &next);
+                    num_edits.push((id.clone(), next));
+                }
+            }
             // Framework-owned scroll containers: their stored offsets go into the tree,
             // this frame's wheel / keys / thumb move them (relaid out when they did).
             fn app_scrolled(e: &El, out: &mut Vec<String>) {
@@ -2093,7 +2175,11 @@ impl<'a> DomBuilder<'a> {
                 let wid = WidgetId::from(id);
                 let name = b.accessible_name().unwrap_or_default().to_string();
                 if let Some(Control::Input(e)) = &b.control {
-                    let cfg = if e.masked { uzor::TextFieldConfig::password() } else { uzor::TextFieldConfig::text() };
+                    let cfg = match numbers.iter().find(|(n, _)| n == id) {
+                        Some((_, spec)) => uzor::TextFieldConfig::text().with_filter(if spec.decimals == Some(0) { integer_char } else { number_char }),
+                        None if e.masked => uzor::TextFieldConfig::password(),
+                        None => uzor::TextFieldConfig::text(),
+                    };
                     coord.register_text_field(wid.clone(), vis, cfg);
                     if let Some((_, v)) = seed.iter().find(|(s, _)| *s == wid) {
                         coord.text_fields_mut().set_text(&wid, v);
@@ -2150,7 +2236,14 @@ impl<'a> DomBuilder<'a> {
                 .flat_map(|(id, _)| v.captured_gestures(&WidgetId::from(id)).into_iter().map(move |g| (id.to_string(), g)))
                 .collect();
             let scrolls = scrollers.into_iter().map(|(i, _, sv)| (i, sv.offset)).collect();
-            (DomResponse { dom: d, clicked, captured, hovered, focused, edited, scrolls }, ime, more)
+            // A number field's change counts even when the app's tree already shows it.
+            for (id, text) in num_edits {
+                match edited.iter_mut().find(|(i, _)| *i == id) {
+                    Some(e) => e.1 = text,
+                    None => edited.push((id, text)),
+                }
+            }
+            (DomResponse { dom: d, clicked, captured, hovered, focused, edited, scrolls, key_used }, ime, more)
         });
         if let Some(at) = ime {
             cx.ime_area(at);
