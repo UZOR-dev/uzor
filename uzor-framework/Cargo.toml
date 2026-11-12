@@ -222,5 +222,9 @@ required-features = ["monitor"]
 crate-type = ["cdylib"]
 
 [[example]]
+name = "dom_scroll"
+required-features = ["native"]
+
+[[example]]
 name = "image_viewer"
 required-features = ["native"]

@@ -1838,6 +1838,38 @@ pub struct DomResponse {
     pub focused: Option<String>,
     /// Text inputs whose value the user changed this frame: `(id, new value)`.
     pub edited: Vec<(String, String)>,
+    /// The framework-owned scroll containers of the tree (`overflow: auto | scroll` with
+    /// an id, see [`dom`]) and their `scrollTop` after this frame, in tree order.
+    pub scrolls: Vec<(String, f64)>,
+}
+
+/// The scroll state of one framework-owned DOM scroll container.
+#[derive(Default)]
+struct DomScroll {
+    sv: crate::types::scroll::ScrollView,
+}
+
+fn dom_scroll_key(id: &str) -> WidgetId {
+    WidgetId::from(format!("{id}:dom-scroll"))
+}
+
+/// Scroll the framework-owned DOM scroll container `id` to `y` (CSS `el.scrollTop = y`,
+/// clamped to its range on the next frame); `smooth` glides there.
+pub fn dom_scroll_to<'c, C: ContentCx<'c>>(cx: &mut C, id: &str, y: f64, smooth: bool) {
+    cx.with_paint(|_, widgets, _, _| {
+        let st = widgets.states.get_or_insert_with(dom_scroll_key(id), DomScroll::default);
+        if smooth {
+            st.sv.scroll_into_view(y, 0.0, crate::types::scroll::ScrollAlign::Start, true);
+        } else {
+            st.sv.scroll_to(y.max(0.0));
+        }
+    });
+    cx.request_frame();
+}
+
+/// The `scrollTop` of the framework-owned DOM scroll container `id` (0 before its first frame).
+pub fn dom_scroll_top<'c, C: ContentCx<'c>>(cx: &mut C, id: &str) -> f64 {
+    cx.with_paint(|_, widgets, _, _| widgets.states.get::<DomScroll>(&dom_scroll_key(id)).map_or(0.0, |s| s.sv.offset))
 }
 
 /// Lay out `root` with `sheet` in `rect` (scrolled up by [`DomBuilder::scroll`]),
@@ -1850,6 +1882,15 @@ pub struct DomResponse {
 ///
 /// Kit widgets go *inside* the tree through embed slots: call them at
 /// `resp.dom.slots()` after `build`.
+///
+/// Elements with an id and `overflow: auto | scroll` scroll themselves, as in a
+/// browser: the wheel, a touchpad (1:1 with fling), a finger, keyboard steps queued
+/// with [`queue_scroll_key`](crate::widgets::queue_scroll_key), a draggable
+/// thumb, nested chaining at the edges (`overscroll-behavior: auto`). Their offset
+/// lives in the widget state store under the id; read it from
+/// [`DomResponse::scrolls`] or [`dom_scroll_top`], move it with [`dom_scroll_to`]. An
+/// element given a non-zero [`El::scroll_top`](uzor::ui::dom::El::scroll_top) by the
+/// app is the app's to scroll, as is `overflow: hidden`.
 ///
 /// [`El::name`]: uzor::ui::dom::El::name
 pub fn dom<'a>(rect: Rect, sheet: &'a uzor::ui::style::Sheet, root: uzor::ui::dom::El) -> DomBuilder<'a> {
@@ -1881,9 +1922,51 @@ impl<'a> DomBuilder<'a> {
         use uzor::ui::dom::{Control, El};
         use uzor::ui::style::State;
         let now_ms = cx.time_ms();
+        let frame_now = cx.frame_now_ms();
+        let overlay = cx.is_overlay();
         let DomBuilder { rect, sheet, mut root, scroll, viewport, mut slots } = self;
-        let (resp, ime) = cx.with_paint(|render, widgets, v, _| {
-            let (coord, _, layer) = parts(widgets);
+        let (resp, ime, more) = cx.with_paint(|render, widgets, v, _| {
+            // Framework-owned scroll containers: their stored offsets go into the tree,
+            // this frame's wheel / keys / thumb move them (relaid out when they did).
+            fn app_scrolled(e: &El, out: &mut Vec<String>) {
+                if let (Some(id), true) = (e.id.as_deref(), e.scroll_top != 0.0) {
+                    out.push(id.to_string());
+                }
+                for c in &e.children {
+                    app_scrolled(c, out);
+                }
+            }
+            fn apply(e: &mut El, offs: &[(String, f64)]) {
+                if let Some(id) = e.id.as_deref() {
+                    if let Some((_, y)) = offs.iter().find(|(i, _)| i == id) {
+                        e.scroll_top = *y;
+                    }
+                }
+                for c in &mut e.children {
+                    apply(c, offs);
+                }
+            }
+            let mut app_owned = Vec::new();
+            app_scrolled(&root, &mut app_owned);
+            let mut offs: Vec<(String, f64)> = Vec::new();
+            {
+                fn ids(e: &El, out: &mut Vec<String>) {
+                    if let Some(id) = &e.id {
+                        out.push(id.clone());
+                    }
+                    for c in &e.children {
+                        ids(c, out);
+                    }
+                }
+                let mut all = Vec::new();
+                ids(&root, &mut all);
+                for id in all.into_iter().filter(|i| !app_owned.contains(i)) {
+                    if let Some(st) = widgets.states.get::<DomScroll>(&dom_scroll_key(&id)) {
+                        offs.push((id, st.sv.offset));
+                    }
+                }
+            }
+            apply(&mut root, &offs);
             let mut edited = Vec::new();
             let mut seed: Vec<(WidgetId, String)> = Vec::new();
             // Feed the text store's state into the tree's inputs (seeding new fields).
@@ -1897,11 +1980,11 @@ impl<'a> DomBuilder<'a> {
             }
             walk(&mut root, &mut |id, ed| {
                 let wid = WidgetId::from(id);
-                if coord.text_fields().field_state(&wid).is_none() {
+                if widgets.coord.text_fields().field_state(&wid).is_none() {
                     seed.push((wid.clone(), ed.value.clone()));
                 }
                 let focused = v.is_focused(&wid);
-                if let Some(s) = coord.text_fields().field_state(&wid) {
+                if let Some(s) = widgets.coord.text_fields().field_state(&wid) {
                     let text = s.text.clone();
                     if text != ed.value {
                         edited.push((id.to_string(), text.clone()));
@@ -1913,7 +1996,7 @@ impl<'a> DomBuilder<'a> {
                     ed.caret = focused.then_some(caret);
                     ed.anchor = sel.filter(|_| focused).map(|(a, b)| if b == caret { a } else { b });
                     ed.preedit = (focused && composing).then(|| s.preedit.clone());
-                    ed.caret_on = focused && s.engaged && coord.text_fields().cursor_visible(now_ms);
+                    ed.caret_on = focused && s.engaged && widgets.coord.text_fields().cursor_visible(now_ms);
                 } else {
                     ed.caret = None;
                 }
@@ -1937,8 +2020,42 @@ impl<'a> DomBuilder<'a> {
                 s
             };
             let vp = viewport.unwrap_or(rect);
-            let d = uzor::ui::dom::lay_out_in(render, sheet, &root, rect.x, rect.y, rect.width, Some(vp), &state);
-            let d = if scroll != 0.0 { d.moved(0.0, -scroll) } else { d };
+            let lay = |render: &mut dyn RenderContext, root: &El| {
+                let d = uzor::ui::dom::lay_out_in(render, sheet, root, rect.x, rect.y, rect.width, Some(vp), &state);
+                if scroll != 0.0 { d.moved(0.0, -scroll) } else { d }
+            };
+            let mut d = lay(render, &root);
+            let sst = crate::types::scroll::ScrollStyle::default();
+            let mut more = false;
+            // (id, viewport, scroll view) of each owned container, tree order.
+            let mut scrollers: Vec<(String, Rect, crate::types::scroll::ScrollView)> = Vec::new();
+            for b in &d.boxes {
+                let Some(id) = b.id.as_deref() else { continue };
+                if !matches!(b.style.overflow.as_deref(), Some("auto" | "scroll")) || app_owned.iter().any(|a| a == id) {
+                    continue;
+                }
+                let e = b.style.border_edges();
+                let pad = Rect::new(b.rect.x + e[3], b.rect.y + e[0], (b.rect.width - e[1] - e[3]).max(0.0), (b.rect.height - e[0] - e[2]).max(0.0));
+                let mut vis = b.clip.map_or(pad, |c| c.intersect(pad));
+                if !b.fixed {
+                    vis = vis.intersect(rect);
+                }
+                let mut sv = widgets.states.get_or_insert_with(dom_scroll_key(id), DomScroll::default).sv.clone();
+                // The wheel goes to the visible part; the extent is the padding box's.
+                let wheel = vis.width > 0.0 && vis.height > 0.0;
+                more |= crate::widgets::scroll::begin_parts(widgets.states, v, frame_now, id, vis, &mut sv, b.scroll_height, wheel, &sst);
+                sv.set_extent(b.scroll_height, pad.height);
+                sv.offset = sv.offset.clamp(0.0, sv.max());
+                widgets.states.get_or_insert_with(dom_scroll_key(id), DomScroll::default).sv = sv.clone();
+                scrollers.push((id.to_string(), vis, sv));
+            }
+            let now_offs: Vec<(String, f64)> = scrollers.iter().map(|(i, _, sv)| (i.clone(), sv.offset)).collect();
+            let changed = now_offs.iter().any(|(i, y)| offs.iter().find(|(j, _)| j == i).map_or(*y != 0.0, |(_, o)| (o - y).abs() > 0.01));
+            if changed {
+                apply(&mut root, &now_offs);
+                d = lay(render, &root);
+            }
+            let (coord, _, layer) = parts(widgets);
             render.save();
             render.begin_path();
             render.rect(rect.x, rect.y, rect.width, rect.height);
@@ -2007,11 +2124,23 @@ impl<'a> DomBuilder<'a> {
                         // (`VisualView::captured_gestures`).
                         sense = sense.with_touch().with_gesture();
                     }
+                    if scrollers.iter().any(|(i, _, _)| i == id) {
+                        sense = sense.union(Sense::SCROLL);
+                    }
                     coord.register_atomic(wid.clone(), WidgetKind::Button, vis, sense, layer);
                     coord.set_a11y(&wid, &name, b.control.as_ref().and_then(Control::checked));
                 }
             }
             coord.set_default_layer(None);
+            // Thumbs over the content, and this frame's entries in the scroll chain.
+            render.save();
+            render.begin_path();
+            render.rect(rect.x, rect.y, rect.width, rect.height);
+            render.clip();
+            for (id, vis, sv) in &scrollers {
+                crate::widgets::scroll::end_parts(widgets, render, v, frame_now, id, *vis, sv, &sst, overlay);
+            }
+            render.restore();
             let ids: Vec<&str> = d.boxes.iter().rev().filter_map(|b| b.id.as_deref()).collect();
             let clicked = ids.iter().find(|i| v.clicked(&WidgetId::from(**i))).map(|s| s.to_string());
             let hovered = ids.iter().find(|i| v.is_hovered(&WidgetId::from(**i))).map(|s| s.to_string());
@@ -2020,10 +2149,14 @@ impl<'a> DomBuilder<'a> {
                 .touch_targets()
                 .flat_map(|(id, _)| v.captured_gestures(&WidgetId::from(id)).into_iter().map(move |g| (id.to_string(), g)))
                 .collect();
-            (DomResponse { dom: d, clicked, captured, hovered, focused, edited }, ime)
+            let scrolls = scrollers.into_iter().map(|(i, _, sv)| (i, sv.offset)).collect();
+            (DomResponse { dom: d, clicked, captured, hovered, focused, edited, scrolls }, ime, more)
         });
         if let Some(at) = ime {
             cx.ime_area(at);
+        }
+        if more {
+            cx.request_frame();
         }
         resp
     }

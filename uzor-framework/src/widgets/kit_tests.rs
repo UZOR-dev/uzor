@@ -710,3 +710,46 @@ fn dom_search_bar_and_virtual_list_are_live_controls() {
     assert!(h.coord.text_fields().field_state(&WidgetId::from("q")).is_some(), "the input is a text-store field (it owns the typing)");
     assert!(h.coord.widget_rect(&WidgetId::from("t:490")).is_some() && h.coord.widget_rect(&WidgetId::from("t:2")).is_none());
 }
+
+/// `overflow: auto` with an id scrolls itself: the wheel moves it inside its range, the
+/// tree is laid out at the new `scrollTop` the same frame, an app-scrolled element and
+/// `overflow: hidden` stay the app's, and `dom_scroll_to` jumps.
+#[test]
+fn dom_scroll_containers_are_framework_owned() {
+    use uzor::ui::dom::El;
+    let sheet = uzor::ui::style::Sheet::parse("").unwrap();
+    let rows = |pre: &str| (0..10).map(|i| El::new("div").id(format!("{pre}{i}")).css("height: 30px")).collect::<Vec<_>>();
+    let tree = |app_top: f64| {
+        El::new("div")
+            .css("height: 400px")
+            .child(El::new("div").id("list").css("height: 100px; overflow: auto").children(rows("r")))
+            .child(El::new("div").id("own").css("height: 100px; overflow: auto").scroll_top(app_top).children(rows("o")))
+            .child(El::new("div").id("hid").css("height: 100px; overflow: hidden").children(rows("h")))
+    };
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let panel = Rect::new(0.0, 0.0, 800.0, 400.0);
+    let mut v = VisualView::<K>::default();
+    v.pointer = Some((50.0, 50.0));
+    v.scroll = (0.0, -2.0);
+    let r = h.frame(&v, |cx| dom(panel, &sheet, tree(5.0)).build(cx));
+    assert_eq!(r.scrolls, vec![("list".to_string(), 80.0)], "two wheel lines of 40px; `own` and `hid` are not owned");
+    assert_eq!(r.dom.get("r0").unwrap().rect.y, -80.0, "laid out at the new scrollTop this frame");
+    assert!(h.coord.widget_sense(&WidgetId::from("list")).is_some_and(|s| s.scroll), "registered as a scroll target");
+    // Past the end: clamped to content (300) - view (100).
+    v.scroll = (0.0, -10.0);
+    let r = h.frame(&v, |cx| dom(panel, &sheet, tree(5.0)).build(cx));
+    assert_eq!(r.scrolls[0].1, 200.0);
+    // The pointer over another element: the list keeps its place, and the stored offset
+    // is applied to the next tree without any app state.
+    v.pointer = Some((50.0, 350.0));
+    let r = h.frame(&v, |cx| dom(panel, &sheet, tree(5.0)).build(cx));
+    assert_eq!(r.scrolls[0].1, 200.0);
+    assert_eq!(r.dom.get("r9").unwrap().rect.y, 70.0, "row 9 ends at the list's bottom");
+    assert_eq!(r.dom.get("h0").unwrap().rect.y, 200.0, "overflow: hidden does not scroll");
+    // A jump from the app.
+    v.scroll = (0.0, 0.0);
+    h.frame(&v, |cx| dom_scroll_to(cx, "list", 30.0, false));
+    let r = h.frame(&v, |cx| dom(panel, &sheet, tree(5.0)).build(cx));
+    assert_eq!(r.scrolls[0].1, 30.0);
+    assert_eq!(h.frame(&v, |cx| dom_scroll_top(cx, "list")), 30.0);
+}
