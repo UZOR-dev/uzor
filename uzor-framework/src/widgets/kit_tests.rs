@@ -651,3 +651,31 @@ fn standalone_paint_slot_captures_and_reports() {
     assert_eq!(local, Some((50.0, 50.0)));
     assert_eq!(h.coord.touch_capture_at(100.0, 100.0), Some(WidgetId::from("book")));
 }
+
+#[test]
+fn dom_search_bar_and_virtual_list_are_live_controls() {
+    use uzor::ui::dom::{Edit, El};
+    use uzor::ui::mobile::{row, search_bar, search_filter, Row, VirtualList};
+    let sheet = uzor::ui::mobile::sheet_with("").expect("mobile sheet");
+    let labels: Vec<String> = (0..500).map(|i| format!("Ticker {i:03}")).collect();
+    let v = VirtualList::new(64.0);
+    let tree = |q: &str, scroll: f64| {
+        let hits = search_filter(&labels, q);
+        let list = v.el("list", hits.len(), scroll, 700.0, None, |i| row(&format!("t:{}", hits[i]), &Row::new(labels[hits[i]].clone())));
+        El::new("div.m-screen").css("height: 844px").child(search_bar("q", Edit::new(q).placeholder("Search"), "Search", Some("Cancel"))).child(list)
+    };
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let area = Rect::new(0.0, 0.0, 390.0, 844.0);
+    let r = h.frame(&click("t:2"), |cx| dom(area, &sheet, tree("", 0.0)).build(cx));
+    assert_eq!(r.clicked.as_deref(), Some("t:2"), "rows are targets");
+    assert!(h.coord.widget_rect(&WidgetId::from("t:30")).is_none(), "rows out of sight are not built");
+    // Scrolled down, the rows in sight are the targets.
+    let r = h.frame(&click("t:300"), |cx| dom(area, &sheet, tree("", 300.0 * 64.0)).build(cx));
+    assert_eq!(r.clicked.as_deref(), Some("t:300"));
+    assert!(h.coord.widget_rect(&WidgetId::from("t:2")).is_none());
+    // Typed: the list narrows to the matches, the clear button is live.
+    let r = h.frame(&click("q:clear"), |cx| dom(area, &sheet, tree("ticker 49", 0.0)).build(cx));
+    assert_eq!(r.clicked.as_deref(), Some("q:clear"));
+    assert!(h.coord.text_fields().field_state(&WidgetId::from("q")).is_some(), "the input is a text-store field (it owns the typing)");
+    assert!(h.coord.widget_rect(&WidgetId::from("t:490")).is_some() && h.coord.widget_rect(&WidgetId::from("t:2")).is_none());
+}

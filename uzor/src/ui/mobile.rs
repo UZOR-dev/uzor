@@ -24,12 +24,17 @@
 //! | composer | [`composer`] | `div.m-composer` > `button.m-ibtn`, `div.m-inp` (slot or input), `button.m-send` (`.off`) | `{id}:plus`, `{id}:field`, `{id}:send` |
 //! | agent card | [`hero`], [`quick_actions`], [`kv_group`] | `div.m-hero`, `div.m-qa` > `button.m-q`, `div.m-kv.m-tile` > `div.m-kvr` | `{id}:{key}` |
 //! | button | [`btn`] | `button.m-btn` (`.pri`, `.ghost`, `.block`) | `id` |
+//! | search bar | [`search_bar`] | `div.m-sbar` > `div.m-search.m-sfield` > `input.m-sinput`, `button.m-sclear`; `button.m-scancel` | `id`, `{id}:clear`, `{id}:cancel` |
+//! | virtual list | [`VirtualList::el`] | `div.m-vlist` > `div.m-vbody` > `div.m-vpad`, `div.m-vrow` > the row; `div.m-empty` | `id`, the rows' |
 //!
 //! Geometry the host needs (where the composer sits over the keyboard, how far a focused
 //! field must scroll to clear it) is in [`composer_bottom`] and [`reveal_above`].
 
 use super::dom::{Control, Edit, El};
 use super::style::{Sheet, StyleError};
+
+mod list;
+pub use list::{search_bar, search_filter, search_rank, VirtualList};
 
 /// The mobile look. Variables on `:root` theme it (`--m-bg`, `--m-bar`, `--m-card`,
 /// `--m-txt`, `--m-sub`, `--m-dim`, `--m-line`, `--m-glass`, the dot colours).
@@ -157,6 +162,17 @@ button.m-q { flex-grow: 1; flex-basis: 0; display: flex; flex-direction: column;
 button.m-q > span.m-ic { width: 22px; height: 22px }
 div.m-kv { margin: 0 16px 12px; flex-shrink: 0 }
 div.m-kvr { display: flex; align-items: center; min-height: 48px; padding: 0 14px; gap: 12px; font-size: 15px; border-top: 1px solid var(--m-line) }
+div.m-sbar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; flex-shrink: 0; background: var(--m-bg) }
+div.m-sbar > div.m-sfield { flex-grow: 1; min-width: 0; margin-top: 0 }
+input.m-sinput { flex-grow: 1; min-width: 0; height: 24px; padding: 0; border-width: 0; background: transparent; color: var(--m-txt); font-size: 16px }
+button.m-sclear { width: 26px; height: 26px; padding: 5px; border-radius: 13px; flex-shrink: 0; color: var(--m-sub); background: var(--m-press) }
+button.m-scancel { height: 38px; padding: 0 2px; flex-shrink: 0; color: var(--m-txt); font-size: 16px }
+div.m-vlist { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--m-bg) }
+div.m-vbody { flex-shrink: 0; display: flex; flex-direction: column }
+div.m-vpad { flex-shrink: 0 }
+div.m-vrow { flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden }
+div.m-vrow > div.m-row, div.m-vrow > div.m-swipe { flex-grow: 1; flex-shrink: 1; min-height: 0 }
+div.m-empty { padding: 48px 24px; text-align: center; color: var(--m-sub); font-size: 15px; white-space: normal }
 div.m-kvr.first { border-top: 0 }
 div.m-kvr > div.m-k { flex-grow: 1; color: var(--m-sub); min-width: 0 }
 div.m-kvr > div.m-v { color: var(--m-txt); text-align: right; min-width: 0 }

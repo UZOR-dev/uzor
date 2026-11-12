@@ -10,7 +10,7 @@ use uzor::ui::dom::El;
 use uzor::ui::mobile::{self as m, icons, Detent, Dot, DrawerItem, DrawerState, Kv, Row, SheetState, SwipeState, Tab};
 
 /// The screens, in the concept's order.
-pub const SCREENS: [&str; 13] = [
+pub const SCREENS: [&str; 15] = [
     "01-tab-bar-chat-list",
     "02-top-bar-back-chat",
     "03-composer-keyboard",
@@ -24,7 +24,16 @@ pub const SCREENS: [&str; 13] = [
     "08-swipe-actions",
     "09-toast",
     "10-segmented-control",
+    "11a-search-virtual-list",
+    "11b-search-typed",
 ];
+
+/// 500 made-up instruments for the long list: (ticker, market).
+pub fn instruments() -> Vec<(String, &'static str)> {
+    const BASES: [&str; 25] = ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "TON", "TRX", "DOT", "LINK", "AVAX", "MATIC", "LTC", "BCH", "ATOM", "NEAR", "APT", "ARB", "OP", "FIL", "ETC", "XLM", "UNI", "AAVE", "SUI"];
+    const QUOTES: [(&str, &str); 20] = [("USDT", "спот"), ("USDC", "спот"), ("BTC", "спот"), ("ETH", "спот"), ("EUR", "спот"), ("RUB", "спот"), ("TRY", "спот"), ("BRL", "спот"), ("FDUSD", "спот"), ("DAI", "спот"), ("USDT-PERP", "фьючерс"), ("USDC-PERP", "фьючерс"), ("USD-QTR", "фьючерс"), ("USD-BI", "фьючерс"), ("USDT-1H", "опцион"), ("USDT-1D", "опцион"), ("USDT-1W", "опцион"), ("USDT-1M", "опцион"), ("BUSD", "спот"), ("JPY", "спот")];
+    BASES.iter().flat_map(|b| QUOTES.iter().filter(move |q| q.0 != *b).map(move |(q, k)| (format!("{b}/{q}"), *k))).collect()
+}
 
 /// Made-up chats: (avatar, name, dot, time, last line, unread).
 pub const CHATS: [(&str, &str, Dot, &str, &str, u32); 8] = [
@@ -37,6 +46,9 @@ pub const CHATS: [(&str, &str, Dot, &str, &str, u32); 8] = [
     ("Н", "Ночной дайджест", Dot::Ok, "пн", "Сводка за неделю: 14 задач закрыто", 0),
     ("A", "Агент сборки", Dot::None, "вс", "cargo check: 0 ошибок", 0),
 ];
+
+/// Row height of the long list.
+pub const LIST_ROW: f64 = 56.0;
 
 /// Gallery state a host (or the frames bin) changes between frames.
 #[derive(Clone, Debug, Default)]
@@ -52,6 +64,9 @@ pub struct MobileGallery {
     pub keyboard: f64,
     /// Bottom safe area.
     pub safe_bottom: f64,
+    /// The long list's search query and scroll offset.
+    pub query: String,
+    pub list_scroll: f64,
 }
 
 impl MobileGallery {
@@ -64,6 +79,8 @@ impl MobileGallery {
                 g.drawer.set(true);
                 while g.drawer.step(1.0 / 60.0, m::DRAWER_W) {}
             }
+            "11a-search-virtual-list" => g.list_scroll = 200.0 * LIST_ROW,
+            "11b-search-typed" => g.query = "eth usd".into(),
             "07a-bottom-sheet-peek" => g.sheet.open(Detent::Peek),
             "07b-bottom-sheet-half" => g.sheet.open(Detent::Half),
             "07c-bottom-sheet-full" => g.sheet.open(Detent::Full),
@@ -163,6 +180,28 @@ impl MobileGallery {
         ]
     }
 
+    fn search_screen(&self) -> Vec<El> {
+        let all = instruments();
+        let labels: Vec<&str> = all.iter().map(|i| i.0.as_str()).collect();
+        let hits = m::search_filter(&labels, &self.query);
+        let mut edit = uzor::ui::dom::Edit::new(self.query.clone()).placeholder("Тикер или рынок");
+        edit.caret = (!self.query.is_empty()).then_some(self.query.chars().count());
+        // The list's height on a 390×844 phone (a host takes it from the last frame).
+        let vh = self.h - 47.0 - 44.0 - 54.0 - (6.0 + 49.0 + self.safe_bottom + 1.0);
+        let v = m::VirtualList::new(LIST_ROW);
+        let list = v.el("list", hits.len(), self.list_scroll, vh, Some("Ничего не найдено"), |i| {
+            let (t, k) = &all[hits[i]];
+            let r = Row { avatar: t.chars().next().unwrap_or('?').to_string(), square: true, title: t.clone(), sub: format!("{k} · #{}", hits[i] + 1), time: format!("{}", 1000 + hits[i] * 37 % 9000), dense: true, ..Default::default() };
+            m::row(&format!("inst:{}", hits[i]), &r)
+        });
+        vec![
+            m::top_bar("nav", "Рынки", &format!("Инструменты · {}", hits.len()), None, &[]),
+            m::search_bar("q", edit, "Поиск инструмента", Some("Отмена")),
+            list,
+            self.tabs(1),
+        ]
+    }
+
     fn card_body(&self) -> (El, El) {
         let head = El::new("div.m-sh").child(El::new("div.m-av.sq").text("Г")).child(El::new("div.m-sh-t").text("Grok · основной"));
         let body = El::new("div").css("display: flex; flex-direction: column").children([
@@ -225,6 +264,7 @@ impl MobileGallery {
                 self.chats_screen(false)
             }
             "10-segmented-control" => self.machines_screen(),
+            "11a-search-virtual-list" | "11b-search-typed" => self.search_screen(),
             _ => self.chats_screen(false),
         };
         m::screen(true, body).css(format!("height: {}px", self.h)).children(overlays)
@@ -252,6 +292,12 @@ mod tests {
                 "07b-bottom-sheet-half" => assert!(d.rect("card:grab").is_some() && d.rect("qa:chat").is_some()),
                 "08-swipe-actions" => assert!(d.rect("sw:act:del").is_some()),
                 "10-segmented-control" => assert!(d.rect("seg:2").is_some()),
+                "11a-search-virtual-list" => {
+                    assert!(instruments().len() >= 480);
+                    assert!(d.rect("inst:200").is_some() && d.rect("inst:0").is_none() && d.rect("q:clear").is_none());
+                    assert!(d.hits().filter(|h| h.0.starts_with("inst:")).count() < 25, "only a screenful");
+                }
+                "11b-search-typed" => assert!(d.rect("q:clear").is_some() && d.rect("inst:20").is_some()),
                 "01-tab-bar-chat-list" => assert!(d.rect("tabs:4").unwrap().y > 700.0),
                 _ => {}
             }

@@ -34,6 +34,27 @@ All crates in the workspace share one version.
   for a crosshair) and `PinchPan` (two-finger pan, the midpoint's step and total, sent
   with `Pinch`).
 
+### Long lists and search on a phone (`uzor`)
+
+- `uzor::ui::mobile::VirtualList`: a list of fixed-height rows that builds and lays
+  out only the rows in sight plus `overscan` (4) either side, so 500 rows cost what a
+  screenful does. `el(id, n, scroll, viewport_h, empty, row)` is a `div.m-vlist`
+  that fills its column and scrolls by `scroll` (`scrollTop`); spacers keep its
+  `scroll_height` the whole list, so a framework `ScrollView` scrolls it like any
+  other. `content_height`, `max_scroll`, `clamp`, `visible`, `range` for the host;
+  `reveal(n, i, scroll, viewport_h)` scrolls a row into view moving as little as it
+  can. Each row is held to `row_h` (`div.m-vrow`; a `m-row` or `m-swipe` inside
+  stretches or shrinks to it). With no rows, an optional `div.m-empty` line.
+- `uzor::ui::mobile::search_bar(id, edit, name, cancel)`: the magnifier, the DOM
+  text input `id` (caret, selection, IME from the DOM host), a clear button
+  `{id}:clear` once something is typed and an optional `{id}:cancel` text button.
+- `search_rank` / `search_filter(labels, query)`: case-insensitive in every script,
+  `_ / - . ,` as spaces, every query word must match; the label starting with the
+  query first, then every word a word prefix, then anywhere; ties keep list order.
+- Monochrome like the rest of `MOBILE_CSS` (greys and the theme variables only).
+- `uzor-examples` mobile gallery: screens `11a-search-virtual-list` (498
+  instruments, scrolled to row 200) and `11b-search-typed`.
+
 ## 1.5.35
 
 ### Media environment per thread (`uzor`)
