@@ -10,7 +10,7 @@
 use uzor::input::{Sense, WidgetKind};
 use uzor::{Rect, WidgetId};
 
-use crate::handle::{OverlayCx, PanelCx};
+use crate::handle::{OverlayCx, PanelCx, VisualQuery};
 use crate::types::scroll::{ScrollKey, ScrollStyle, ScrollView};
 use crate::types::spec::Spec;
 
@@ -117,9 +117,9 @@ fn ids(id: &str) -> (WidgetId, WidgetId) {
 /// The input half of a scroll container, on the frame's pieces (shared by the panel and
 /// overlay entry points and by DOM scroll containers). Returns whether to request a frame.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn begin_parts<S: Spec>(
+pub(crate) fn begin_parts(
     states: &mut uzor::app_context::state::StateRegistry,
-    view: &crate::handle::VisualView<S>,
+    view: &dyn VisualQuery,
     now: f64,
     id: &str,
     viewport: Rect,
@@ -191,10 +191,10 @@ pub(crate) fn begin_parts<S: Spec>(
 /// The output half on the frame's pieces: joins the chain, registers the track and thumb
 /// above the content and paints the thumb (nothing when the content fits).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn end_parts<S: Spec>(
+pub(crate) fn end_parts(
     widgets: &mut crate::handle::Widgets<'_>,
     render: &mut dyn uzor::render::RenderContext,
-    view: &crate::handle::VisualView<S>,
+    view: &dyn VisualQuery,
     now: f64,
     id: &str,
     viewport: Rect,

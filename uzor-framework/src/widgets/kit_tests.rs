@@ -731,27 +731,50 @@ fn dom_scroll_containers_are_framework_owned() {
     let mut v = VisualView::<K>::default();
     v.pointer = Some((50.0, 50.0));
     v.scroll = (0.0, -2.0);
-    let r = h.frame(&v, |cx| dom(panel, &sheet, tree(5.0)).build(cx));
+    let r = h.frame(&v, |cx| dom(panel, &sheet, tree(5.0)).dom_scroll().build(cx));
     assert_eq!(r.scrolls, vec![("list".to_string(), 80.0)], "two wheel lines of 40px; `own` and `hid` are not owned");
     assert_eq!(r.dom.get("r0").unwrap().rect.y, -80.0, "laid out at the new scrollTop this frame");
     assert!(h.coord.widget_sense(&WidgetId::from("list")).is_some_and(|s| s.scroll), "registered as a scroll target");
     // Past the end: clamped to content (300) - view (100).
     v.scroll = (0.0, -10.0);
-    let r = h.frame(&v, |cx| dom(panel, &sheet, tree(5.0)).build(cx));
+    let r = h.frame(&v, |cx| dom(panel, &sheet, tree(5.0)).dom_scroll().build(cx));
     assert_eq!(r.scrolls[0].1, 200.0);
     // The pointer over another element: the list keeps its place, and the stored offset
     // is applied to the next tree without any app state.
     v.pointer = Some((50.0, 350.0));
-    let r = h.frame(&v, |cx| dom(panel, &sheet, tree(5.0)).build(cx));
+    let r = h.frame(&v, |cx| dom(panel, &sheet, tree(5.0)).dom_scroll().build(cx));
     assert_eq!(r.scrolls[0].1, 200.0);
     assert_eq!(r.dom.get("r9").unwrap().rect.y, 70.0, "row 9 ends at the list's bottom");
     assert_eq!(r.dom.get("h0").unwrap().rect.y, 200.0, "overflow: hidden does not scroll");
     // A jump from the app.
     v.scroll = (0.0, 0.0);
     h.frame(&v, |cx| dom_scroll_to(cx, "list", 30.0, false));
-    let r = h.frame(&v, |cx| dom(panel, &sheet, tree(5.0)).build(cx));
+    let r = h.frame(&v, |cx| dom(panel, &sheet, tree(5.0)).dom_scroll().build(cx));
     assert_eq!(r.scrolls[0].1, 30.0);
     assert_eq!(h.frame(&v, |cx| dom_scroll_top(cx, "list")), 30.0);
+}
+
+
+/// Without [`DomBuilder::dom_scroll`], an `overflow: auto` box with an id is not
+/// framework-owned: HQ already scrolls those itself (`@body` + `scroll_body`), and
+/// a zero `scroll_top` this frame would otherwise have been taken over.
+#[test]
+fn overflow_auto_stays_the_apps_unless_dom_scroll_is_on() {
+    use uzor::ui::dom::El;
+    let sheet = uzor::ui::style::Sheet::parse("").unwrap();
+    let tree = El::new("div").css("height: 400px").child(
+        El::new("div").id("list").css("height: 100px; overflow: auto").children((0..10).map(|i| El::new("div").id(format!("r{i}")).css("height: 30px"))),
+    );
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let panel = Rect::new(0.0, 0.0, 800.0, 400.0);
+    let mut v = VisualView::<K>::default();
+    v.pointer = Some((50.0, 50.0));
+    v.scroll = (0.0, -2.0);
+    let r = h.frame(&v, |cx| dom(panel, &sheet, tree.clone()).build(cx));
+    assert!(r.scrolls.is_empty(), "opt-in is off");
+    assert_eq!(r.dom.get("r0").unwrap().rect.y, 0.0, "the list did not scroll itself");
+    let r = h.frame(&v, |cx| dom(panel, &sheet, tree).dom_scroll().build(cx));
+    assert_eq!(r.scrolls, vec![("list".to_string(), 80.0)]);
 }
 
 /// A DOM number field: the steppers, the arrow keys and the wheel over the focused field

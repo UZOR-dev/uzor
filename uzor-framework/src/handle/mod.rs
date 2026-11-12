@@ -14,6 +14,7 @@ mod app;
 pub use app::{
     App, FrameTime, HookOp, HookOps, InitCx, IntentCx, OverlayCx, PanelCx, VisualView, Widgets,
 };
+pub(crate) use app::VisualQuery;
 
 use std::sync::mpsc::SyncSender;
 use std::sync::Arc;

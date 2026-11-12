@@ -438,7 +438,6 @@ impl El {
         self.touch_capture = true;
         self
     }
-    /// Append `c` when `cond` (conditional markup).
     /// Scroll the element's content up by `y` px, as CSS `scrollTop`: its descendants
     /// (in flow and positioned, not `fixed`) move, the element itself does not. With
     /// `overflow: hidden | auto | scroll` they are clipped to its padding box, so
@@ -448,12 +447,16 @@ impl El {
         self.scroll_top = y;
         self
     }
+    /// Append `c` when `cond` (conditional markup).
     pub fn child_if(self, cond: bool, c: impl FnOnce() -> El) -> Self {
         if cond {
-            self.child(c())
+            Self::push_child(self, c())
         } else {
             self
         }
+    }
+    fn push_child(this: Self, c: El) -> Self {
+        this.child(c)
     }
 }
 

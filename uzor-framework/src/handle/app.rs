@@ -509,6 +509,46 @@ impl<S: Spec> VisualView<S> {
     }
 }
 
+/// This frame's pointer, focus, clicks and scroll, without the app's [`Spec`].
+/// [`DomBuilder::build`] uses a `dyn` of this so the new work is not copied for
+/// every content type.
+pub(crate) trait VisualQuery {
+    fn is_hovered(&self, id: &WidgetId) -> bool;
+    fn is_pressed(&self, id: &WidgetId) -> bool;
+    fn is_focused(&self, id: &WidgetId) -> bool;
+    fn focus_visible(&self) -> bool;
+    fn clicked(&self, id: &WidgetId) -> bool;
+    fn clicks(&self) -> &[(WidgetId, u8)];
+    fn scroll(&self) -> (f64, f64);
+    fn scroll_precise(&self) -> bool;
+    fn scroll_touch(&self) -> bool;
+    fn captured_gestures(&self, id: &WidgetId) -> Vec<crate::types::gesture::Gesture>;
+    fn raw_pointer(&self) -> Option<(f64, f64)>;
+    fn pointer_over(&self, id: &WidgetId) -> Option<(f64, f64)>;
+    fn scroll_over(&self, id: &WidgetId) -> (f64, f64);
+    fn button_down(&self) -> bool;
+    fn coarse_pointer(&self) -> bool;
+}
+
+impl<S: Spec> VisualQuery for VisualView<S> {
+    fn is_hovered(&self, id: &WidgetId) -> bool { VisualView::is_hovered(self, id) }
+    fn is_pressed(&self, id: &WidgetId) -> bool { VisualView::is_pressed(self, id) }
+    fn is_focused(&self, id: &WidgetId) -> bool { VisualView::is_focused(self, id) }
+    fn focus_visible(&self) -> bool { VisualView::focus_visible(self) }
+    fn clicked(&self, id: &WidgetId) -> bool { VisualView::clicked(self, id) }
+    fn clicks(&self) -> &[(WidgetId, u8)] { VisualView::clicks(self) }
+    fn scroll(&self) -> (f64, f64) { VisualView::scroll(self) }
+    fn scroll_precise(&self) -> bool { VisualView::scroll_precise(self) }
+    fn scroll_touch(&self) -> bool { VisualView::scroll_touch(self) }
+    fn captured_gestures(&self, id: &WidgetId) -> Vec<crate::types::gesture::Gesture> { VisualView::captured_gestures(self, id) }
+    fn raw_pointer(&self) -> Option<(f64, f64)> { VisualView::raw_pointer(self) }
+    fn pointer_over(&self, id: &WidgetId) -> Option<(f64, f64)> { VisualView::pointer_over(self, id) }
+    fn scroll_over(&self, id: &WidgetId) -> (f64, f64) { VisualView::scroll_over(self, id) }
+    fn button_down(&self) -> bool { VisualView::button_down(self) }
+    fn coarse_pointer(&self) -> bool { VisualView::coarse_pointer(self) }
+}
+
+
 /// Widget registration face a hook draws against: the window's coordinator
 /// (library L1 `register_*` fns take it), the per-widget typed state store
 /// and the layer the hook's widgets register into.

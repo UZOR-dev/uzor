@@ -1,5 +1,5 @@
-//! DOM scroll containers the framework scrolls: a page and a long list inside it, both
-//! plain `overflow: auto` elements with ids. Wheel, touchpad, a finger, the thumb and
+//! DOM scroll containers the framework scrolls (opt in with [`kit::DomBuilder::dom_scroll`]):
+//! a page and a long list inside it, both plain `overflow: auto` elements with ids. Wheel, touchpad, a finger, the thumb and
 //! keyboard steps move them; the list chains to the page at its ends. The app keeps no
 //! scroll state: it reads the offsets back from `DomResponse::scrolls`.
 //!
@@ -87,7 +87,7 @@ impl App for Demo {
         for _ in 0..8 {
             page = page.child(El::new("div.block"));
         }
-        let resp = kit::dom(r, &self.sheet, page).build(cx);
+        let resp = kit::dom(r, &self.sheet, page).dom_scroll().build(cx);
         if resp.scrolls != self.offsets {
             self.offsets = resp.scrolls;
             cx.out.request_frame();
