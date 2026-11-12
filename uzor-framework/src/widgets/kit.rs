@@ -1987,6 +1987,7 @@ impl<'a> DomBuilder<'a> {
 /// One non-generic paint of a [`dom`] tree: number fields, optional framework-owned
 /// scroll containers, layout, slots and hit targets. Kept off the generic
 /// [`DomBuilder::build`] so it is not copied for every content type.
+#[inline(never)]
 fn build_paint(
     render: &mut dyn RenderContext,
     widgets: &mut crate::handle::Widgets<'_>,
