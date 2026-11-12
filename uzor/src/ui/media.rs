@@ -20,6 +20,7 @@
 //! Viewport and root units in values (`100vh`, `50vw`, `10vmin`, `5vmax`, `1.5rem`)
 //! become px at parse time too ([`MediaEnv::units`]; `rem` is 16 px).
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 
@@ -307,23 +308,33 @@ fn split_and(s: &str) -> Vec<String> {
     out.into_iter().filter(|t| !t.trim().is_empty()).collect()
 }
 
+/// The last environment any thread set: what a thread that never set one reads.
 static CURRENT: RwLock<Option<MediaEnv>> = RwLock::new(None);
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// The environment [`Sheet::parse`](super::style::Sheet::parse) evaluates against.
-pub fn current() -> MediaEnv {
-    CURRENT.read().ok().and_then(|g| *g).unwrap_or_default()
+thread_local! {
+    /// The environment this thread's host set: a host (its windows, its compose) and the
+    /// sheets it parses live on one thread, so two hosts on two threads (two test
+    /// harnesses running in parallel, a second runtime) never read each other's insets.
+    static LOCAL: Cell<Option<MediaEnv>> = const { Cell::new(None) };
 }
 
-/// Set the environment; returns whether it changed (then [`generation`] moves).
+/// The environment [`Sheet::parse`](super::style::Sheet::parse) evaluates against: the one
+/// this thread set, else the last one any thread set.
+pub fn current() -> MediaEnv {
+    LOCAL.with(Cell::get).or_else(|| CURRENT.read().ok().and_then(|g| *g)).unwrap_or_default()
+}
+
+/// Set the environment (for this thread, and as the default of threads that never set
+/// one); returns whether it changed for this thread (then [`generation`] moves).
 pub fn set_current(env: MediaEnv) -> bool {
-    let mut g = CURRENT.write().unwrap_or_else(|e| e.into_inner());
-    if g.as_ref() == Some(&env) {
-        return false;
+    let changed = current() != env || LOCAL.with(Cell::get).is_none() && CURRENT.read().ok().and_then(|g| *g).is_none();
+    LOCAL.with(|l| l.set(Some(env)));
+    *CURRENT.write().unwrap_or_else(|e| e.into_inner()) = Some(env);
+    if changed {
+        GENERATION.fetch_add(1, Ordering::Relaxed);
     }
-    *g = Some(env);
-    GENERATION.fetch_add(1, Ordering::Relaxed);
-    true
+    changed
 }
 
 /// Bumped on every change of [`current`]: re-parse sheets when it moved.
@@ -334,6 +345,26 @@ pub fn generation() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two hosts on two threads set their own environments at once: each reads its own
+    /// (the safe-area race of parallel host tests), a thread that set none reads the last.
+    #[test]
+    fn each_thread_reads_the_environment_it_set() {
+        let run = |top: f64| {
+            std::thread::spawn(move || {
+                for _ in 0..2000 {
+                    set_current(MediaEnv::touch(390.0, 844.0, Edges::new(top, 0.0, 0.0, 0.0)));
+                    std::thread::yield_now();
+                    assert_eq!(current().safe.top, top);
+                }
+            })
+        };
+        let (a, b) = (run(47.0), run(20.0));
+        a.join().unwrap();
+        b.join().unwrap();
+        let other = std::thread::spawn(|| current().safe.top).join().unwrap();
+        assert!(other == 47.0 || other == 20.0, "{other}");
+    }
 
     #[test]
     fn widths_orientation_and_lists() {
