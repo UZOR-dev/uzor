@@ -7,6 +7,32 @@
 
 use core::ops::Range;
 
+/// `true` for a spacing that can divide a pixel distance: positive and finite.
+#[inline]
+fn usable_spacing(spacing: f64) -> bool {
+    spacing.is_finite() && spacing > 0.0
+}
+
+/// `value` clamped to `[min, max]` with a `max` below `min` raised to `min`,
+/// as a usable spacing. `None` for a `NaN` value or a result that is not
+/// positive and finite. Same result as `f64::clamp` for ordered bounds, but
+/// never panics.
+#[inline]
+fn clamp_spacing(value: f64, min: f64, max: f64) -> Option<f64> {
+    if value.is_nan() {
+        return None;
+    }
+    let max = max.max(min);
+    let v = if value < min {
+        min
+    } else if value > max {
+        max
+    } else {
+        value
+    };
+    usable_spacing(v).then_some(v)
+}
+
 /// A horizontal slot viewport.
 ///
 /// ```
@@ -89,9 +115,13 @@ impl SlotViewport {
         self.width * self.max_spacing_ratio
     }
 
-    /// Whole slots that fit across the width (at least 1).
+    /// Whole slots that fit across the width (at least 1; 1 when the
+    /// spacing is not positive and finite).
     #[inline]
     pub fn visible_slots(&self) -> usize {
+        if !usable_spacing(self.spacing) {
+            return 1;
+        }
         ((self.width / self.spacing) as usize).max(1)
     }
 
@@ -115,13 +145,13 @@ impl SlotViewport {
     }
 
     /// Data indices to draw, one extra slot each side for partly visible
-    /// slots, clamped to the data.
+    /// slots, clamped to the data. An unusable spacing shows no extra width.
     #[inline]
     pub fn visible_range(&self) -> Range<usize> {
         let s = self.start_index();
         let start = if s > 0 { s - 1 } else { 0 };
-        let visible = self.width / self.spacing;
-        let end = ((self.start + visible).ceil() as usize + 1).min(self.count);
+        let visible = if usable_spacing(self.spacing) { self.width / self.spacing } else { 0.0 };
+        let end = (((self.start + visible).ceil() as usize).saturating_add(1)).min(self.count);
         start..end
     }
 
@@ -139,9 +169,10 @@ impl SlotViewport {
     }
 
     /// Data slot under `x`, if `x` is inside the width and the data.
+    /// `None` when the spacing is not positive and finite.
     #[inline]
     pub fn x_to_slot(&self, x: f64) -> Option<usize> {
-        if x < 0.0 || x > self.width {
+        if x < 0.0 || x > self.width || x.is_nan() || !usable_spacing(self.spacing) {
             return None;
         }
         let i = (self.start + x / self.spacing) as i64;
@@ -153,8 +184,13 @@ impl SlotViewport {
     }
 
     /// Fractional slot position at `x` (slot left edges are integers).
+    /// With a spacing that is not positive and finite every `x` reads as
+    /// [`Self::start`].
     #[inline]
     pub fn x_to_pos(&self, x: f64) -> f64 {
+        if !usable_spacing(self.spacing) {
+            return self.start;
+        }
         self.start + x / self.spacing
     }
 
@@ -185,10 +221,18 @@ impl SlotViewport {
         self.zoom_at_within(x, factor, min, max);
     }
 
-    /// [`Self::zoom_at`] with explicit spacing limits (`min <= max`).
+    /// [`Self::zoom_at`] with explicit spacing limits. A `max` below `min`
+    /// is raised to `min`. Nothing changes when the current spacing, `x` or
+    /// the new spacing is unusable (`NaN` factor, non-positive limits, ...).
     pub fn zoom_at_within(&mut self, x: f64, factor: f64, min: f64, max: f64) {
         let old = self.spacing;
-        self.spacing = (self.spacing * factor).clamp(min, max);
+        if !usable_spacing(old) || !x.is_finite() {
+            return;
+        }
+        let Some(spacing) = clamp_spacing(old * factor, min, max) else {
+            return;
+        };
+        self.spacing = spacing;
         let under = self.start + x / old;
         self.start = under - x / self.spacing;
     }
@@ -213,21 +257,31 @@ impl SlotViewport {
         self.fit_all_within(min, max);
     }
 
-    /// Fit every slot in the width within explicit limits.
+    /// Fit every slot in the width within explicit limits. A `max` below
+    /// `min` is raised to `min`. Nothing changes with no data or when the
+    /// result is unusable (`NaN` width, non-positive limits, ...).
     pub fn fit_all_within(&mut self, min: f64, max: f64) {
         if self.count > 0 {
-            self.spacing = (self.width / self.count as f64).clamp(min, max);
-            self.start = 0.0;
+            if let Some(spacing) = clamp_spacing(self.width / self.count as f64, min, max) {
+                self.spacing = spacing;
+                self.start = 0.0;
+            }
         }
     }
 
     /// Show about `data_slots` recent slots with `margin_slots` empty slots
     /// after the last one, within explicit limits (a `max` below `min` is
-    /// raised to `min`).
+    /// raised to `min`). Nothing changes when asked for no slots at all or
+    /// when the result is unusable (`NaN` width, non-positive limits, ...).
     pub fn fit_recent(&mut self, data_slots: usize, margin_slots: usize, min: f64, max: f64) {
-        let total = data_slots + margin_slots;
-        let spacing = self.width / total as f64;
-        self.spacing = spacing.clamp(min, max.max(min));
+        let total = data_slots.saturating_add(margin_slots);
+        if total == 0 {
+            return;
+        }
+        let Some(spacing) = clamp_spacing(self.width / total as f64, min, max) else {
+            return;
+        };
+        self.spacing = spacing;
         let right_edge = self.count.saturating_sub(1) as f64 + margin_slots as f64;
         self.start = right_edge - self.width / self.spacing;
     }
@@ -343,8 +397,12 @@ impl Kinetic {
     }
     /// Advance to `now`; returns the slot delta to move (pixel travel ÷
     /// `spacing`), or `None` once stopped.
+    ///
+    /// A `spacing` that is not positive and finite, or a non-finite `now`,
+    /// returns `None` and leaves the motion untouched, so the next valid
+    /// update carries on from the same point.
     pub fn update(&mut self, now: f64, spacing: f64) -> Option<f64> {
-        if !self.active {
+        if !self.active || !usable_spacing(spacing) || !now.is_finite() {
             return None;
         }
         let dt = now - self.last_time;
