@@ -188,3 +188,43 @@ fn kinetic_zero_spacing_returns_none_and_keeps_state() {
     let d = k.update(16.0, 8.0).expect("still moving");
     assert!(d.is_finite());
 }
+
+#[test]
+fn kinetic_nan_time_or_velocity_returns_none_and_keeps_state() {
+    // Reviewer case: start at a NaN time.
+    let mut k = Kinetic::default();
+    k.start(2.0, f64::NAN);
+    let before = k;
+    assert_eq!(k.update(16.0, 8.0), None);
+    assert!(k.velocity.is_finite());
+    assert_eq!(k.velocity, before.velocity);
+    assert!(k.last_time.is_nan());
+    assert_eq!(k.active, before.active);
+    // A NaN last_time set directly.
+    let mut k = Kinetic::default();
+    k.start(2.0, 0.0);
+    k.last_time = f64::NAN;
+    assert_eq!(k.update(16.0, 8.0), None);
+    assert_eq!(k.velocity, 2.0);
+    // Infinite stored time.
+    k.last_time = f64::INFINITY;
+    assert_eq!(k.update(16.0, 8.0), None);
+    assert_eq!(k.velocity, 2.0);
+    // NaN damping or velocity would leak NaN: refused, state kept.
+    let mut k = Kinetic::default();
+    k.start(2.0, 0.0);
+    k.damping = f64::NAN;
+    assert_eq!(k.update(16.0, 8.0), None);
+    assert_eq!((k.velocity, k.last_time, k.active), (2.0, 0.0, true));
+    let mut k = Kinetic::default();
+    k.start(2.0, 0.0);
+    k.velocity = f64::NAN;
+    assert_eq!(k.update(16.0, 8.0), None);
+    assert_eq!(k.last_time, 0.0);
+    // Valid motion still runs and decays.
+    let mut k = Kinetic::default();
+    k.start(2.0, 0.0);
+    let d = k.update(16.0, 8.0).unwrap();
+    assert_eq!(d, 2.0 * 0.997_f64.powf(16.0) * 16.0 / 8.0);
+    assert_eq!(k.last_time, 16.0);
+}

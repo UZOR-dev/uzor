@@ -398,17 +398,23 @@ impl Kinetic {
     /// Advance to `now`; returns the slot delta to move (pixel travel ÷
     /// `spacing`), or `None` once stopped.
     ///
-    /// A `spacing` that is not positive and finite, or a non-finite `now`,
-    /// returns `None` and leaves the motion untouched, so the next valid
-    /// update carries on from the same point.
+    /// A `spacing` that is not positive and finite, a non-finite `now`
+    /// (or a non-finite stored time, e.g. after `start(v, NaN)`), or a step
+    /// that would make the velocity or the delta non-finite returns `None`
+    /// and leaves the motion untouched, so the next valid update carries on
+    /// from the same point.
     pub fn update(&mut self, now: f64, spacing: f64) -> Option<f64> {
-        if !self.active || !usable_spacing(spacing) || !now.is_finite() {
+        if !self.active || !usable_spacing(spacing) || !now.is_finite() || !self.last_time.is_finite() {
             return None;
         }
         let dt = now - self.last_time;
+        let velocity = self.velocity * self.damping.powf(dt);
+        let delta = velocity * dt / spacing;
+        if !(velocity.is_finite() && delta.is_finite()) {
+            return None;
+        }
         self.last_time = now;
-        self.velocity *= self.damping.powf(dt);
-        let delta = self.velocity * dt / spacing;
+        self.velocity = velocity;
         if self.velocity.abs() < self.min_velocity {
             self.active = false;
             self.velocity = 0.0;
