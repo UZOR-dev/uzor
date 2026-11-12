@@ -141,6 +141,9 @@ pub struct Style {
     /// Raw `grid-template-columns` (parsed by `ui::flow`).
     pub grid_template_columns: Option<String>,
     pub box_shadow: Option<String>,
+    /// `background-clip` (not inherited): `padding-box` / `content-box` keep the
+    /// background off the border (and the padding); unset = `border-box`.
+    pub background_clip: Option<String>,
     pub cursor: Option<String>,
     /// `touch-action` (not inherited). `none`: a finger that lands on the element is
     /// the element's (gestures, no scrolling), see [`crate::ui::dom::Placed::captures_touch`].
@@ -272,6 +275,20 @@ impl Style {
             let r = self.border_radius.unwrap_or(0.0);
             [[r, r]; 4]
         })
+    }
+    /// How far in from the border box the background starts on each side (top,
+    /// right, bottom, left): nothing for `border-box` (the default), the border for
+    /// `padding-box`, border and padding for `content-box`.
+    pub fn background_inset(&self) -> Option<[f64; 4]> {
+        let e = self.border_edges();
+        match self.background_clip.as_deref() {
+            Some("padding-box") => Some(e),
+            Some("content-box") => {
+                let p = self.pad();
+                Some([e[0] + p[0], e[1] + p[1], e[2] + p[2], e[3] + p[3]])
+            }
+            _ => None,
+        }
     }
     /// `position` is `relative`, `absolute`, `fixed` or `sticky` (a containing block
     /// for absolutely positioned descendants).
@@ -1054,6 +1071,7 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         }
         "grid-template-columns" => s.grid_template_columns = Some(v.into()),
         "box-shadow" => s.box_shadow = Some(v.into()),
+        "background-clip" | "-webkit-background-clip" => s.background_clip = Some(v.trim().to_ascii_lowercase()),
         "backdrop-filter" | "-webkit-backdrop-filter" => s.backdrop_blur = backdrop_blur(v),
         "cursor" => s.cursor = Some(v.into()),
         "touch-action" => s.touch_action = Some(v.trim().to_ascii_lowercase()),
@@ -1201,6 +1219,7 @@ pub fn standard(s: &Style, prop: &str) -> Option<String> {
         "padding-bottom" => n(s.padding.map(|p| p[2])),
         "padding-left" => n(s.padding.map(|p| p[3])),
         "box-shadow" => s.box_shadow.clone(),
+        "background-clip" => s.background_clip.clone(),
         _ => None,
     }
 }

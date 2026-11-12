@@ -224,3 +224,7 @@ crate-type = ["cdylib"]
 [[example]]
 name = "image_viewer"
 required-features = ["native"]
+
+[[example]]
+name = "dom_background_clip"
+required-features = ["native"]

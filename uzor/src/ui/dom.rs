@@ -1379,7 +1379,7 @@ fn paint_box_unclipped(ctx: &mut dyn RenderContext, b: &Placed) {
     }
     let shadow: Option<Shadow> = s.box_shadow.as_deref().and_then(<Option<Shadow>>::from_css).flatten();
     let bg = s.background.as_deref().filter(|b| *b != "transparent" && *b != "none");
-    if s.border_radii.is_some() || s.border_widths.is_some() || s.border_colors.is_some() {
+    if s.border_radii.is_some() || s.border_widths.is_some() || s.border_colors.is_some() || s.background_clip.is_some() {
         paint_frame(ctx, r, s, bg, shadow);
     } else {
         let rad = s.border_radius.unwrap_or(0.0);
@@ -1836,7 +1836,14 @@ fn paint_frame(ctx: &mut dyn RenderContext, r: Rect, s: &Style, bg: Option<&str>
     }
     if let Some(fill) = bg.or(shadow.map(|sh| sh.color)) {
         ctx.begin_path();
-        add_radii_path(ctx, r, rad, false);
+        match s.background_inset() {
+            // `background-clip`: the fill is the inset box with CSS's inner radii.
+            Some(i) => {
+                let inner = Rect::new(r.x + i[3], r.y + i[0], (r.width - i[1] - i[3]).max(0.0), (r.height - i[0] - i[2]).max(0.0));
+                add_radii_path(ctx, inner, inner_radii(rad, i), false);
+            }
+            None => add_radii_path(ctx, r, rad, false),
+        }
         ctx.set_fill_color(fill);
         ctx.fill();
     }
@@ -1967,6 +1974,18 @@ pub fn render(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64, y: 
 mod tests {
     use super::*;
     use crate::testing::NullRenderContext;
+
+    #[test]
+    fn background_clip_parses_and_insets() {
+        let sh = Sheet::parse("div.a { border: 2px solid #000; padding: 3px; background-clip: padding-box } div.b { border: 2px solid #000; padding: 3px; background-clip: Content-Box } div.c { border: 2px solid #000 }").unwrap();
+        let mut ctx = NullRenderContext::default();
+        let page = El::new("div.r").child(El::new("div.a").id("a")).child(El::new("div.b").id("b")).child(El::new("div.c").id("c"));
+        let dom = lay_out(&mut ctx, &sh, &page, 0.0, 0.0, 200.0, &|_| State::NONE);
+        let st = |id: &str| dom.boxes.iter().find(|b| b.id.as_deref() == Some(id)).unwrap().style.clone();
+        assert_eq!(st("a").background_inset(), Some([2.0; 4]));
+        assert_eq!(st("b").background_inset(), Some([5.0; 4]));
+        assert_eq!(st("c").background_inset(), None, "border-box is the default");
+    }
 
     #[test]
     fn inline_custom_properties_reach_the_subtree() {
