@@ -26,6 +26,8 @@
 //! | dialog | [`dialog`] | fixed `div.k-scrim` + `div.k-dialog` > head, body, foot | `{id}:scrim`, `{id}:close`, `{id}:foot:{i}` |
 //! | tooltip | [`tooltip`] | fixed `div.k-tip` | — |
 //! | toasts | [`toasts`] | fixed `div.k-toasts` > `div.k-toast` (`.ok`, `.warn`, `.error`) | `{id}:{i}:close` |
+//! | toolbar (opt-in [`TOOLBAR_CSS`]) | [`toolbar`] + [`ToolItem`] | `div.k-toolbar` (`.vert`) > `button.k-tool` (`.on`, `.dis`) > `span.k-tool-icon`, `div.k-tool-split` > `button.k-tool-chev`, `div.k-tool-sep`, `div.k-tool-fill` | `{id}:{key}`, `{id}:{key}:menu` |
+//! | flyout | [`menu`] at [`flyout_at`] | fixed `div.k-menu` beside its tool | `{id}:item:{i}` |
 //! | stat, progress, badge, kbd, field | [`stat`], [`progress`], [`badge`], [`kbd`], [`field`] | `div.k-stat`, `div.k-progress`, `span.k-badge`, `span.k-kbd`, `div.k-field` | `id` (stat) |
 //!
 //! The light look is [`LIGHT_VARS`] on the page root ([`theme_vars`]); every colour in
@@ -191,6 +193,29 @@ div.k-progress { height: 6px; border-radius: 3px; background: var(--k-line); ove
 div.k-progress > div.k-bar { height: 6px; border-radius: 3px; background: var(--k-accent) }
 div.k-field { display: flex; flex-direction: column; gap: 6px }
 div.k-field > div.k-field-label { color: var(--k-muted); font-size: 11px; font-weight: 600 }
+"#;
+
+/// The toolbar's look, opt-in (not in [`KIT_CSS`], so apps without a toolbar do not
+/// carry it): append it with [`sheet_with`] (`sheet_with(TOOLBAR_CSS)`, or after
+/// the app's own rules to let them win).
+pub const TOOLBAR_CSS: &str = r#"
+div.k-toolbar { display: flex; align-items: center; gap: 4px; padding: 4px; background: var(--k-panel) }
+div.k-toolbar.vert { flex-direction: column }
+button.k-tool { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 32px; height: 32px; padding: 0 6px;
+                border-radius: 6px; color: var(--k-muted); flex-shrink: 0 }
+button.k-tool:hover { background: var(--k-hover); color: var(--k-fg) }
+button.k-tool.on { background: var(--k-sel); color: var(--k-accent) }
+button.k-tool.dis { color: var(--k-dis) }
+span.k-tool-icon { width: 20px; height: 20px }
+div.k-tool-split { display: flex; align-items: center; flex-shrink: 0 }
+div.k-tool-split > button.k-tool { border-radius: 6px 0px 0px 6px }
+button.k-tool-chev { display: flex; align-items: center; justify-content: center; width: 14px; height: 32px; padding: 0px;
+                     border-radius: 0px 6px 6px 0px; color: var(--k-muted) }
+button.k-tool-chev:hover { background: var(--k-hover); color: var(--k-fg) }
+button.k-tool-chev > span { width: 10px; height: 10px }
+div.k-tool-sep { width: 1px; height: 20px; background: var(--k-line); flex-shrink: 0 }
+div.k-toolbar.vert > div.k-tool-sep { width: 20px; height: 1px }
+div.k-tool-fill { flex-grow: 1 }
 "#;
 
 /// Touch-sized targets, applied under `@media (pointer: coarse)` (a finger: iOS /
@@ -778,6 +803,142 @@ pub fn menu(id: &str, title: Option<&str>, items: &[MenuItem], at: Rect) -> El {
     }))
 }
 
+/// What a toolbar entry is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ToolKind {
+    /// An icon (and/or label) button: hit `{id}:{key}`.
+    #[default]
+    Button,
+    /// A button with a chevron beside it that opens its flyout: hits `{id}:{key}`
+    /// and `{id}:{key}:menu`.
+    Split,
+    /// A thin rule between groups.
+    Separator,
+    /// Takes the free space: what follows sits at the far end (an end group).
+    Fill,
+}
+
+/// One toolbar entry ([`toolbar`]).
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
+pub struct ToolItem {
+    pub kind: ToolKind,
+    /// The hit key (`{id}:{key}`).
+    pub key: String,
+    /// The icon's SVG markup (e.g. [`icon`]`(body)` or an app's own icon set).
+    pub icon: Option<String>,
+    pub label: Option<String>,
+    /// The accessible name (and tooltip text); defaults to the label or the key.
+    pub name: Option<String>,
+    /// Lit: the active tool, or a toggled option.
+    pub on: bool,
+    /// Shown dimmed, no hit.
+    pub disabled: bool,
+}
+
+impl ToolItem {
+    /// An icon button.
+    pub fn button(key: impl Into<String>, icon_svg: impl Into<String>) -> Self {
+        ToolItem { key: key.into(), icon: Some(icon_svg.into()), ..Self::default() }
+    }
+    /// A button with a flyout chevron.
+    pub fn split(key: impl Into<String>, icon_svg: impl Into<String>) -> Self {
+        ToolItem { kind: ToolKind::Split, ..Self::button(key, icon_svg) }
+    }
+    /// A separator.
+    pub fn separator() -> Self {
+        ToolItem { kind: ToolKind::Separator, ..Self::default() }
+    }
+    /// The free space before an end group.
+    pub fn fill() -> Self {
+        ToolItem { kind: ToolKind::Fill, ..Self::default() }
+    }
+    pub fn label(mut self, l: impl Into<String>) -> Self {
+        self.label = Some(l.into());
+        self
+    }
+    pub fn name(mut self, n: impl Into<String>) -> Self {
+        self.name = Some(n.into());
+        self
+    }
+    pub fn on(mut self, on: bool) -> Self {
+        self.on = on;
+        self
+    }
+    pub fn disabled(mut self, on: bool) -> Self {
+        self.disabled = on;
+        self
+    }
+}
+
+/// A toolbar (style it with [`TOOLBAR_CSS`]): a row, or a column when `vertical`, of
+/// [`ToolItem`]s. Hits `{id}:{key}` per enabled button, `{id}:{key}:menu` per split
+/// chevron (open its flyout with [`menu`] at [`flyout_at`]); [`picked_tool`] reads them.
+pub fn toolbar(id: &str, items: &[ToolItem], vertical: bool) -> El {
+    let bar = El::new(if vertical { "div.k-toolbar.vert" } else { "div.k-toolbar" }).id(format!("{id}:bar"));
+    bar.children(items.iter().map(|it| match it.kind {
+        ToolKind::Separator => El::new("div.k-tool-sep"),
+        ToolKind::Fill => El::new("div.k-tool-fill"),
+        ToolKind::Button | ToolKind::Split => {
+            let mut spec = String::from("button.k-tool");
+            if it.on {
+                spec.push_str(".on");
+            }
+            if it.disabled {
+                spec.push_str(".dis");
+            }
+            let name = it.name.as_deref().or(it.label.as_deref()).unwrap_or(&it.key);
+            let mut b = El::new(spec).name(name);
+            if !it.disabled {
+                b = b.id(format!("{id}:{}", it.key)).tab();
+            }
+            if let Some(svg) = &it.icon {
+                b = b.child(El::new("span.k-tool-icon").svg(svg.clone()));
+            }
+            if let Some(l) = &it.label {
+                b = b.child(El::new("span").text(l.clone()));
+            }
+            if it.kind == ToolKind::Split {
+                let mut chev = El::new("button.k-tool-chev").name(format!("{name}: more"));
+                if !it.disabled {
+                    chev = chev.id(format!("{id}:{}:menu", it.key)).tab();
+                }
+                let chev = chev.child(El::new("span").svg(icon(if vertical { icons::RIGHT } else { icons::DOWN })));
+                El::new("div.k-tool-split").child(b).child(chev)
+            } else {
+                b
+            }
+        }
+    }))
+}
+
+/// The tool a toolbar hit names: `(key, false)` for the button, `(key, true)` for its
+/// flyout chevron.
+pub fn picked_tool<'a>(id: &str, hit: &'a str) -> Option<(&'a str, bool)> {
+    let rest = hit.strip_prefix(id)?.strip_prefix(':')?;
+    if rest == "bar" {
+        return None;
+    }
+    Some(match rest.strip_suffix(":menu") {
+        Some(key) => (key, true),
+        None => (rest, false),
+    })
+}
+
+/// Where a tool's flyout goes: beside the tool `anchor` (to its right on a vertical
+/// toolbar, below it on a horizontal one, 4 px off), `w` × `h`, kept inside `viewport`.
+pub fn flyout_at(anchor: Rect, viewport: Rect, w: f64, h: f64, vertical: bool) -> Rect {
+    let (mut x, mut y) = if vertical { (anchor.x + anchor.width + 4.0, anchor.y) } else { (anchor.x, anchor.y + anchor.height + 4.0) };
+    if x + w > viewport.x + viewport.width {
+        x = if vertical { anchor.x - 4.0 - w } else { viewport.x + viewport.width - w };
+    }
+    if y + h > viewport.y + viewport.height {
+        y = if vertical { viewport.y + viewport.height - h } else { anchor.y - 4.0 - h };
+    }
+    Rect::new(x.max(viewport.x), y.max(viewport.y), w, h)
+}
+
 /// A keyboard shortcut hint (`span.k-kbd`).
 pub fn kbd(text: &str) -> El {
     El::new("span.k-kbd").text(text)
@@ -1112,6 +1273,51 @@ mod tests {
         assert_eq!(i.stepped("0", 1), "2", "from below the range: clamped, then a step");
         assert_eq!(NumberSpec::new().step(0.1).stepped("0.2", 1), "0.3", "no float noise");
         assert_eq!(NumberSpec::new().decimals(2).format(1.0), "1.00");
+    }
+
+    #[test]
+    fn toolbar_lays_out_groups_hits_and_an_end_group() {
+        let mut ctx = NullRenderContext::default();
+        let sheet = sheet_with(TOOLBAR_CSS).unwrap();
+        let items = [
+            ToolItem::button("cursor", icon(icons::PLUS)).on(true),
+            ToolItem::split("line", icon(icons::EDIT)),
+            ToolItem::separator(),
+            ToolItem::button("lock", icon(icons::PIN)).disabled(true),
+            ToolItem::fill(),
+            ToolItem::button("trash", icon(icons::TRASH)),
+        ];
+        let row = El::new("div").css("width: 400px").child(toolbar("tb", &items, false));
+        let dom = lay_out_in(&mut ctx, &sheet, &row, 0.0, 0.0, 400.0, None, &|_| State::NONE);
+        let ids: Vec<&str> = dom.hits().map(|(id, _)| id).collect();
+        assert_eq!(ids, ["tb:bar", "tb:cursor", "tb:line", "tb:line:menu", "tb:trash"], "no hit for the disabled tool");
+        let (c, l, m, t) = (dom.rect("tb:cursor").unwrap(), dom.rect("tb:line").unwrap(), dom.rect("tb:line:menu").unwrap(), dom.rect("tb:trash").unwrap());
+        assert_eq!((c.x, c.y, c.width, c.height), (4.0, 4.0, 32.0, 32.0));
+        assert_eq!(l.x, 40.0, "one gap after the first tool");
+        assert_eq!(m.x, l.x + l.width, "the chevron hugs its button");
+        assert_eq!(t.x + t.width, 396.0, "the end group sits at the far edge, inside the padding");
+        assert_eq!(dom.get("tb:cursor").and_then(|p| p.style.background.as_deref()), Some("rgba(59,130,246,0.18)"), "lit");
+        assert_eq!(picked_tool("tb", "tb:line:menu"), Some(("line", true)));
+        assert_eq!(picked_tool("tb", "tb:trash"), Some(("trash", false)));
+        assert_eq!(picked_tool("tb", "tb:bar"), None);
+
+        let col = El::new("div").css("height: 300px; display: flex; flex-direction: column").child(toolbar("v", &items, true).css("flex-grow: 1"));
+        let dom = lay_out_in(&mut ctx, &sheet, &col, 0.0, 0.0, 48.0, None, &|_| State::NONE);
+        let (c, l, t) = (dom.rect("v:cursor").unwrap(), dom.rect("v:line").unwrap(), dom.rect("v:trash").unwrap());
+        assert_eq!((c.x, c.y), (8.0, 4.0), "a column, tools centred across it");
+        assert_eq!(l.y, 40.0);
+        assert_eq!(t.y + t.height, 296.0, "the end group at the bottom");
+    }
+
+    #[test]
+    fn flyouts_open_beside_their_tool_and_stay_on_screen() {
+        let vp = Rect::new(0.0, 0.0, 800.0, 600.0);
+        let r = flyout_at(Rect::new(4.0, 100.0, 32.0, 32.0), vp, 200.0, 150.0, true);
+        assert_eq!((r.x, r.y), (40.0, 100.0), "right of a vertical toolbar's tool");
+        let r = flyout_at(Rect::new(700.0, 4.0, 32.0, 32.0), vp, 200.0, 150.0, false);
+        assert_eq!((r.x, r.y), (600.0, 40.0), "below, pulled back inside");
+        let r = flyout_at(Rect::new(4.0, 560.0, 32.0, 32.0), vp, 200.0, 150.0, true);
+        assert_eq!(r.y, 450.0, "lifted to fit");
     }
 
     #[test]

@@ -950,3 +950,27 @@ fn dom_number_field_steps_filters_and_tidies() {
     assert_eq!(r.edited.last().map(|e| e.1.as_str()), Some("10"));
     assert!(h.coord.widget_sense(&WidgetId::from("qty:inc")).is_some(), "the steppers are click targets");
 }
+
+#[test]
+fn dom_toolbar_reports_tools_chevrons_and_hover() {
+    use domkit::{self, ToolItem};
+    let sheet = domkit::sheet_with(domkit::TOOLBAR_CSS).expect("toolbar css");
+    let items = [
+        ToolItem::button("cursor", domkit::icon(domkit::icons::PLUS)).on(true).name("Cursor"),
+        ToolItem::split("line", domkit::icon(domkit::icons::EDIT)).name("Lines"),
+        ToolItem::separator(),
+        ToolItem::fill(),
+        ToolItem::button("trash", domkit::icon(domkit::icons::TRASH)).name("Delete"),
+    ];
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let area = Rect::new(0.0, 0.0, 48.0, 400.0);
+    let tree = || domkit::toolbar("dtb", &items, true).css("height: 400px");
+    let r = h.frame(&click("dtb:line:menu"), |cx| dom(area, &sheet, tree()).build(cx));
+    assert_eq!(domkit::picked_tool("dtb", r.clicked.as_deref().unwrap_or("")), Some(("line", true)), "the chevron opens the flyout");
+    let r = h.frame(&click("dtb:trash"), |cx| dom(area, &sheet, tree()).build(cx));
+    assert_eq!(r.clicked.as_deref(), Some("dtb:trash"));
+    let t = h.coord.widget_rect(&WidgetId::from("dtb:trash")).expect("registered");
+    assert_eq!(t.y + t.height, 396.0, "the end group at the bottom");
+    let a11y = r.dom.a11y();
+    assert!(a11y.iter().any(|n| n.id == "dtb:line:menu" && n.name == "Lines: more"));
+}
