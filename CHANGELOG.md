@@ -2,6 +2,25 @@
 
 All crates in the workspace share one version.
 
+## Unreleased
+
+### Touch capture and gestures (`uzor`, `uzor-framework`)
+
+- Touch capture: a widget registered with `Sense::touch` (`Sense::CLICK.with_touch()`)
+  takes every finger of a touch sequence that starts on it. Its one-finger pan, two-finger
+  pinch, long-press and taps go to `VisualView::captured_gestures(id)` (and
+  `VisualView::touch_capture()`), not to `gestures()`. Nothing under it scrolls or
+  flings, and a long-press is not a context click. A tap still clicks it. Two fingers turn
+  into wheel steps only outside a captured widget; everything else works as before.
+- `InputCoordinator::touch_capture_at(x, y)`: the topmost widget there when it has
+  `Sense::touch`. A button registered over it keeps its ordinary tap.
+- DOM: CSS `touch-action: none` (`Style::touch_action`, `Placed::captures_touch`,
+  `Dom::touch_targets`). `widgets::kit::dom` registers such elements with `Sense::touch`.
+- New gestures: `DoubleTap` (`GestureConfig::double_tap` 0.3 s,
+  `double_tap_slop` 24 px), `LongPressDrag` / `LongPressEnd` (the held finger drags,
+  for a crosshair) and `PinchPan` (two-finger pan, the midpoint's step and total, sent
+  with `Pinch`).
+
 ## 1.5.35
 
 ### Media environment per thread (`uzor`)

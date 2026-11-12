@@ -280,3 +280,30 @@ fn drawer_avatar_paints_inside_the_drawer() {
     let scrim = at(&|b| b.id.as_deref() == Some("dr:scrim"));
     assert!(scrim < panel && panel < av, "scrim {scrim}, panel {panel}, avatar {av}");
 }
+
+/// A chart screen at 390×844 with a notch and a home indicator: the `touch-action:
+/// none` element is a touch target, and it sits whole between the top bar and the
+/// tab bar, inside the safe area (nothing clipped).
+#[test]
+fn touch_action_none_is_a_capture_target_inside_the_safe_area() {
+    let env = phone();
+    let chart = El::new("div").id("chart").css("flex-grow: 1; min-height: 0; touch-action: none");
+    let root = screen(true, [top_bar("nav", "Назад", "BTCUSDT", Some((Dot::Ok, "Binance")), &[]), El::new("div.m-content").child(chart), tab_bar("tabs", &tabs(), 0)]).css("height: 844px");
+    let d = lay(&root, &env);
+    let targets: Vec<(&str, Rect)> = d.touch_targets().collect();
+    assert_eq!(targets.len(), 1, "{targets:?}");
+    let (id, r) = targets[0];
+    assert_eq!(id, "chart");
+    let back = d.rect("nav:back").unwrap();
+    let tab = d.rect("tabs:0").unwrap();
+    assert!(back.y >= 47.0, "the top bar clears the notch: {back:?}");
+    assert!(r.y >= back.y + back.height, "under the top bar: {r:?}");
+    assert!(r.y + r.height <= tab.y + 0.5, "above the tab bar: {r:?} {tab:?}");
+    assert!(tab.y + tab.height <= 844.0 - 34.0 + 0.5, "tabs clear the home indicator");
+    assert!(r.x >= 0.0 && r.x + r.width <= 390.0 + 0.5 && r.width > 380.0, "full width, not clipped: {r:?}");
+    assert!(r.height > 500.0, "the chart gets the rest of the screen: {r:?}");
+    // Not set (or `auto`) is not a capture.
+    let plain = lay(&screen(true, [El::new("div").id("x").css("height: 100px; touch-action: auto")]), &env);
+    assert_eq!(plain.touch_targets().count(), 0);
+    assert!(!plain.get("x").unwrap().captures_touch());
+}

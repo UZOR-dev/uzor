@@ -431,6 +431,7 @@ impl<S: Spec> Kernel<S> {
         // Gestures wait for the window's next compose (frames are paced; a tick
         // without a frame must not drop them).
         view.gestures = self.gestures.remove(&win).unwrap_or_default();
+        view.captured_gestures = self.captured.remove(&win).unwrap_or_default();
         view.coarse_pointer = self.coarse_pointer;
         let wv = self.windows.view();
         if let Some(g) = wv.window(win).map(|w| *w.geometry()) {

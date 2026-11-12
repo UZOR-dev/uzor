@@ -554,3 +554,21 @@ fn area_paints_lines_and_moves_by_them() {
     let r = h.frame(&v, |cx| a().build(cx));
     assert!(r.focused && r.caret_top == 40.0);
 }
+
+/// A DOM element with `touch-action: none` is registered as a touch capture at a phone
+/// size; its siblings (and a button drawn over it) are not.
+#[test]
+fn dom_touch_action_none_registers_a_touch_capture() {
+    let sheet = uzor::ui::style::Sheet::parse("div.col { display: flex; flex-direction: column; height: 844px } div.chart { flex-grow: 1; touch-action: none } button.b { height: 44px }").unwrap();
+    let tree = uzor::ui::dom::El::new("div.col")
+        .child(uzor::ui::dom::El::new("button.b").id("top").tab().text("Top"))
+        .child(uzor::ui::dom::El::new("div.chart").id("chart"))
+        .child(uzor::ui::dom::El::new("button.b").id("bottom").tab().text("Bottom"));
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let r = h.frame(&VisualView::default(), |cx| dom(Rect::new(0.0, 0.0, 390.0, 844.0), &sheet, tree).build(cx));
+    let chart = r.dom.rect("chart").unwrap();
+    assert!((chart.y - 44.0).abs() < 0.5 && (chart.height - (844.0 - 88.0)).abs() < 0.5, "{chart:?}");
+    assert_eq!(h.coord.touch_capture_at(195.0, 400.0), Some(WidgetId::from("chart")));
+    assert_eq!(h.coord.touch_capture_at(195.0, 20.0), None);
+    assert_eq!(h.coord.touch_capture_at(195.0, 830.0), None);
+}

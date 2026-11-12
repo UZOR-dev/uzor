@@ -497,6 +497,13 @@ impl Default for Placed {
 }
 
 impl Placed {
+    /// CSS `touch-action: none`: a finger that lands on this element is its own (a
+    /// chart, a map, a signature pad). A host registers it with `Sense::touch`, so
+    /// its pans, pinches, long-press drags and double-taps are delivered to it as
+    /// gestures and never scroll an ancestor.
+    pub fn captures_touch(&self) -> bool {
+        self.style.touch_action.as_deref() == Some("none")
+    }
     /// The ARIA role: a control's ([`Control::role`]), else from the kind (`button`,
     /// `a` → `link`, `select` → `combobox`, `input` → `textbox`), else `generic`.
     pub fn role(&self) -> &'static str {
@@ -662,6 +669,11 @@ impl Dom {
                 })
             })
             .collect()
+    }
+    /// The elements with an id that capture touch (CSS `touch-action: none`), with
+    /// what is visible of them, in paint order.
+    pub fn touch_targets(&self) -> impl Iterator<Item = (&str, Rect)> {
+        self.boxes.iter().filter(|b| b.captures_touch()).filter_map(|b| Some((b.id.as_deref()?, b.clip.map_or(b.rect, |c| c.intersect(b.rect)))))
     }
     /// `(slot key, content box)` of every embed slot ([`El::slot`]), in paint order.
     pub fn slots(&self) -> impl Iterator<Item = (&str, Rect)> {

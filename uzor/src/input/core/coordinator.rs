@@ -908,6 +908,28 @@ impl InputCoordinator {
         self.hit_test_with_sense(x, y, &|_| true)
     }
 
+    /// The widget that takes a finger landing at `(x, y)` whole: the topmost widget
+    /// there (sense-agnostic, modal-barrier aware, like [`Self::hit_test_now`]) when
+    /// it was registered with [`Sense::touch`](crate::input::Sense) (`with_touch()`).
+    /// A touch host hands such a contact to the widget as gestures (pan, pinch,
+    /// long-press, double-tap) instead of turning its motion into scrolling. A
+    /// widget registered above it (a button over a chart) keeps the ordinary
+    /// tap / scroll behaviour.
+    pub fn touch_capture_at(&self, x: f64, y: f64) -> Option<WidgetId> {
+        if !self.layers.iter().any(|l| l.modal) {
+            for region in self.scoped_regions.iter().rev() {
+                if region.contains(x, y) {
+                    let (lx, ly) = region.to_local(x, y);
+                    if let Some(local) = region.coordinator.hit_test_at(lx, ly) {
+                        return local.sense.touch.then(|| region.prefix_id(&local.id));
+                    }
+                }
+            }
+        }
+        let w = self.hit_test_at(x, y)?;
+        w.sense.touch.then(|| w.id.clone())
+    }
+
     /// Live z-order probe: the LAYER z_order of the topmost widget at
     /// `(x, y)` (sense-agnostic, modal-barrier aware), `None` when nothing
     /// is hit. The central occlusion primitive for hosts that must
@@ -3041,5 +3063,29 @@ mod cursor_tests {
         assert_eq!(c.cursor_at(600.0, 600.0), C::ResizeHorizontal);
         c.release_pointer();
         assert_eq!(WidgetKind::Splitter.cursor(Rect::new(0.0, 0.0, 300.0, 6.0)), C::ResizeVertical);
+    }
+}
+
+/// `touch_capture_at`: only the topmost widget's own `Sense::touch` captures a finger.
+#[cfg(test)]
+mod touch_capture_tests {
+    use super::*;
+
+    #[test]
+    fn touch_capture_is_the_topmost_touch_widget_only() {
+        let mut c = InputCoordinator::new();
+        let main = LayerId::main();
+        c.register_atomic("chart", WidgetKind::Button, Rect::new(0.0, 100.0, 390.0, 400.0), Sense::CLICK.with_touch().with_gesture(), &main);
+        c.register_atomic("zoom", WidgetKind::Button, Rect::new(330.0, 110.0, 50.0, 30.0), Sense::CLICK, &main);
+        c.register_atomic("list", WidgetKind::Button, Rect::new(0.0, 520.0, 390.0, 200.0), Sense::CLICK, &main);
+        assert_eq!(c.touch_capture_at(100.0, 300.0), Some(WidgetId::new("chart")));
+        assert_eq!(c.touch_capture_at(350.0, 120.0), None, "a button over the chart keeps its tap");
+        assert_eq!(c.touch_capture_at(100.0, 600.0), None, "an ordinary widget does not capture");
+        assert_eq!(c.touch_capture_at(100.0, 50.0), None, "nothing there");
+        // A modal over the chart takes the finger.
+        let modal = LayerId::new("modal");
+        c.push_layer_ex(modal.clone(), 100, true, false);
+        c.register_atomic("dialog", WidgetKind::Button, Rect::new(20.0, 200.0, 350.0, 200.0), Sense::CLICK, &modal);
+        assert_eq!(c.touch_capture_at(100.0, 300.0), None, "behind the modal");
     }
 }

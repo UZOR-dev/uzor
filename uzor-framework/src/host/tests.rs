@@ -102,6 +102,10 @@ struct TestApp {
     scroll_key: Option<crate::ScrollKey>,
     /// Gestures the panel hook observed through `VisualView::gestures`.
     seen_gestures: Vec<crate::types::gesture::Gesture>,
+    /// Widgets registered after everything else in the panel (on top of the scroller).
+    top_widgets: Vec<(WidgetId, Rect, Sense)>,
+    /// Captured gestures the panel hook observed (`VisualView::captured_gestures`).
+    seen_captured: Vec<(WidgetId, crate::types::gesture::Gesture)>,
     /// Context (secondary) clicks the panel hook observed.
     seen_context: Vec<(f64, f64)>,
     /// Safe area, keyboard and pointer kind the panel hook last observed.
@@ -169,8 +173,12 @@ impl App for TestApp {
             let _ = crate::widgets::scroll_begin(cx, "list", *vp, sv, *h, true, &st);
             crate::widgets::scroll_end(cx, "list", *vp, sv, &st);
         }
+        for (id, rect, sense) in &self.top_widgets {
+            cx.widgets.coord.register_on_layer(id.clone(), *rect, *sense, &cx.widgets.layer);
+        }
         self.seen_clicks.extend(cx.view.clicks().iter().cloned());
         self.seen_gestures.extend(cx.view.gestures().iter().copied());
+        self.seen_captured.extend(cx.view.captured_gestures.iter().cloned());
         self.seen_context.extend(cx.view.context_click());
         self.seen_insets = Some((cx.view.safe_area(), cx.view.keyboard(), cx.view.coarse_pointer()));
         if self.request_frame {
@@ -1658,4 +1666,166 @@ fn intent_invalidate_paints_in_the_same_tick() {
     );
     let out = h.advance(0.5);
     assert!(out.frames.iter().any(|f| f.window == win), "no frame after the intent's invalidate");
+}
+
+
+// -- touch capture (`Sense::touch`) ------------------------------------------
+
+/// A scroller with a touch-capturing "chart" over its lower half and a button over the chart.
+fn capture_host() -> (Host<TS, TestApp>, WindowId) {
+    let (mut h, handle) = host();
+    let win = open_with_panel(&mut h, &handle);
+    let app = h.runtime_mut().app_mut();
+    app.scroller = Some((Rect::new(0.0, 0.0, 400.0, 500.0), 3000.0, crate::ScrollView::default()));
+    app.top_widgets.push((wid("chart"), Rect::new(0.0, 200.0, 400.0, 300.0), Sense::CLICK.with_touch().with_gesture()));
+    app.top_widgets.push((wid("zoom"), Rect::new(340.0, 210.0, 50.0, 30.0), Sense::CLICK));
+    app.request_frame = true;
+    h.advance(0.017);
+    (h, win)
+}
+
+fn off(h: &Host<TS, TestApp>) -> f64 {
+    h.runtime().app().scroller.as_ref().unwrap().2.offset
+}
+
+fn touch(h: &mut Host<TS, TestApp>, win: WindowId, t: crate::types::bus::TouchInput) {
+    h.input(win, InputEvent::Touch(t));
+    h.advance(0.017);
+}
+
+fn captured(h: &Host<TS, TestApp>) -> Vec<crate::types::gesture::Gesture> {
+    h.runtime().app().seen_captured.iter().filter(|(w, _)| *w == wid("chart")).map(|(_, g)| *g).collect()
+}
+
+/// One finger on a captured widget pans it: nothing scrolls or flings, the pan is
+/// the widget's (not in `gestures()`), and it never clicks.
+#[test]
+fn touch_capture_one_finger_pan_is_the_widgets_not_a_scroll() {
+    use crate::types::bus::TouchInput as T;
+    use crate::types::gesture::Gesture as G;
+    let (mut h, win) = capture_host();
+    touch(&mut h, win, T::Start { id: 1, pos: Point::new(100.0, 400.0) });
+    let mut y = 400.0;
+    for _ in 0..12 {
+        y -= 15.0;
+        touch(&mut h, win, T::Move { id: 1, pos: Point::new(100.0, y) });
+    }
+    touch(&mut h, win, T::End { id: 1, pos: Point::new(100.0, y) });
+    for _ in 0..20 {
+        h.advance(0.016);
+    }
+    assert_eq!(off(&h), 0.0, "a captured pan never scrolls or flings");
+    let g = captured(&h);
+    assert!(g.iter().any(|e| matches!(e, G::PanStart { .. })), "{g:?}");
+    assert!(g.iter().filter(|e| matches!(e, G::Pan { .. })).count() >= 10);
+    assert!(g.iter().any(|e| matches!(e, G::PanEnd { .. })));
+    let app = h.runtime().app();
+    assert!(!app.seen_gestures.iter().any(|e| matches!(e, G::Pan { .. } | G::PanStart { .. })), "not in gestures(): {:?}", app.seen_gestures);
+    assert!(!app.seen_clicks.iter().any(|(id, _)| *id == wid("chart")), "a pan never clicks");
+    // The same pan above the chart still scrolls (unchanged behaviour).
+    touch(&mut h, win, T::Start { id: 2, pos: Point::new(100.0, 190.0) });
+    let mut y = 190.0;
+    for _ in 0..10 {
+        y -= 10.0;
+        touch(&mut h, win, T::Move { id: 2, pos: Point::new(100.0, y) });
+    }
+    touch(&mut h, win, T::End { id: 2, pos: Point::new(100.0, y) });
+    assert!(off(&h) > 50.0, "outside the capture a pan scrolls: {}", off(&h));
+}
+
+/// Two fingers on a captured widget pinch and pan it, and never become wheel steps;
+/// two fingers elsewhere still scroll.
+#[test]
+fn touch_capture_two_fingers_pinch_without_wheel() {
+    use crate::types::bus::TouchInput as T;
+    use crate::types::gesture::Gesture as G;
+    let (mut h, win) = capture_host();
+    touch(&mut h, win, T::Start { id: 1, pos: Point::new(150.0, 350.0) });
+    touch(&mut h, win, T::Start { id: 2, pos: Point::new(250.0, 350.0) });
+    for i in 1..=8 {
+        let d = i as f64 * 6.0;
+        touch(&mut h, win, T::Move { id: 1, pos: Point::new(150.0 - d, 350.0 - d) });
+        touch(&mut h, win, T::Move { id: 2, pos: Point::new(250.0 + d, 350.0 - d) });
+    }
+    touch(&mut h, win, T::End { id: 2, pos: Point::new(298.0, 302.0) });
+    touch(&mut h, win, T::End { id: 1, pos: Point::new(102.0, 302.0) });
+    h.advance(0.016);
+    assert_eq!(off(&h), 0.0, "no wheel from two captured fingers");
+    let g = captured(&h);
+    let last_scale = g.iter().rev().find_map(|e| match e {
+        G::Pinch { scale, .. } => Some(*scale),
+        _ => None,
+    });
+    assert!(last_scale.is_some_and(|s| s > 1.9), "{g:?}");
+    let pan_y: f64 = g.iter().filter_map(|e| match e {
+        G::PinchPan { delta, .. } => Some(delta.1),
+        _ => None,
+    }).sum();
+    assert!((pan_y + 48.0).abs() < 0.5, "the midpoint moved up 48 px: {pan_y}");
+    assert!(g.iter().any(|e| matches!(e, G::PinchEnd { .. })));
+    assert!(!h.runtime().app().seen_clicks.iter().any(|(id, _)| *id == wid("chart")));
+    // Two fingers above the chart: the old behaviour, they scroll.
+    touch(&mut h, win, T::Start { id: 3, pos: Point::new(100.0, 150.0) });
+    touch(&mut h, win, T::Start { id: 4, pos: Point::new(200.0, 150.0) });
+    for i in 1..=6 {
+        let y = 150.0 - i as f64 * 15.0;
+        touch(&mut h, win, T::Move { id: 3, pos: Point::new(100.0, y) });
+        touch(&mut h, win, T::Move { id: 4, pos: Point::new(200.0, y) });
+    }
+    assert!(off(&h) > 40.0, "two fingers elsewhere scroll: {}", off(&h));
+}
+
+/// A tap on a captured widget clicks it; two quick taps are a double-tap; a widget
+/// registered above the capture (a button on the chart) keeps the ordinary tap.
+#[test]
+fn touch_capture_taps_click_and_double_tap() {
+    use crate::types::bus::TouchInput as T;
+    use crate::types::gesture::Gesture as G;
+    let (mut h, win) = capture_host();
+    touch(&mut h, win, T::Start { id: 1, pos: Point::new(100.0, 300.0) });
+    touch(&mut h, win, T::End { id: 1, pos: Point::new(100.0, 300.0) });
+    touch(&mut h, win, T::Start { id: 2, pos: Point::new(102.0, 301.0) });
+    touch(&mut h, win, T::End { id: 2, pos: Point::new(102.0, 301.0) });
+    h.advance(0.017);
+    assert!(h.runtime().app().seen_clicks.iter().any(|(id, _)| *id == wid("chart")), "{:?}", h.runtime().app().seen_clicks);
+    let g = captured(&h);
+    assert_eq!(g.iter().filter(|e| matches!(e, G::Tap { .. })).count(), 2, "{g:?}");
+    assert!(g.iter().any(|e| matches!(e, G::DoubleTap { .. })), "{g:?}");
+    let before = captured(&h).len();
+    h.advance(1.0);
+    touch(&mut h, win, T::Start { id: 3, pos: Point::new(360.0, 220.0) });
+    touch(&mut h, win, T::End { id: 3, pos: Point::new(360.0, 220.0) });
+    h.advance(0.017);
+    assert!(h.runtime().app().seen_clicks.iter().any(|(id, _)| *id == wid("zoom")), "{:?}", h.runtime().app().seen_clicks);
+    assert_eq!(captured(&h).len(), before, "the button's tap is not the chart's");
+}
+
+/// A long-press on a captured widget is not a context click: it is the widget's
+/// long-press, and the held finger drags (a crosshair) until it lifts.
+#[test]
+fn touch_capture_long_press_drags_instead_of_context() {
+    use crate::types::bus::TouchInput as T;
+    use crate::types::gesture::Gesture as G;
+    let (mut h, win) = capture_host();
+    touch(&mut h, win, T::Start { id: 1, pos: Point::new(100.0, 300.0) });
+    for _ in 0..40 {
+        h.advance(0.016);
+    }
+    for i in 1..=5 {
+        touch(&mut h, win, T::Move { id: 1, pos: Point::new(100.0 + i as f64 * 10.0, 300.0) });
+    }
+    touch(&mut h, win, T::End { id: 1, pos: Point::new(150.0, 300.0) });
+    h.advance(0.016);
+    let g = captured(&h);
+    assert!(g.iter().any(|e| matches!(e, G::LongPress { .. })), "{g:?}");
+    let dx: f64 = g.iter().filter_map(|e| match e {
+        G::LongPressDrag { delta, .. } => Some(delta.0),
+        _ => None,
+    }).sum();
+    assert_eq!(dx, 50.0);
+    assert!(g.iter().any(|e| matches!(e, G::LongPressEnd { .. })));
+    let app = h.runtime().app();
+    assert!(app.seen_context.is_empty(), "no context click: {:?}", app.seen_context);
+    assert!(!app.seen_clicks.iter().any(|(id, _)| *id == wid("chart")));
+    assert_eq!(off(&h), 0.0);
 }

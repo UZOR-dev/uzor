@@ -80,6 +80,13 @@ impl<S: Spec> Kernel<S> {
     /// A second finger cancels the press; the fingers' mean motion scrolls and
     /// the pinch is reported. Every recognised gesture (tap, long-press, pan,
     /// edge pan, swipe, pinch) is in `VisualView::gestures` for this tick.
+    ///
+    /// A first finger that lands on a widget registered with `Sense::touch`
+    /// (`InputCoordinator::touch_capture_at`) captures the whole sequence
+    /// (`TouchMode::Captured`): no press, scroll, fling or context click; the
+    /// gestures (pan, pinch and its two-finger pan, long-press drag, double-tap) go
+    /// to `VisualView::captured_gestures` for that widget, and a tap still clicks it.
+    /// Two fingers turn into wheel steps only outside such a widget.
     fn route_touch(&mut self, now: Seconds, win: WindowId, t: crate::types::bus::TouchInput) {
         use crate::types::bus::TouchInput as T;
         use crate::types::gesture::Gesture;
@@ -98,11 +105,21 @@ impl<S: Spec> Kernel<S> {
                         self.gesture.set_viewport(vp.x + vp.width, vp.y + vp.height);
                     }
                     self.touch_win = Some(win);
+                    // A finger landing on a touch-capturing widget (a chart, a map)
+                    // is that widget's: gestures only, nothing scrolls.
+                    self.touch_capture = self
+                        .input
+                        .view()
+                        .coordinator(win)
+                        .and_then(|c| c.touch_capture_at(pos.x, pos.y))
+                        .map(|w| (win, w));
                     let g = self.gesture.start(id, pos, ts);
                     self.touches.push((id, pos));
                     self.push_gestures(win, g);
                     self.route_pointer(now, win, PointerInput::Moved { pos, mods });
-                    if stopped {
+                    if self.touch_capture.is_some() {
+                        self.touch_mode = TouchMode::Captured;
+                    } else if stopped {
                         self.touch_mode = TouchMode::Held;
                     } else {
                         self.touch_mode = TouchMode::Press;
@@ -112,7 +129,7 @@ impl<S: Spec> Kernel<S> {
                     let g = self.gesture.start(id, pos, ts);
                     self.touches.push((id, pos));
                     self.push_gestures(win, g);
-                    if self.touches.len() == 2 {
+                    if self.touches.len() == 2 && self.touch_mode != TouchMode::Captured {
                         // A pan, not a drag: release the primary without a click.
                         if matches!(self.touch_mode, TouchMode::Press | TouchMode::Drag) {
                             self.route_pointer(now, win, PointerInput::Cancelled);
@@ -171,6 +188,11 @@ impl<S: Spec> Kernel<S> {
                     TouchMode::Drag if primary => {
                         self.route_pointer(now, win, PointerInput::Moved { pos, mods });
                     }
+                    // One finger on a captured widget: the pointer follows it (hover,
+                    // a crosshair); the motion itself is the widget's gestures.
+                    TouchMode::Captured if primary && self.touches.len() == 1 => {
+                        self.route_pointer(now, win, PointerInput::Moved { pos, mods });
+                    }
                     _ => {}
                 }
             }
@@ -182,7 +204,17 @@ impl<S: Spec> Kernel<S> {
                     Gesture::PanEnd { velocity, .. } => Some(*velocity),
                     _ => None,
                 });
+                let tap = g.iter().find_map(|e| match e {
+                    Gesture::Tap { pos } => Some(*pos),
+                    _ => None,
+                });
                 self.push_gestures(win, g);
+                if let (TouchMode::Captured, Some(at)) = (self.touch_mode, tap) {
+                    // A tap on a captured widget still clicks it.
+                    self.route_pointer(now, win, PointerInput::Moved { pos: at, mods });
+                    self.route_pointer(now, win, PointerInput::Down { pos: at, button: MouseButton::Left, mods });
+                    self.route_pointer(now, win, PointerInput::Up { pos: at, button: MouseButton::Left, mods });
+                }
                 match self.touch_mode {
                     TouchMode::Press | TouchMode::Drag if primary => {
                         self.route_pointer(now, win, PointerInput::Moved { pos, mods });
@@ -198,6 +230,7 @@ impl<S: Spec> Kernel<S> {
                 if self.touches.is_empty() {
                     self.touch_mode = TouchMode::Idle;
                     self.touch_win = None;
+                    self.touch_capture = None;
                 }
             }
             T::Cancel { id } => {
@@ -210,7 +243,8 @@ impl<S: Spec> Kernel<S> {
                 if self.touches.is_empty() {
                     self.touch_mode = TouchMode::Idle;
                     self.touch_win = None;
-                } else {
+                    self.touch_capture = None;
+                } else if self.touch_mode != TouchMode::Captured {
                     self.touch_mode = TouchMode::Held;
                 }
             }
@@ -265,6 +299,19 @@ impl<S: Spec> Kernel<S> {
     fn push_gestures(&mut self, win: WindowId, g: Vec<crate::types::gesture::Gesture>) {
         if g.is_empty() {
             return;
+        }
+        if let Some((cw, owner)) = &self.touch_capture {
+            if *cw == win {
+                let owned = g.into_iter().map(|e| (owner.clone(), e));
+                match self.captured.get_mut(&win) {
+                    Some(v) => v.extend(owned),
+                    None => {
+                        self.captured.insert(win, owned.collect());
+                    }
+                }
+                self.invalidate(win, None, InvalidateBits::MATERIAL);
+                return;
+            }
         }
         match self.gestures.get_mut(&win) {
             Some(v) => v.extend(g),

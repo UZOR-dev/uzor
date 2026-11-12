@@ -183,6 +183,7 @@ pub struct VisualView<S: Spec> {
     pub(crate) scroll_precise: bool,
     pub(crate) scroll_touch: bool,
     pub(crate) gestures: Vec<crate::types::gesture::Gesture>,
+    pub(crate) captured_gestures: Vec<(WidgetId, crate::types::gesture::Gesture)>,
     pub(crate) safe_area: crate::types::window::Insets,
     pub(crate) keyboard: f64,
     pub(crate) coarse_pointer: bool,
@@ -213,6 +214,7 @@ impl<S: Spec> Default for VisualView<S> {
             scroll_precise: false,
             scroll_touch: false,
             gestures: Vec::new(),
+            captured_gestures: Vec::new(),
             safe_area: crate::types::window::Insets::ZERO,
             keyboard: 0.0,
             coarse_pointer: false,
@@ -386,6 +388,21 @@ impl<S: Spec> VisualView<S> {
     /// left-edge `Pan` for its back-swipe, a zoomable view the `Pinch`.
     pub fn gestures(&self) -> &[crate::types::gesture::Gesture] {
         &self.gestures
+    }
+
+    /// Gestures of the touch sequences that landed on widget `id`, oldest first. A
+    /// widget registered with `Sense::touch` (`Sense::CLICK.with_touch()`, CSS
+    /// `touch-action: none` in a DOM tree) captures every finger of a sequence that
+    /// starts on it: its pans, two-finger pinches and pans, long-press drags and
+    /// double-taps land here and not in [`Self::gestures`], and they never scroll
+    /// what is under it. A tap still clicks it.
+    pub fn captured_gestures(&self, id: &WidgetId) -> Vec<crate::types::gesture::Gesture> {
+        self.captured_gestures.iter().filter(|(w, _)| w == id).map(|(_, g)| *g).collect()
+    }
+
+    /// The widget that owns this tick's captured gestures, if any.
+    pub fn touch_capture(&self) -> Option<&WidgetId> {
+        self.captured_gestures.first().map(|(w, _)| w)
     }
 
     /// Last pointer position in window coordinates, if known.

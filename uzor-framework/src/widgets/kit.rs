@@ -1910,7 +1910,12 @@ impl<'a> DomBuilder<'a> {
                         ime = b.caret_rect();
                     }
                 } else if b.tab || b.id.is_some() {
-                    let sense = if b.tab { focusable() } else { Sense::CLICK | Sense::HOVER };
+                    let mut sense = if b.tab { focusable() } else { Sense::CLICK | Sense::HOVER };
+                    if b.captures_touch() {
+                        // `touch-action: none`: the element takes its fingers whole
+                        // (`VisualView::captured_gestures`).
+                        sense = sense.with_touch().with_gesture();
+                    }
                     coord.register_atomic(wid.clone(), WidgetKind::Button, vis, sense, layer);
                     coord.set_a11y(&wid, &name, b.control.as_ref().and_then(Control::checked));
                 }
