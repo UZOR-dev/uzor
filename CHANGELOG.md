@@ -2,7 +2,7 @@
 
 All crates in the workspace share one version.
 
-## Unreleased
+## 1.5.36
 
 ### Custom-paint slots (`uzor`, `uzor-framework`)
 
