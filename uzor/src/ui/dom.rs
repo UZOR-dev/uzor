@@ -1174,7 +1174,7 @@ fn place(r: Resolved, l: &Laid, out: &mut Vec<Placed>, layers: &mut Vec<(bool, i
         let top = ((c.height - m.lh * lines.len() as f64) / 2.0).max(0.0);
         for ln in &mut lines {
             ln.y += top;
-            let dx = match style.text_align.as_deref() {
+            let dx = match own_text_align(&style) {
                 Some("center") => (c.width - ln.width) / 2.0,
                 Some("right") | Some("end") => c.width - ln.width,
                 _ => 0.0,
@@ -1259,6 +1259,27 @@ fn deepest(ls: &[Laid], floor: f64) -> f64 {
 /// `l` and its descendants moved down by `dy`.
 fn shift_laid(l: &Laid, dy: f64) -> Laid {
     Laid { rect: Rect::new(l.rect.x, l.rect.y + dy, l.rect.width, l.rect.height), children: l.children.iter().map(|c| shift_laid(c, dy)).collect() }
+}
+
+/// Where an element's own text sits across its content box: `text-align`, else, in a
+/// flex container, where its anonymous flex item goes — `justify-content` on a row,
+/// `align-items` on a column (`center`, `flex-end` / `end` as `right`). A centred
+/// `display: flex; justify-content: center` button centres its label as in a browser.
+fn own_text_align(s: &Style) -> Option<&str> {
+    if let Some(a) = s.text_align.as_deref() {
+        return Some(a);
+    }
+    if !matches!(s.display.as_deref(), Some("flex") | Some("inline-flex")) {
+        return None;
+    }
+    let column = matches!(s.flex_direction.as_deref(), Some("column") | Some("column-reverse"));
+    let main = if column { s.align_items.as_deref() } else { s.justify_content.as_deref() };
+    match main {
+        // One item: `space-around` / `space-evenly` centre it, `space-between` keeps it at the start.
+        Some("center") | Some("space-around") | Some("space-evenly") => Some("center"),
+        Some("flex-end") | Some("end") => Some("right"),
+        _ => None,
+    }
 }
 
 /// Lay out `root` at `(x, y)` in a containing block `w` wide, without painting.
@@ -1383,7 +1404,7 @@ fn paint_box_unclipped(ctx: &mut dyn RenderContext, b: &Placed) {
         } else {
             vec![ellipsize(ctx, t, content.width + 0.5)]
         };
-        let (align, x) = match s.text_align.as_deref() {
+        let (align, x) = match own_text_align(s) {
             Some("center") => (TextAlign::Center, content.x + content.width / 2.0),
             Some("right") | Some("end") => (TextAlign::Right, content.x + content.width),
             _ => (TextAlign::Left, content.x),
@@ -2219,6 +2240,33 @@ mod tests {
         let sh3 = Sheet::parse("div.p { position: relative; width: 300px; height: 50px } span.t { position: absolute; right: 0; bottom: 0; font-size: 10px; line-height: 20px }").unwrap();
         let d3 = lay_out(&mut rc, &sh3, &El::new("div.p").child(El::new("span.t").id("t").text("abc")), 0.0, 0.0, 500.0, &|_| State::NONE);
         assert_eq!(d3.rect("t").unwrap(), Rect::new(279.0, 30.0, 21.0, 20.0));
+    }
+
+    /// The own text of a flex container is its anonymous flex item: a row's
+    /// `justify-content: center` (a column's `align-items: center`) centres it as in a
+    /// browser, `text-align` still wins, and a plain block stays left.
+    #[test]
+    fn own_text_follows_the_flex_main_axis() {
+        let sh = Sheet::parse(
+            "button.b { display: flex; justify-content: center; width: 200px; height: 40px; font-size: 10px }
+             button.c { display: flex; flex-direction: column; align-items: center; width: 200px; height: 40px; font-size: 10px }
+             button.e { display: flex; justify-content: flex-end; width: 200px; height: 40px; font-size: 10px }
+             button.l { display: flex; justify-content: center; text-align: left; width: 200px; height: 40px; font-size: 10px }
+             div.p { width: 200px; height: 40px; font-size: 10px }",
+        )
+        .unwrap();
+        let x_of = |spec: &str| {
+            let mut ctx = crate::testing::RecordingRenderContext::with_char_width(7.0);
+            render(&mut ctx, &sh, &El::new(spec).text("abc"), 0.0, 0.0, 500.0, &|_| State::NONE);
+            let mut texts = ctx.fill_texts().into_iter().map(|(_, x, _)| x);
+            texts.next().expect("the label")
+        };
+        let left = x_of("div.p");
+        assert!(left < 1.0, "a block keeps its text at the left: {left}");
+        assert!((x_of("button.b") - 100.0).abs() < 11.0, "row centre: {}", x_of("button.b"));
+        assert!((x_of("button.c") - 100.0).abs() < 11.0, "column centre: {}", x_of("button.c"));
+        assert!(x_of("button.e") > 170.0, "row end: {}", x_of("button.e"));
+        assert!(x_of("button.l") < 1.0, "text-align wins: {}", x_of("button.l"));
     }
 
     #[test]

@@ -12,6 +12,14 @@ All crates in the workspace share one version.
   any thread set, as before. Fixes the parallel race behind the flaky
   `floating_controls_are_a_top_safe_area_inset`.
 
+### DOM: the own text of a flex container follows its main axis (`uzor`)
+
+- An element's own text (a label) in `display: flex | inline-flex` without `text-align`
+  sits where its anonymous flex item goes: `justify-content` on a row, `align-items` on a
+  column (`center`, `space-around` / `space-evenly` centre it; `flex-end` / `end` put it at
+  the right). A `display: flex; justify-content: center` button centres its label as in a
+  browser. `text-align` still wins.
+
 ### Tray widgets: a panic while drawing never takes the app down (`uzor`, `uzor-framework`)
 
 - The app's critter painter (`set_critter_painter`) panicking: logged once, the painter is
