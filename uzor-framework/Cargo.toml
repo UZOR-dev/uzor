@@ -232,3 +232,7 @@ required-features = ["native"]
 [[example]]
 name = "image_viewer"
 required-features = ["native"]
+
+[[example]]
+name = "app_chrome"
+required-features = ["native"]

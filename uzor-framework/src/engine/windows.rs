@@ -79,6 +79,10 @@ struct WindowState {
     fullscreen: FullscreenMode,
     max_inner_size: Option<SizePx>,
     cursor: CursorIcon,
+    /// The app's cursor override (`WindowCmd::SetCursor`), `None` = not set.
+    app_cursor: Option<CursorIcon>,
+    /// `WindowCmd::UnhandledPointer { all }`: every unclaimed pointer event is reported.
+    unhandled_pointer_all: bool,
     cursor_visible: bool,
     cursor_mode: CursorMode,
     ime_allowed: bool,
@@ -105,6 +109,8 @@ impl WindowState {
             fullscreen: FullscreenMode::Off,
             max_inner_size: None,
             cursor: CursorIcon::default(),
+            app_cursor: None,
+            unhandled_pointer_all: false,
             cursor_visible: true,
             cursor_mode: CursorMode::Normal,
             ime_allowed: false,
@@ -423,6 +429,27 @@ impl WindowEngine {
             WindowCmd::SetCursorMode { win, mode } => {
                 self.push(win, WindowCommand::SetCursorMode(mode))
             }
+            WindowCmd::SetCursor { win, icon } => {
+                let Some(st) = self.windows.get_mut(&win) else { return false };
+                st.app_cursor = icon;
+                match icon {
+                    Some(i) if st.cursor != i => self.push(win, WindowCommand::SetCursor(i)),
+                    _ => true,
+                }
+            }
+            WindowCmd::UnhandledPointer { win, all } => {
+                let Some(st) = self.windows.get_mut(&win) else { return false };
+                let changed = st.unhandled_pointer_all != all;
+                st.unhandled_pointer_all = all;
+                changed
+            }
+            WindowCmd::SetCursorVisible { win, visible } => {
+                self.push(win, WindowCommand::SetCursorVisible(visible))
+            }
+            WindowCmd::DragMove(win) => self.push(win, WindowCommand::DragWindow),
+            WindowCmd::DragResize { win, dir } => {
+                self.push(win, WindowCommand::DragResizeWindow(dir))
+            }
         }
     }
 
@@ -677,6 +704,17 @@ impl<'a> WindowRead<'a> {
     /// Cursor icon last requested.
     pub fn cursor(&self) -> CursorIcon {
         self.st.cursor
+    }
+
+    /// The app's cursor override (`WindowCmd::SetCursor`), if it holds one.
+    pub fn app_cursor(&self) -> Option<CursorIcon> {
+        self.st.app_cursor
+    }
+
+    /// Every unclaimed pointer event is reported, not only presses
+    /// (`WindowCmd::UnhandledPointer`).
+    pub fn unhandled_pointer_all(&self) -> bool {
+        self.st.unhandled_pointer_all
     }
 
     /// Cursor visibility last requested.
@@ -1163,6 +1201,42 @@ mod tests {
             .window(W1)
             .map(|w| (w.fullscreen(), w.cursor_mode()));
         assert_eq!(w, Some((FullscreenMode::Borderless, CursorMode::Confined)));
+    }
+
+    #[test]
+    fn app_cursor_drag_and_resize_cmds_reach_the_host() {
+        use uzor::{CursorIcon, ResizeDirection};
+        let mut e = two_open(ClosePolicy::Auto);
+        e.drain();
+        for c in [
+            WindowCmd::SetCursor { win: W1, icon: Some(CursorIcon::Grab) },
+            // The same icon again: nothing new for the host.
+            WindowCmd::SetCursor { win: W1, icon: Some(CursorIcon::Grab) },
+            WindowCmd::SetCursorVisible { win: W1, visible: false },
+            WindowCmd::DragMove(W2),
+            WindowCmd::DragResize { win: W2, dir: ResizeDirection::SouthEast },
+        ] {
+            e.apply(WindowOp::Cmd(c));
+        }
+        assert_eq!(
+            kinds(&e.drain()),
+            vec![
+                (1, "SetCursor".into()),
+                (1, "SetCursorVisible".into()),
+                (2, "DragWindow".into()),
+                (2, "DragResizeWindow".into()),
+            ]
+        );
+        assert_eq!(e.view().window(W1).and_then(|w| w.app_cursor()), Some(CursorIcon::Grab));
+        assert_eq!(e.view().window(W2).and_then(|w| w.app_cursor()), None, "per window, off unless sent");
+        e.apply(WindowOp::Cmd(WindowCmd::SetCursor { win: W1, icon: None }));
+        assert_eq!(e.view().window(W1).and_then(|w| w.app_cursor()), None);
+        assert!(e.drain().is_empty(), "clearing hands the cursor back on the next move");
+        assert!(!e.view().window(W1).is_some_and(|w| w.unhandled_pointer_all()), "presses only by default");
+        e.apply(WindowOp::Cmd(WindowCmd::UnhandledPointer { win: W1, all: true }));
+        assert!(e.view().window(W1).is_some_and(|w| w.unhandled_pointer_all()));
+        assert!(!e.view().window(W2).is_some_and(|w| w.unhandled_pointer_all()));
+        assert!(e.drain().is_empty(), "nothing for the host");
     }
 
     #[test]

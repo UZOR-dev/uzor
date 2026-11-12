@@ -89,6 +89,14 @@ impl NativeClipboard {
         }
     }
 
+    /// Read the clipboard's text now (synchronously): `None` when it holds no text,
+    /// the OS denies access, or the platform has no clipboard. For an app that pastes
+    /// from its own key handling on desktop; the web has no synchronous read (there
+    /// the paste arrives as `UnhandledInput::Paste`).
+    pub fn read_text(&mut self) -> Option<String> {
+        self.read(Ticket(0)).text
+    }
+
     /// Read text for a `ClipboardRead` ticket.
     pub fn read(&mut self, ticket: Ticket) -> ClipboardResult {
         #[cfg(any(target_os = "ios", target_os = "android"))]
