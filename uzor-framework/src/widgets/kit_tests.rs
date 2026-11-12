@@ -755,6 +755,22 @@ fn dom_scroll_containers_are_framework_owned() {
 }
 
 
+/// `dom_scroll_to` before the container's first frame (an app restoring its offset
+/// when a view opens) lands there once the extent is known, not at the end.
+#[test]
+fn dom_scroll_to_before_the_first_frame() {
+    use uzor::ui::dom::El;
+    let sheet = uzor::ui::style::Sheet::parse("").unwrap();
+    let tree = || El::new("div").css("height: 400px").child(El::new("div").id("list").css("height: 100px; overflow: auto").children((0..10).map(|i| El::new("div").id(format!("r{i}")).css("height: 30px"))));
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let panel = Rect::new(0.0, 0.0, 800.0, 400.0);
+    let v = VisualView::<K>::default();
+    h.frame(&v, |cx| dom_scroll_to(cx, "list", 60.0, false));
+    let r = h.frame(&v, |cx| dom(panel, &sheet, tree()).dom_scroll().build(cx));
+    assert_eq!(r.scrolls, vec![("list".to_string(), 60.0)]);
+    assert_eq!(r.dom.get("r2").unwrap().rect.y, 0.0);
+}
+
 /// Without [`DomBuilder::dom_scroll`], an `overflow: auto` box with an id is not
 /// framework-owned: HQ already scrolls those itself (`@body` + `scroll_body`), and
 /// a zero `scroll_top` this frame would otherwise have been taken over.

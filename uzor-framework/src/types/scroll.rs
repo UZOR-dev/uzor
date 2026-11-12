@@ -213,6 +213,13 @@ impl ScrollView {
     }
 
     fn moved(&mut self) {
+        // No extent yet (a jump before the first frame): keep the asked offset for
+        // `set_extent` to clamp, and leave following as it is (every offset would
+        // read as "at the bottom" of an empty view).
+        if self.content == 0.0 && self.view == 0.0 {
+            self.offset = self.offset.max(0.0);
+            return;
+        }
         self.offset = self.offset.max(0.0).min(self.max());
         self.follow_end = self.at_bottom();
     }
@@ -427,6 +434,20 @@ impl ScrollView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_jump_before_the_extent_is_known_lands_once_it_is() {
+        let mut sv = ScrollView::default();
+        sv.scroll_to(80.0);
+        assert!(!sv.follow_end, "an empty view is not a reason to follow the end");
+        sv.set_extent(600.0, 400.0);
+        assert_eq!(sv.offset, 80.0);
+        // Past the end it is clamped then.
+        let mut sv = ScrollView::default();
+        sv.scroll_to(900.0);
+        sv.set_extent(600.0, 400.0);
+        assert_eq!(sv.offset, 200.0);
+    }
 
     #[test]
     fn keys_step_like_chrome() {

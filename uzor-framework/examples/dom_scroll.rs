@@ -67,6 +67,8 @@ struct Demo {
     sheet: Sheet,
     offsets: Vec<(String, f64)>,
     key: Option<ScrollKey>,
+    /// The list opens where a saved offset says (row 41), before it was ever laid out.
+    restored: bool,
 }
 
 impl App for Demo {
@@ -80,6 +82,9 @@ impl App for Demo {
     fn overlay_body(&mut self, _cx: &mut OverlayCx<'_, S>) {}
 
     fn panel(&mut self, cx: &mut PanelCx<'_, S>) {
+        if !std::mem::replace(&mut self.restored, true) {
+            kit::dom_scroll_to(cx, "list", 40.0 * 32.0, false);
+        }
         if let Some(k) = self.key.take() {
             queue_scroll_key(cx, k);
         }
@@ -129,6 +134,6 @@ fn main() -> Result<(), uzor_framework::FrameworkError> {
         tick: TickRate::Dirty,
         ..RuntimeConfig::default()
     };
-    let demo = Demo { sheet: look::sheet(CSS), offsets: Vec::new(), key: None };
+    let demo = Demo { sheet: look::sheet(CSS), offsets: Vec::new(), key: None, restored: false };
     uzor_framework::host::native::run_native_default(demo, config)
 }
