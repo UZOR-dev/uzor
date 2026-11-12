@@ -171,19 +171,29 @@ impl TickDensity {
         nice_step(range, self.target_ticks(length_px))
     }
 
-    /// Value-space overscan for `range` on an axis `length_px` long
-    /// (0 when the axis has no length).
+    /// Value-space overscan for `range` on an axis `length_px` long.
+    ///
+    /// 0 when the axis is not usable: shorter than [`MIN_AXIS_PX`] (zero,
+    /// sub-pixel, negative) or not finite, or when the margin itself would
+    /// not be finite. A sub-pixel axis would otherwise turn 50 px of
+    /// overscan into a span millions of steps wide.
     #[inline]
     pub fn overscan(&self, range: f64, length_px: f64) -> f64 {
-        if length_px > 0.0 {
-            self.overscan_px * range / length_px
+        if length_px.is_finite() && length_px >= MIN_AXIS_PX {
+            let margin = self.overscan_px * range / length_px;
+            if margin.is_finite() {
+                margin
+            } else {
+                0.0
+            }
         } else {
             0.0
         }
     }
 
     /// Ticks for `[min, max]` on an axis `length_px` long, overscan
-    /// included. Returns the step and the tick values (ascending).
+    /// included. Returns the step and the tick values (ascending), at most
+    /// [`MAX_TICKS`] of them (see [`step_ticks`]).
     pub fn ticks(&self, min: f64, max: f64, length_px: f64) -> (f64, Vec<f64>) {
         let range = max - min;
         let step = self.step(range, length_px);
@@ -192,19 +202,51 @@ impl TickDensity {
     }
 }
 
+/// Shortest axis, in pixels, that gets overscan ([`TickDensity::overscan`]).
+pub const MIN_AXIS_PX: f64 = 1.0;
+
+/// Most ticks one grid may hold: [`step_ticks`] and [`bounded_ticks`]
+/// return **no ticks** for a span that needs more than this many steps.
+///
+/// A real axis needs tens of ticks; a grid this dense is degenerate input
+/// (a huge span over a tiny step), and cutting it short would draw a
+/// partial axis that looks valid, so it is dropped whole instead. The cap
+/// also bounds the work and memory per call.
+pub const MAX_TICKS: usize = 10_000;
+
 /// Upper bound on [`step_ticks`]' up-front allocation; longer runs grow as usual.
-const STEP_TICKS_PREALLOC: i32 = 1024;
+const STEP_TICKS_PREALLOC: usize = 1024;
+
+/// Loop count for a grid of `step` from `first` up to `hi`:
+/// `ceil((hi - first) / step) + 1`, computed in `f64` so it cannot
+/// overflow. `Some(0)` when that is not positive, `None` when it is `NaN`
+/// or the step count `ceil((hi - first) / step)` is above `limit`.
+#[inline]
+pub(crate) fn tick_loop_count(first: f64, hi: f64, step: f64, limit: usize) -> Option<usize> {
+    let steps = ((hi - first) / step).ceil();
+    if steps.is_nan() || steps > limit as f64 {
+        return None;
+    }
+    let count = steps + 1.0;
+    Some(if count > 0.0 { count as usize } else { 0 })
+}
 
 /// Multiples of `step` in `[lo, hi)`, computed by index (no accumulation).
 ///
-/// Empty when `step` is not positive and finite or either end is not finite.
+/// Empty when `step` is not positive and finite, either end is not
+/// finite, or the span needs more than [`MAX_TICKS`] steps; never returns
+/// more than [`MAX_TICKS`] values.
 pub fn step_ticks(lo: f64, hi: f64, step: f64) -> Vec<f64> {
     if !(step.is_finite() && step > 0.0 && lo.is_finite() && hi.is_finite()) {
         return Vec::new();
     }
     let first = (lo / step).ceil() * step;
-    let num_ticks = ((hi - first) / step).ceil() as i32 + 1;
-    let mut ticks = Vec::with_capacity(num_ticks.clamp(0, STEP_TICKS_PREALLOC) as usize);
+    // Values pushed are at most ceil((hi - first) / step); the loop runs
+    // one index past that, as the original did, and breaks at `hi`.
+    let Some(num_ticks) = tick_loop_count(first, hi, step, MAX_TICKS) else {
+        return Vec::new();
+    };
+    let mut ticks = Vec::with_capacity(num_ticks.min(STEP_TICKS_PREALLOC));
     for i in 0..num_ticks {
         let v = first + (i as f64) * step;
         if v >= hi {
@@ -217,7 +259,7 @@ pub fn step_ticks(lo: f64, hi: f64, step: f64) -> Vec<f64> {
 
 /// Nice ticks strictly inside `[min, max]` (both ends inclusive within
 /// `1e-9 × step`), about `target_count` intervals. Empty for an empty or
-/// non-finite range or a zero target.
+/// non-finite range, a zero target, or a grid of more than [`MAX_TICKS`].
 pub fn bounded_ticks(min: f64, max: f64, target_count: usize) -> Vec<f64> {
     let range = max - min;
     if !range.is_finite() || range <= 0.0 || target_count == 0 {
@@ -230,11 +272,14 @@ pub fn bounded_ticks(min: f64, max: f64, target_count: usize) -> Vec<f64> {
     }
 
     let first = (min / step).ceil() * step;
-    let num_ticks = ((max - first) / step).ceil() as i64 + 1;
+    // The tolerance can admit one value past ceil((max - first) / step).
+    let Some(num_ticks) = tick_loop_count(first, max, step, MAX_TICKS - 1) else {
+        return Vec::new();
+    };
     let tolerance = step * 1e-9;
 
     let mut ticks = Vec::new();
-    for i in 0..num_ticks.max(0) {
+    for i in 0..num_ticks {
         let value = first + (i as f64) * step;
         if value > max + tolerance {
             break;

@@ -183,3 +183,56 @@ fn axis_label_default_and_new() {
     assert_eq!((l.value, l.pos), (0.0, 0.0));
     assert_eq!(AxisLabel::new(1.0, 2.0).pos, 2.0);
 }
+
+// Reviewer fuzz cases: huge but finite span / step.
+
+#[test]
+fn step_ticks_huge_span_is_capped() {
+    // Used to overflow `as i32 + 1` (debug panic, release wrap).
+    assert!(step_ticks(0.0, 1e20, 0.1).is_empty());
+    // Used to build a Vec of 1e9 elements.
+    assert!(step_ticks(0.0, 1e8, 0.1).is_empty());
+    assert!(step_ticks(-1e300, 1e300, 1e-300).is_empty());
+    // Exactly MAX_TICKS steps is still served; one more is not.
+    let t = step_ticks(0.0, MAX_TICKS as f64, 1.0);
+    assert_eq!(t.len(), MAX_TICKS);
+    assert_eq!(t.last(), Some(&((MAX_TICKS - 1) as f64)));
+    assert!(step_ticks(0.0, MAX_TICKS as f64 + 1.0, 1.0).is_empty());
+    assert!(step_ticks(0.0, 1e6, 1.0).len() <= MAX_TICKS);
+    // Inverted span is empty, as before.
+    assert!(step_ticks(10.0, 0.0, 1.0).is_empty());
+}
+
+#[test]
+fn bounded_ticks_huge_target_is_capped() {
+    assert!(bounded_ticks(0.0, 1e300, usize::MAX).is_empty());
+    assert!(bounded_ticks(0.0, 1e8, 1_000_000_000).is_empty());
+    assert!(bounded_ticks(0.0, 1.0, 50_000).len() <= MAX_TICKS);
+    assert_eq!(bounded_ticks(0.0, 100.0, 3), vec![0.0, 50.0, 100.0]);
+}
+
+#[test]
+fn density_ticks_tiny_length_has_no_overscan() {
+    let d = TickDensity::default();
+    assert_eq!(d.overscan(100.0, f64::INFINITY), 0.0);
+    assert_eq!(d.ticks(0.0, 100.0, f64::INFINITY).1.len(), 20); // max target, no overscan
+    for len in [1e-300, 0.001, 0.5, 0.0, -5.0, f64::NAN] {
+        assert_eq!(d.overscan(100.0, len), 0.0, "length {len}");
+        let (step, t) = d.ticks(0.0, 100.0, len);
+        assert_eq!(step, 20.0, "length {len}");
+        // No overscan: just the in-range multiples of the step.
+        assert_eq!(t, vec![0.0, 20.0, 40.0, 60.0, 80.0], "length {len}");
+    }
+    // One pixel and up keeps the overscan.
+    assert_eq!(d.overscan(100.0, 1.0), 5000.0);
+    assert!(d.ticks(0.0, 100.0, 1.0).1.len() <= MAX_TICKS);
+    // A finite but overflowing margin is dropped.
+    let wide = TickDensity::default().with_overscan_px(1e300);
+    assert_eq!(wide.overscan(1e300, 1.0), 0.0);
+    // A huge overscan setting yields at most MAX_TICKS.
+    let huge = TickDensity::default().with_overscan_px(1e9);
+    assert!(huge.ticks(0.0, 100.0, 300.0).1.len() <= MAX_TICKS);
+    // Huge max_ticks cannot exceed the cap either.
+    let dense = TickDensity::default().with_spacing_px(1e-9).with_tick_bounds(1.0, 1e12);
+    assert!(dense.ticks(0.0, 100.0, 300.0).1.len() <= MAX_TICKS);
+}

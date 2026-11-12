@@ -161,3 +161,41 @@ fn ticks_and_labels_survive_degenerate_input() {
         let _ = nan.max_label_len(300.0);
     }
 }
+
+// Reviewer fuzz cases.
+
+#[test]
+fn ticks_tiny_length_all_kinds() {
+    for kind in [ScaleKind::Linear, ScaleKind::Log, ScaleKind::Percent, ScaleKind::Indexed] {
+        let s = ValueScale::new(1.0, 100.0).with_kind(kind);
+        for len in [1e-300, 0.001] {
+            let t = s.ticks(len);
+            assert!(t.len() <= uzor_plot::ticks::MAX_TICKS, "{kind:?} {len}");
+            assert!(t.len() < 50, "{kind:?} {len}: {} ticks", t.len());
+            assert!(t.iter().all(|v| v.is_finite()), "{kind:?} {len}");
+            let _ = s.max_label_len(len);
+        }
+    }
+}
+
+#[test]
+fn max_label_len_huge_grid_is_capped() {
+    // Dense grid: max_ticks huge, spacing tiny, so the grid passes MAX_TICKS
+    // and only the maximum's label is measured.
+    let d = uzor_plot::ticks::TickDensity::default().with_spacing_px(1e-9).with_tick_bounds(1.0, 1e15);
+    let s = ValueScale::new(0.0, 1e12).with_density(d);
+    assert_eq!(s.max_label_len(300.0), s.format_value(1e12, 300.0).len());
+    assert!(s.ticks(300.0).is_empty());
+}
+
+#[test]
+fn set_range_clamped_rejects_non_finite() {
+    let mut s = ValueScale::new(0.0, 100.0);
+    assert!(!s.set_range_clamped(f64::NAN, 10.0));
+    assert!(!s.set_range_clamped(0.0, f64::NAN));
+    assert!(!s.set_range_clamped(f64::NEG_INFINITY, 10.0));
+    assert!(!s.set_range_clamped(0.0, f64::INFINITY));
+    assert_eq!((s.min, s.max, s.fit), (0.0, 100.0, RangeFit::Auto));
+    assert!(s.set_range_clamped(0.0, 10.0));
+    assert_eq!((s.min, s.max, s.fit), (0.0, 10.0, RangeFit::Manual));
+}

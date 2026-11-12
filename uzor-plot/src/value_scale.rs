@@ -7,7 +7,7 @@
 
 use core::ops::Range;
 
-use crate::ticks::{nice_step, step_ticks, LabelPrecision, TickDensity};
+use crate::ticks::{nice_step, step_ticks, tick_loop_count, LabelPrecision, TickDensity, MAX_TICKS};
 
 /// How values map onto the axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
@@ -343,7 +343,9 @@ impl ValueScale {
             return self.labels.format(self.max, step).len();
         }
         let first = (self.min / step).ceil() * step;
-        let n = ((self.max - first) / step).ceil() as i32 + 1;
+        // Same cap as the grid itself: a grid over MAX_TICKS is not drawn,
+        // so only the maximum's label counts.
+        let n = tick_loop_count(first, self.max, step, MAX_TICKS).unwrap_or(0);
         let mut max_len = 0;
         for i in 0..n {
             let v = first + (i as f64) * step;
@@ -424,8 +426,12 @@ impl ValueScale {
     }
 
     /// Set the range unless it is narrower than [`Self::min_range_at`] its
-    /// centre. Switches to [`RangeFit::Manual`] when applied.
+    /// centre or either end is not finite. Switches to [`RangeFit::Manual`]
+    /// when applied.
     pub fn set_range_clamped(&mut self, min: f64, max: f64) -> bool {
+        if !(min.is_finite() && max.is_finite()) {
+            return false;
+        }
         let center = (min + max) / 2.0;
         if max - min < Self::min_range_at(center) {
             return false;
