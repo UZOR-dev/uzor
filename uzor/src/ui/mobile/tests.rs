@@ -209,6 +209,53 @@ fn fab_modal_toast_segmented_rail() {
 }
 
 #[test]
+fn action_modal_is_opaque_other_overlays_stay_glass() {
+    fn specs(e: &El, out: &mut Vec<String>) {
+        out.push(e.spec.clone());
+        for c in &e.children {
+            specs(c, out);
+        }
+    }
+    let classes = |e: &El| {
+        let mut s = Vec::new();
+        specs(e, &mut s);
+        s
+    };
+    let has = |specs: &[String], tag: &str, class: &str| {
+        specs.iter().any(|s| {
+            let mut it = s.split('.');
+            it.next() == Some(tag) && it.any(|c| c == class)
+        })
+    };
+    let am = classes(&action_modal("new", "Создать", "Закрыть", &[("chat", "", "Чат", "")]));
+    assert!(has(&am, "div", "m-solid") && has(&am, "div", "m-sheet"), "{am:?}");
+    assert!(!has(&am, "div", "m-glass"), "{am:?}");
+
+    let mut st = SheetState::default();
+    st.open(Detent::Half);
+    let sheet = classes(&bottom_sheet("card", &st, 844.0, None, El::new("div")).unwrap());
+    assert!(has(&sheet, "div", "m-sheet") && has(&sheet, "div", "m-glass"), "{sheet:?}");
+    assert!(!has(&sheet, "div", "m-solid"), "{sheet:?}");
+
+    let dr = classes(&drawer("dr", 1.0, None, &[]).unwrap());
+    assert!(has(&dr, "div", "m-drawer") && has(&dr, "div", "m-glass"), "{dr:?}");
+    assert!(!has(&dr, "div", "m-solid"), "{dr:?}");
+
+    let t = classes(&toast("t", "Чат в архиве", None, 100.0));
+    assert!(has(&t, "div", "m-toast") && has(&t, "div", "m-glass"), "{t:?}");
+    assert!(!has(&t, "div", "m-solid"), "{t:?}");
+
+    // Theme `--m-solid` is an opaque fill with no backdrop blur; glass keeps both.
+    let sh = sheet_for(&phone());
+    let solid = sh.resolve(&crate::ui::style::Node::new("div").class("m-sheet").class("m-solid"), None);
+    assert_eq!(solid.background.as_deref(), Some("rgb(30,30,32)"));
+    assert!(solid.backdrop_blur.is_none());
+    let glass = sh.resolve(&crate::ui::style::Node::new("div").class("m-sheet").class("m-glass"), None);
+    assert_eq!(glass.background.as_deref(), Some("rgba(30,30,32,0.72)"));
+    assert!(glass.backdrop_blur.is_some());
+}
+
+#[test]
 fn composer_rides_above_the_keyboard() {
     assert_eq!(composer_bottom(0.0, 844.0, 0.0, 34.0), 810.0);
     assert_eq!(composer_bottom(0.0, 844.0, 336.0, 34.0), 508.0);

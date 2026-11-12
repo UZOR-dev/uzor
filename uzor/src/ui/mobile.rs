@@ -1,6 +1,6 @@
 //! Mobile app-shell widgets: ready-made [`El`] trees for phone screens, styled by
 //! [`MOBILE_CSS`] (monochrome, the Settings look; only small status dots carry colour;
-//! content is opaque, only overlays — sheet, drawer, action modal, toast — are glass),
+//! content is opaque, only overlays — sheet, drawer, toast — are glass; the action modal is opaque),
 //! plus the pure state machines that move them under a finger or a mouse
 //! ([`SheetState`], [`DrawerState`], [`SwipeState`]). The framework's
 //! `widgets::mobile` feeds these from touch gestures and mouse drags.
@@ -17,7 +17,7 @@
 //! | edge drawer | [`drawer`] | `div.m-scrim` + `div.m-drawer.m-glass` > `div.m-ditem` (`.on`), `div.m-dsec` | `{id}:scrim`, `{id}:{key}` |
 //! | side rail | [`side_rail`] | `div.m-rail` > `button.m-ritem` (`.on`) | `{id}:{i}` |
 //! | floating button | [`fab`] | `button.m-fab` | `id` |
-//! | action modal | [`action_modal`] | `div.m-scrim` + `div.m-sheet.m-glass` > `div.m-srow` | `{id}:scrim`, `{id}:close`, `{id}:{key}` |
+//! | action modal | [`action_modal`] | `div.m-scrim` + `div.m-sheet.m-solid` > `div.m-srow` | `{id}:scrim`, `{id}:close`, `{id}:{key}` |
 //! | bottom sheet | [`bottom_sheet`] | `div.m-sheet.m-glass` (`top` from [`SheetState`]) > `div.m-grab` | `{id}:grab`, `{id}:scrim` |
 //! | toast | [`toast`] | `div.m-toast.m-glass` > `div.m-toast-tx`, `button.m-toast-act` | `{id}:act` |
 //! | segmented | [`segmented`] | `div.m-seg` > `button.m-seg-b` (`.on`) > `span.m-seg-n` | `{id}:{i}` |
@@ -37,13 +37,13 @@ mod list;
 pub use list::{search_bar, search_filter, search_rank, VirtualList};
 
 /// The mobile look. Variables on `:root` theme it (`--m-bg`, `--m-bar`, `--m-card`,
-/// `--m-txt`, `--m-sub`, `--m-dim`, `--m-line`, `--m-glass`, the dot colours).
+/// `--m-txt`, `--m-sub`, `--m-dim`, `--m-line`, `--m-glass`, `--m-solid`, the dot colours).
 /// Safe-area padding comes from `env(safe-area-inset-*)`, so re-parse the sheet when
 /// [`super::media::generation`] moves.
 pub const MOBILE_CSS: &str = r#"
 :root { --m-bg: #121212; --m-bar: #161616; --m-card: #1c1c1c; --m-press: #262626; --m-line: #262626; --m-line2: #2e2e2e;
         --m-txt: #f2f2f2; --m-sub: #9a9a9a; --m-dim: #6c6c6c; --m-mute: #4a4a4a; --m-ok: #5fd08a; --m-warn: #d8b45a; --m-err: #d07070;
-        --m-strong: #ececec; --m-on-strong: #111111; --m-glass: rgba(30,30,32,0.72); --m-glass-line: rgba(255,255,255,0.10);
+        --m-strong: #ececec; --m-on-strong: #111111; --m-glass: rgba(30,30,32,0.72); --m-solid: rgb(30,30,32); --m-glass-line: rgba(255,255,255,0.10);
         --m-scrim: rgba(0,0,0,0.45); --m-hi: rgba(255,255,255,0.10) }
 div.m-screen { display: flex; flex-direction: column; background: var(--m-bg); color: var(--m-txt); font-size: 15px; font-family: Inter, sans-serif; overflow: hidden }
 div.m-safe-top { height: env(safe-area-inset-top, 0px); flex-shrink: 0 }
@@ -112,6 +112,7 @@ button.m-seg-b { flex-grow: 1; flex-basis: 0; display: flex; align-items: center
 button.m-seg-b.on { background: #2e2e2e; color: var(--m-txt); box-shadow: 0 1px 2px rgba(0,0,0,0.4) }
 span.m-seg-n { font-size: 12px; color: var(--m-dim) }
 div.m-glass { background: var(--m-glass); border: 1px solid var(--m-glass-line); backdrop-filter: blur(28px); box-shadow: 0 22px 64px rgba(0,0,0,0.5) }
+div.m-solid { background: var(--m-solid); border: 1px solid var(--m-glass-line); box-shadow: 0 22px 64px rgba(0,0,0,0.5) }
 div.m-scrim { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; background: var(--m-scrim) }
 div.m-sheet { position: fixed; left: 0; right: 0; z-index: 60; border-radius: 22px 22px 0 0; padding: 8px 0 env(safe-area-inset-bottom, 0px); display: flex; flex-direction: column; overflow: hidden }
 div.m-grab { height: 23px; flex-shrink: 0; display: flex; justify-content: center; padding-top: 0 }
@@ -531,10 +532,11 @@ pub fn fab(id: &str, svg: &str, name: &str, bottom: f64) -> El {
 /// One action of the action modal: `(key, icon, label, hint)`.
 pub type Action<'a> = (&'a str, &'a str, &'a str, &'a str);
 
-/// The FAB's action modal: a glass sheet from the bottom over a scrim, with a title,
-/// a close button and one row per action. Hits `{id}:scrim`, `{id}:close`, `{id}:{key}`.
+/// The FAB's action modal: an opaque sheet from the bottom over a scrim, with a title,
+/// a close button and one row per action. Opaque so content under it (a bottom sheet)
+/// does not show through. Hits `{id}:scrim`, `{id}:close`, `{id}:{key}`.
 pub fn action_modal(id: &str, title: &str, close: &str, actions: &[Action<'_>]) -> El {
-    let sheet = El::new("div.m-sheet.m-glass")
+    let sheet = El::new("div.m-sheet.m-solid")
         .css("bottom: 0")
         .child(El::new("div.m-grab").child(El::new("div.m-grab-bar")))
         .child(El::new("div.m-sh").child(El::new("div.m-sh-t").text(title)).child(El::new("button.m-ibtn.fill").id(format!("{id}:close")).tab().name(close).svg(icon(icons::CLOSE))))
