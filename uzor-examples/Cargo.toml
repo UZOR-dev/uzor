@@ -47,6 +47,11 @@ path = "src/bin/dom_widgets_frames.rs"
 required-features = ["png"]
 
 [[bin]]
+name = "dom-slots-frames"
+path = "src/bin/dom_slots_frames.rs"
+required-features = ["png"]
+
+[[bin]]
 name = "tray-widgets-frames"
 path = "src/bin/tray_widgets_frames.rs"
 required-features = ["png"]

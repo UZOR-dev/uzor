@@ -683,6 +683,101 @@ fn paint_slot_takes_the_mouse_drag_and_the_wheel() {
     assert!(sense.drag && sense.scroll && sense.touch);
 }
 
+/// A registered painter paints its slot in place of the closure, gets the slot's
+/// input as local events (drag, wheel, pinch, keys while focused), turns them into
+/// actions, makes the slot a Tab stop and names it; an unregistered slot still goes to
+/// the closure.
+#[test]
+fn slot_registry_paints_routes_input_and_names_the_slot() {
+    use crate::types::gesture::Gesture as G;
+    use crate::types::window::Point;
+    use uzor::ui::dom::{El, SlotAction, SlotEvent, SlotPaint, SlotPainter, SlotRegistry, SlotValue};
+    #[derive(Default)]
+    struct Chart {
+        events: Vec<SlotEvent>,
+        painted: Vec<Rect>,
+    }
+    impl SlotPainter for Chart {
+        fn paint(&mut self, _: &mut dyn uzor::render::RenderContext, f: &SlotPaint<'_>) {
+            self.painted.push(f.rect);
+        }
+        fn event(&mut self, ev: &SlotEvent, _: &SlotPaint<'_>) -> Option<SlotAction> {
+            self.events.push(ev.clone());
+            match ev {
+                SlotEvent::Wheel { dy, .. } => Some(SlotAction::new("zoom").num(*dy)),
+                _ => None,
+            }
+        }
+        fn role(&self) -> &'static str {
+            "slider"
+        }
+        fn name(&self) -> Option<String> {
+            Some("Цена".into())
+        }
+        fn focusable(&self) -> bool {
+            true
+        }
+    }
+    let sheet = uzor::ui::style::Sheet::parse(domkit::KIT_CSS).unwrap();
+    let tree = || {
+        El::new("div")
+            .css("height: 400px")
+            .child(El::new("div").paint_slot("chart").css("height: 300px"))
+            .child(El::new("div").paint_slot("free").css("height: 50px"))
+    };
+    let mut reg = SlotRegistry::new();
+    reg.register("chart", Chart::default());
+    let mut v = VisualView::<K>::default();
+    v.pressed = Some(WidgetId::from("chart"));
+    v.hovered = Some(WidgetId::from("chart"));
+    v.pointer = Some((120.0, 150.0));
+    v.scroll = (0.0, 2.0);
+    v.captured_gestures = vec![(WidgetId::from("chart"), G::Pinch { center: Point::new(100.0, 100.0), scale: 1.5 })];
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let mut closure_keys = Vec::new();
+    let mut fallback = |_: &mut dyn uzor::render::RenderContext, f: &SlotFrame<'_>| closure_keys.push(f.key.to_string());
+    let area = Rect::new(0.0, 0.0, 800.0, 400.0);
+    let r = h.frame(&v, |cx| dom(area, &sheet, tree()).slot_registry(&mut reg).paint_slots(&mut fallback).build(cx));
+    assert_eq!(closure_keys, vec!["free".to_string()], "only the unregistered slot goes to the closure");
+    assert_eq!(r.slot_actions, vec![SlotAction { slot: "chart".into(), name: "zoom".into(), value: SlotValue::Num(2.0) }]);
+    let c = reg.get::<Chart>("chart").unwrap();
+    assert_eq!(c.painted, vec![Rect::new(0.0, 0.0, 800.0, 300.0)]);
+    assert_eq!(
+        c.events,
+        vec![
+            SlotEvent::Enter { x: 120.0, y: 150.0 },
+            SlotEvent::Down { x: 120.0, y: 150.0 },
+            SlotEvent::Wheel { x: 120.0, y: 150.0, dx: 0.0, dy: 2.0 },
+            SlotEvent::Pinch { x: 100.0, y: 100.0, scale: 1.5 },
+        ]
+    );
+    let wid = WidgetId::from("chart");
+    let sense = h.coord.widget_sense(&wid).expect("registered");
+    assert!(sense.focus && sense.keyboard && sense.drag && sense.scroll && sense.touch, "{sense:?}");
+    assert_eq!(h.coord.widget_kind(&wid), Some(uzor::input::WidgetKind::Slider));
+    let tree_a11y = h.coord.a11y_tree();
+    let node = tree_a11y.nodes().iter().find(|n| n.id == wid).expect("a11y node");
+    assert_eq!((node.role, node.name.as_str()), (uzor::a11y::A11yRole::Slider, "Цена"));
+    // Next frame: focused, an arrow key, the drag moved.
+    v.focused = Some(wid.clone());
+    v.pointer = Some((130.0, 150.0));
+    v.scroll = (0.0, 0.0);
+    v.captured_gestures.clear();
+    let key = KeyInput { code: uzor::input::KeyCode::ArrowRight, text: None, state: crate::KeyState::Down, mods: Default::default() };
+    let r = h.frame(&v, |cx| dom(area, &sheet, tree()).slot_registry(&mut reg).key(Some(&key)).build(cx));
+    assert!(r.key_used);
+    let c = reg.get::<Chart>("chart").unwrap();
+    assert_eq!(
+        &c.events[4..],
+        &[
+            SlotEvent::Focus(true),
+            SlotEvent::Move { x: 130.0, y: 150.0 },
+            SlotEvent::Drag { x: 130.0, y: 150.0, dx: 10.0, dy: 0.0 },
+            SlotEvent::Key { code: uzor::input::KeyCode::ArrowRight, text: None },
+        ]
+    );
+}
+
 #[test]
 fn dom_search_bar_and_virtual_list_are_live_controls() {
     use uzor::ui::dom::{Edit, El};

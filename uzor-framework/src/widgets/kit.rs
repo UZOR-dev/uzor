@@ -1774,6 +1774,7 @@ pub struct DomBuilder<'a> {
     scroll: f64,
     viewport: Option<Rect>,
     slots: Option<&'a mut dyn FnMut(&mut dyn RenderContext, &SlotFrame<'_>)>,
+    registry: Option<&'a mut uzor::ui::dom::SlotRegistry>,
     numbers: Vec<(String, uzor::ui::domkit::NumberSpec)>,
     key: Option<&'a KeyInput>,
     /// Framework-owned `overflow: auto | scroll` containers ([`DomBuilder::dom_scroll`]).
@@ -1858,8 +1859,12 @@ pub struct DomResponse {
     /// an id, after [`DomBuilder::dom_scroll`]) and their `scrollTop` after this frame,
     /// in tree order. Empty when that opt-in is off.
     pub scrolls: Vec<(String, f64)>,
-    /// The key given to [`DomBuilder::key`] was used (an arrow key stepped a number field).
+    /// The key given to [`DomBuilder::key`] was used (an arrow key stepped a number field,
+    /// or a focused registered paint slot got it).
     pub key_used: bool,
+    /// What the registered slot painters reported this frame
+    /// ([`DomBuilder::slot_registry`]), in paint order.
+    pub slot_actions: Vec<uzor::ui::dom::SlotAction>,
 }
 
 /// The scroll state of one framework-owned DOM scroll container.
@@ -1915,7 +1920,7 @@ pub fn dom_scroll_top<'c, C: ContentCx<'c>>(cx: &mut C, id: &str) -> f64 {
 ///
 /// [`El::name`]: uzor::ui::dom::El::name
 pub fn dom<'a>(rect: Rect, sheet: &'a uzor::ui::style::Sheet, root: uzor::ui::dom::El) -> DomBuilder<'a> {
-    DomBuilder { rect, sheet, root, scroll: 0.0, viewport: None, slots: None, numbers: Vec::new(), key: None, own_scroll: false }
+    DomBuilder { rect, sheet, root, scroll: 0.0, viewport: None, slots: None, registry: None, numbers: Vec::new(), key: None, own_scroll: false }
 }
 
 impl<'a> DomBuilder<'a> {
@@ -1935,6 +1940,17 @@ impl<'a> DomBuilder<'a> {
     /// ([`uzor::ui::dom::El::paint_slot`]) also gets the gestures it captured.
     pub fn paint_slots(mut self, paint: &'a mut dyn FnMut(&mut dyn RenderContext, &SlotFrame<'_>)) -> Self {
         self.slots = Some(paint);
+        self
+    }
+    /// Paint slots by registered painters ([`uzor::ui::dom::SlotRegistry`]): a slot
+    /// whose key has a painter is painted by it in paint order, gets its pointer, drag,
+    /// wheel, click, gestures and (when focused) the [`DomBuilder::key`] as
+    /// [`uzor::ui::dom::SlotEvent`]s in slot-local coordinates, is a Tab stop when the
+    /// painter is focusable, and takes the painter's accessible name and role. What the
+    /// painters return is [`DomResponse::slot_actions`]. Slots without a painter still go
+    /// to [`DomBuilder::paint_slots`], if given.
+    pub fn slot_registry(mut self, reg: &'a mut uzor::ui::dom::SlotRegistry) -> Self {
+        self.registry = Some(reg);
         self
     }
 
@@ -1969,9 +1985,9 @@ impl<'a> DomBuilder<'a> {
         let now_ms = cx.time_ms();
         let frame_now = cx.frame_now_ms();
         let overlay = cx.is_overlay();
-        let DomBuilder { rect, sheet, mut root, scroll, viewport, slots, numbers, key, own_scroll } = self;
+        let DomBuilder { rect, sheet, mut root, scroll, viewport, slots, registry, numbers, key, own_scroll } = self;
         let (resp, ime, more) = cx.with_paint(|render, widgets, v, _| {
-            build_paint(render, widgets, v, now_ms, frame_now, overlay, rect, sheet, &mut root, scroll, viewport, slots, &numbers, key, own_scroll)
+            build_paint(render, widgets, v, now_ms, frame_now, overlay, rect, sheet, &mut root, scroll, viewport, slots, registry, &numbers, key, own_scroll)
         });
         if let Some(at) = ime {
             cx.ime_area(at);
@@ -2001,6 +2017,7 @@ fn build_paint(
     scroll: f64,
     viewport: Option<Rect>,
     mut slots: Option<&mut dyn FnMut(&mut dyn RenderContext, &SlotFrame<'_>)>,
+    mut registry: Option<&mut uzor::ui::dom::SlotRegistry>,
     numbers: &[(String, uzor::ui::domkit::NumberSpec)],
     key: Option<&KeyInput>,
     own_scroll: bool,
@@ -2194,22 +2211,42 @@ fn build_paint(
     render.begin_path();
     render.rect(rect.x, rect.y, rect.width, rect.height);
     render.clip();
-    match slots.as_mut() {
-        Some(paint) => {
-            uzor::ui::dom::paint_slots(render, &d, &mut |ctx, key, content| {
-                let id = d.boxes.iter().find(|b| b.slot.as_deref() == Some(key)).and_then(|b| b.id.as_deref()).unwrap_or(key);
-                let wid = WidgetId::from(id);
-                let (pressed, wheel) = slot_mouse(v, &wid);
-                let frame = SlotFrame { key, rect: content, gestures: v.captured_gestures(&wid), pointer: v.pointer_over(&wid), clicked: v.clicked(&wid), pressed, wheel };
-                ctx.save();
-                ctx.begin_path();
-                ctx.rect(content.x, content.y, content.width, content.height);
-                ctx.clip();
-                paint(ctx, &frame);
-                ctx.restore();
-            });
-        }
-        None => uzor::ui::dom::paint(render, &d),
+    let key_in = key;
+    let mut slot_actions = Vec::new();
+    let mut slot_key_used = false;
+    if slots.is_some() || registry.is_some() {
+        uzor::ui::dom::paint_slots(render, &d, &mut |ctx, key, content| {
+            let id = d.boxes.iter().find(|b| b.slot.as_deref() == Some(key)).and_then(|b| b.id.as_deref()).unwrap_or(key);
+            let wid = WidgetId::from(id);
+            let (pressed, wheel) = slot_mouse(v, &wid);
+            if let Some(reg) = registry.as_deref_mut().filter(|r| r.contains(key)) {
+                let focused = v.is_focused(&wid);
+                let input = uzor::ui::dom::SlotInput {
+                    pointer: v.pointer_over(&wid),
+                    pressed,
+                    clicked: v.clicked(&wid),
+                    wheel,
+                    focused,
+                    key: if focused { key_code(key_in) } else { None },
+                    events: v.captured_gestures(&wid).iter().filter_map(|g| slot_gesture(g, content)).collect(),
+                };
+                slot_key_used |= input.key.is_some();
+                slot_actions.extend(reg.input(key, content, &input));
+                let style = d.boxes.iter().find(|b| b.slot.as_deref() == Some(key)).map(|b| &b.style);
+                reg.paint_slot(ctx, key, content, style);
+                return;
+            }
+            let Some(paint) = slots.as_mut() else { return };
+            let frame = SlotFrame { key, rect: content, gestures: v.captured_gestures(&wid), pointer: v.pointer_over(&wid), clicked: v.clicked(&wid), pressed, wheel };
+            ctx.save();
+            ctx.begin_path();
+            ctx.rect(content.x, content.y, content.width, content.height);
+            ctx.clip();
+            paint(ctx, &frame);
+            ctx.restore();
+        });
+    } else {
+        uzor::ui::dom::paint(render, &d);
     }
     render.restore();
     coord.set_default_layer(Some(layer.clone()));
@@ -2252,7 +2289,9 @@ fn build_paint(
                 ime = b.caret_rect();
             }
         } else if b.tab || b.id.is_some() {
-            let mut sense = if b.tab { focusable() } else { Sense::CLICK | Sense::HOVER };
+            let painter = b.slot.as_deref().and_then(|k| registry.as_deref().and_then(|r| r.painter(k)));
+            let tab = b.tab || painter.is_some_and(|p| p.focusable());
+            let mut sense = if tab { focusable() } else { Sense::CLICK | Sense::HOVER };
             if b.slot.is_some() && b.captures_touch() {
                 // A paint slot (a chart): its fingers, and the mouse drag and
                 // wheel too (`SlotFrame::pressed`, `SlotFrame::wheel`).
@@ -2265,11 +2304,20 @@ fn build_paint(
             if scrollers.iter().any(|(i, _, _, _)| i == id) {
                 sense = sense.union(Sense::SCROLL);
             }
-            coord.register_atomic(wid.clone(), WidgetKind::Button, vis, sense, layer);
+            if painter.is_some_and(|p| p.focusable()) {
+                // Arrows and the like reach the painter (with `DomBuilder::key`).
+                sense = sense.with_keyboard();
+            }
+            let kind = painter.map_or(WidgetKind::Button, |p| slot_widget_kind(p.role()));
+            let name = painter.and_then(|p| p.name()).unwrap_or(name);
+            coord.register_atomic(wid.clone(), kind, vis, sense, layer);
             coord.set_a11y(&wid, &name, b.control.as_ref().and_then(Control::checked));
         }
     }
     coord.set_default_layer(None);
+    if registry.as_deref().is_some_and(|r| r.wants_frame()) {
+        more = true;
+    }
     // Thumbs over the content, and this frame's entries in the scroll chain.
     render.save();
     render.begin_path();
@@ -2295,7 +2343,61 @@ fn build_paint(
             None => edited.push((id, text)),
         }
     }
-    (DomResponse { dom: d, clicked, captured, hovered, focused, edited, scrolls, key_used }, ime, more)
+    let key_used = key_used || slot_key_used;
+    (DomResponse { dom: d, clicked, captured, hovered, focused, edited, scrolls, key_used, slot_actions }, ime, more)
+}
+
+/// A key press as a slot sees it.
+fn key_code(k: Option<&KeyInput>) -> Option<(uzor::input::KeyCode, Option<String>)> {
+    k.map(|k| (k.code, k.text.clone()))
+}
+
+/// A captured gesture (window coordinates) as a slot event (slot-local).
+fn slot_gesture(g: &crate::types::gesture::Gesture, r: Rect) -> Option<uzor::ui::dom::SlotEvent> {
+    use crate::types::gesture::Gesture as G;
+    use uzor::ui::dom::SlotEvent as E;
+    let l = |p: &crate::types::window::Point| (p.x - r.x, p.y - r.y);
+    Some(match g {
+        G::Pan { pos, delta, .. } | G::LongPressDrag { pos, delta } => {
+            let (x, y) = l(pos);
+            E::Pan { x, y, dx: delta.0, dy: delta.1 }
+        }
+        G::PanEnd { pos, .. } | G::LongPressEnd { pos } => {
+            let (x, y) = l(pos);
+            E::PanEnd { x, y }
+        }
+        G::Pinch { center, scale } => {
+            let (x, y) = l(center);
+            E::Pinch { x, y, scale: *scale }
+        }
+        G::PinchPan { center, delta, .. } => {
+            let (x, y) = l(center);
+            E::PinchPan { x, y, dx: delta.0, dy: delta.1 }
+        }
+        G::PinchEnd { scale } => E::PinchEnd { scale: *scale },
+        G::LongPress { pos } => {
+            let (x, y) = l(pos);
+            E::LongPress { x, y }
+        }
+        G::DoubleTap { pos } => {
+            let (x, y) = l(pos);
+            E::DoubleTap { x, y }
+        }
+        // A tap is the slot's click; a pan's start is its first `Pan`.
+        G::Tap { .. } | G::PanStart { .. } | G::Swipe { .. } => return None,
+    })
+}
+
+/// The widget kind (and so the platform accessibility role) of a registered paint
+/// slot with ARIA role `role`.
+fn slot_widget_kind(role: &str) -> WidgetKind {
+    match role {
+        "slider" => WidgetKind::Slider,
+        "checkbox" => WidgetKind::Checkbox,
+        "switch" => WidgetKind::Toggle,
+        "link" => WidgetKind::Link,
+        _ => WidgetKind::Button,
+    }
 }
 
 // -- custom-paint slots outside a DOM tree --------------------------------------

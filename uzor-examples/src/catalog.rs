@@ -137,6 +137,17 @@ pub const EXAMPLES: &[Example] = &[
         args: &["uzor-tray-widgets"],
     },
     Example {
+        name: "Paint slot frames",
+        bin: "dom-slots-frames",
+        path: "uzor-examples/src/dom_slots.rs",
+        kind: Kind::Offscreen,
+        icon: icons::DOWNLOAD,
+        blurb: "Slots painted and driven by registered painters, rendered to PNG on the CPU.",
+        shows: &["SlotRegistry: a painter per slot key", "A sparkline that tracks the pointer, a dial on wheel, drag and keys", "Slot a11y role and name from the painter", "Dark / light from the sheet, RU / EN"],
+        cmd: "cargo run -p uzor-examples --release --features png --bin dom-slots-frames -- out",
+        args: &["uzor-dom-slots"],
+    },
+    Example {
         name: "Framework demo",
         bin: "demo_native",
         path: "uzor-framework/examples/demo",

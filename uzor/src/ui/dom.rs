@@ -66,6 +66,9 @@ use crate::ui::flow::{layout_in, LBox, Laid};
 use crate::ui::style::{apply_decl, Node, Sheet, State, Style, StyleField};
 use crate::ui::widgets::composite::dialog::{fill_round_rect, path_round_rect, Shadow};
 
+mod slots;
+pub use slots::{SlotAction, SlotEvent, SlotInput, SlotPaint, SlotPainter, SlotRegistry, SlotValue};
+
 /// One element: `spec` is `kind#id.class.class` as in a selector (`div.card`, `button.pbtn`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct El {

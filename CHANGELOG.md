@@ -2,6 +2,31 @@
 
 All crates in the workspace share one version.
 
+## Unreleased
+
+### Paint slots by registered painters (`uzor`, `uzor-framework`)
+
+- `uzor::ui::dom::SlotPainter`: what paints a paint slot (`paint`), handles its
+  input (`event` -> `Option<SlotAction>`) and names it for accessibility (`role`,
+  `name`, `focusable`). `SlotRegistry` holds painters by slot key (exact keys, or a
+  prefix for a list of slots; exact wins, then the longest prefix), lives in the
+  app's state across frames, paints a tree (`paint`), turns a host's per-frame
+  `SlotInput` into slot-local `SlotEvent`s (enter, move, leave, down, drag, up,
+  click, wheel, pan, pinch, long press, double tap, key, focus) and overrides the
+  slot's role and name in `Dom::a11y` (`SlotRegistry::a11y`). `SlotPaint` carries
+  the slot element's resolved style, so painters take their colours from the sheet
+  (`SlotPaint::color`, `SlotPaint::var`).
+- `kit::DomBuilder::slot_registry`: a slot with a painter is painted by it in paint
+  order, gets its pointer, mouse drag, wheel, click, captured gestures and (when
+  focused) `DomBuilder::key`; a focusable painter makes the slot a Tab stop with
+  keyboard sense; the painter's name and role (`slider`, `checkbox`, `switch`,
+  `link`, else button) reach the platform accessibility tree. Painter actions come
+  back in `DomResponse::slot_actions`. Slots without a painter still go to
+  `DomBuilder::paint_slots`. Nothing changes for trees that do not use it.
+- Example `dom-slots-frames` (`uzor-examples`, feature `png`): a sparkline that
+  tracks the pointer and a dial on wheel, drag and arrow keys, dark and light, RU and
+  EN; CPU reference renders in `uzor-examples/tests/dom_slots_frames.rs`.
+
 ## 1.5.38
 
 ### DOM `scrollbar-width: none` (`uzor`, `uzor-framework`)
