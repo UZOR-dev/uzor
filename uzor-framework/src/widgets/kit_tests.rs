@@ -777,6 +777,31 @@ fn overflow_auto_stays_the_apps_unless_dom_scroll_is_on() {
     assert_eq!(r.scrolls, vec![("list".to_string(), 80.0)]);
 }
 
+/// `scrollbar-width: none` on a framework-owned scroll container: no thumb or track is
+/// painted or registered (the app draws its own bar), and the wheel still scrolls it.
+#[test]
+fn dom_scroll_scrollbar_width_none_hides_the_bar_only() {
+    use uzor::ui::dom::El;
+    let sheet = uzor::ui::style::Sheet::parse("div.bare { scrollbar-width: none }").unwrap();
+    let rows = |pre: &str| (0..10).map(|i| El::new("div").id(format!("{pre}{i}")).css("height: 30px")).collect::<Vec<_>>();
+    let tree = || {
+        El::new("div")
+            .css("height: 400px")
+            .child(El::new("div").id("plain").css("height: 100px; overflow: auto").children(rows("p")))
+            .child(El::new("div.bare").id("bare").css("height: 100px; overflow: auto").children(rows("b")))
+    };
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let panel = Rect::new(0.0, 0.0, 800.0, 400.0);
+    let mut v = VisualView::<K>::default();
+    v.pointer = Some((50.0, 150.0));
+    v.scroll = (0.0, -2.0);
+    let r = h.frame(&v, |cx| dom(panel, &sheet, tree()).dom_scroll().build(cx));
+    assert_eq!(r.scrolls, vec![("plain".to_string(), 0.0), ("bare".to_string(), 80.0)], "the bar-less box scrolls");
+    assert!(h.coord.widget_rect(&WidgetId::from("plain:thumb")).is_some(), "the host's bar by default");
+    assert!(h.coord.widget_rect(&WidgetId::from("bare:thumb")).is_none() && h.coord.widget_rect(&WidgetId::from("bare:track")).is_none());
+    assert_eq!(r.dom.get("bare").unwrap().style.scrollbar_width.as_deref(), Some("none"));
+}
+
 /// A DOM number field: the steppers, the arrow keys and the wheel over the focused field
 /// step it on the spec's grid, a paste keeps only what may be typed, and blur tidies it.
 #[test]

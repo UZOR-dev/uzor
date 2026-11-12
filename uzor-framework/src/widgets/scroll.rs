@@ -189,7 +189,8 @@ pub(crate) fn begin_parts(
 }
 
 /// The output half on the frame's pieces: joins the chain, registers the track and thumb
-/// above the content and paints the thumb (nothing when the content fits).
+/// above the content and paints the thumb (nothing when the content fits, or with
+/// `bar` off: a DOM container with `scrollbar-width: none`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn end_parts(
     widgets: &mut crate::handle::Widgets<'_>,
@@ -201,8 +202,12 @@ pub(crate) fn end_parts(
     sv: &ScrollView,
     st: &ScrollStyle,
     overlay: bool,
+    bar: bool,
 ) {
     chain(widgets.states, now).cur.push((id.to_string(), viewport, sv.can_scroll(1.0), sv.can_scroll(-1.0), overlay, sv.overscroll.chains()));
+    if !bar {
+        return;
+    }
     let track = sv.track(viewport, st);
     let Some(th) = sv.thumb(track, st) else { return };
     let (thumb_id, track_id) = ids(id);
@@ -236,7 +241,7 @@ pub fn $begin<S: Spec>(cx: &mut $cx<'_, S>, id: &str, viewport: Rect, sv: &mut S
 /// the thumb (nothing when the content fits).
 pub fn $end<S: Spec>(cx: &mut $cx<'_, S>, id: &str, viewport: Rect, sv: &ScrollView, st: &ScrollStyle) {
     let now = cx.time.now.0 * 1000.0;
-    end_parts(&mut cx.widgets, &mut *cx.render, cx.view, now, id, viewport, sv, st, $overlay);
+    end_parts(&mut cx.widgets, &mut *cx.render, cx.view, now, id, viewport, sv, st, $overlay, true);
 }
 
     };

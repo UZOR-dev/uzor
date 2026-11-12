@@ -1,7 +1,9 @@
 //! DOM scroll containers the framework scrolls (opt in with [`kit::DomBuilder::dom_scroll`]):
 //! a page and a long list inside it, both plain `overflow: auto` elements with ids. Wheel, touchpad, a finger, the thumb and
 //! keyboard steps move them; the list chains to the page at its ends. The app keeps no
-//! scroll state: it reads the offsets back from `DomResponse::scrolls`.
+//! scroll state: it reads the offsets back from `DomResponse::scrolls`. The second list
+//! has `scrollbar-width: none`: it scrolls the same, and its bar is the app's own (a
+//! plain div placed from the offset).
 //!
 //! ```text
 //! cargo run -p uzor-framework --example dom_scroll --features native
@@ -55,6 +57,9 @@ div.page { height: 100%; overflow: auto; padding: 24px; display: flex; flex-dire
 div.note { color: var(--k-muted) }
 div.list { height: 320px; overflow: auto; border: 1px solid var(--k-line); border-radius: 8px; flex-shrink: 0 }
 div.row { height: 32px; padding: 0px 12px; display: flex; align-items: center; border-bottom: 1px solid var(--k-line) }
+div.bare { scrollbar-width: none }
+div.own-wrap { position: relative; height: 160px; flex-shrink: 0 }
+div.own-bar { position: absolute; right: 2px; width: 4px; border-radius: 2px; background: var(--k-accent) }
 div.block { height: 120px; border-radius: 8px; background: var(--k-panel); flex-shrink: 0 }
 "#;
 
@@ -84,6 +89,15 @@ impl App for Demo {
         page = page.child(El::new("h2").text("Scroll containers"));
         page = page.child(El::new("div.note").text(format!("page {:.0}px · list {:.0}px", at("page"), at("list"))));
         page = page.child(El::new("div.list").id("list").children((0..200).map(|i| El::new("div.row").text(format!("Row {}", i + 1)))));
+        // 50 rows of 32 px in a 160 px box (158 inside its border): the bar from the offset.
+        let (content, view) = (50.0 * 32.0, 158.0);
+        let thumb = view * view / content;
+        let top = at("bare") / (content - view) * (view - thumb);
+        page = page.child(
+            El::new("div.own-wrap")
+                .child(El::new("div.list.bare").id("bare").css("height: 160px").children((0..50).map(|i| El::new("div.row").text(format!("Own bar {}", i + 1)))))
+                .child(El::new("div.own-bar").css(format!("top: {top}px; height: {thumb}px"))),
+        );
         for _ in 0..8 {
             page = page.child(El::new("div.block"));
         }

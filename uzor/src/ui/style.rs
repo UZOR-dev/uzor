@@ -192,6 +192,10 @@ pub struct Style {
     /// `overflow` (`hidden` / `clip` / `auto` / `scroll` clip descendants to the padding
     /// box; scrolling itself is the host's, see [`crate::ui::dom::Dom::moved`]).
     pub overflow: Option<String>,
+    /// `scrollbar-width` (not inherited): `none` hides the scrollbar of a scroll
+    /// container the host scrolls (the wheel, touch and keys still move it), for an app
+    /// that draws its own bar; unset / `auto` / `thin` keep the host's.
+    pub scrollbar_width: Option<String>,
     /// `shape-rendering` (inherited, as in SVG): `geometricPrecision` draws an element's
     /// [`crate::ui::dom::El::svg`] icon exactly (no pixel-grid snapping of its origin or
     /// strokes); unset / `auto` / `crispEdges` snap for crispness.
@@ -1012,6 +1016,7 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         "overflow-wrap" | "word-wrap" => s.overflow_wrap = Some(v.trim().into()),
         "overflow" | "overflow-x" | "overflow-y" => s.overflow = Some(v.split_whitespace().next().unwrap_or("visible").into()),
         "shape-rendering" => s.shape_rendering = Some(v.trim().into()),
+        "scrollbar-width" => s.scrollbar_width = Some(v.trim().into()),
         "font-size" => s.font_size = px(v),
         "font-weight" => {
             s.font_weight = match v {

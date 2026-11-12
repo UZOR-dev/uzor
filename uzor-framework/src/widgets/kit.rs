@@ -2156,7 +2156,8 @@ fn build_paint(
     };
     let mut d = lay(render, root);
     let mut more = false;
-    let mut scrollers: Vec<(String, Rect, crate::types::scroll::ScrollView)> = Vec::new();
+    // (id, visible viewport, scroll view, whether the host paints its bar)
+    let mut scrollers: Vec<(String, Rect, crate::types::scroll::ScrollView, bool)> = Vec::new();
     let sst = crate::types::scroll::ScrollStyle::default();
     if own_scroll {
         // (id, viewport, scroll view) of each owned container, tree order.
@@ -2178,9 +2179,10 @@ fn build_paint(
             sv.set_extent(b.scroll_height, pad.height);
             sv.offset = sv.offset.clamp(0.0, sv.max());
             widgets.states.get_or_insert_with(dom_scroll_key(id), DomScroll::default).sv = sv.clone();
-            scrollers.push((id.to_string(), vis, sv));
+            let bar = b.style.scrollbar_width.as_deref() != Some("none");
+            scrollers.push((id.to_string(), vis, sv, bar));
         }
-        let now_offs: Vec<(String, f64)> = scrollers.iter().map(|(i, _, sv)| (i.clone(), sv.offset)).collect();
+        let now_offs: Vec<(String, f64)> = scrollers.iter().map(|(i, _, sv, _)| (i.clone(), sv.offset)).collect();
         let changed = now_offs.iter().any(|(i, y)| offs.iter().find(|(j, _)| j == i).map_or(*y != 0.0, |(_, o)| (o - y).abs() > 0.01));
         if changed {
             apply(root, &now_offs);
@@ -2260,7 +2262,7 @@ fn build_paint(
                 // (`VisualView::captured_gestures`).
                 sense = sense.with_touch().with_gesture();
             }
-            if scrollers.iter().any(|(i, _, _)| i == id) {
+            if scrollers.iter().any(|(i, _, _, _)| i == id) {
                 sense = sense.union(Sense::SCROLL);
             }
             coord.register_atomic(wid.clone(), WidgetKind::Button, vis, sense, layer);
@@ -2273,8 +2275,8 @@ fn build_paint(
     render.begin_path();
     render.rect(rect.x, rect.y, rect.width, rect.height);
     render.clip();
-    for (id, vis, sv) in &scrollers {
-        crate::widgets::scroll::end_parts(widgets, render, v, frame_now, id, *vis, sv, &sst, overlay);
+    for (id, vis, sv, bar) in &scrollers {
+        crate::widgets::scroll::end_parts(widgets, render, v, frame_now, id, *vis, sv, &sst, overlay, *bar);
     }
     render.restore();
     let ids: Vec<&str> = d.boxes.iter().rev().filter_map(|b| b.id.as_deref()).collect();
@@ -2285,7 +2287,7 @@ fn build_paint(
         .touch_targets()
         .flat_map(|(id, _)| v.captured_gestures(&WidgetId::from(id)).into_iter().map(move |g| (id.to_string(), g)))
         .collect();
-    let scrolls = scrollers.into_iter().map(|(i, _, sv)| (i, sv.offset)).collect();
+    let scrolls = scrollers.into_iter().map(|(i, _, sv, _)| (i, sv.offset)).collect();
     // A number field's change counts even when the app's tree already shows it.
     for (id, text) in num_edits {
         match edited.iter_mut().find(|(i, _)| *i == id) {
