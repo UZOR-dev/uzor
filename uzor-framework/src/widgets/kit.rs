@@ -1753,6 +1753,19 @@ mod tests;
 
 // -- DOM trees ----------------------------------------------------------------
 
+/// Sense of a custom-paint slot: clicks, hover, the mouse drag and the wheel, and it
+/// captures its fingers (`Sense::touch` + gestures).
+fn paint_slot_sense() -> Sense {
+    Sense::CLICK_AND_DRAG.union(Sense::SCROLL).with_touch().with_gesture()
+}
+
+/// The mouse part of a slot frame for `wid`: the held pointer and the wheel.
+fn slot_mouse<S: crate::Spec>(v: &crate::VisualView<S>, wid: &WidgetId) -> (Option<(f64, f64)>, (f64, f64)) {
+    let pressed = if v.is_pressed(wid) && !v.coarse_pointer() { v.raw_pointer() } else { None };
+    let wheel = if v.scroll_touch() { (0.0, 0.0) } else { v.scroll_over(wid) };
+    (pressed, wheel)
+}
+
 /// A DOM tree ([`uzor::ui::dom`]) inside a kit panel. Start with [`dom`].
 pub struct DomBuilder<'a> {
     rect: Rect,
@@ -1780,6 +1793,12 @@ pub struct SlotFrame<'k> {
     pub pointer: Option<(f64, f64)>,
     /// The slot was clicked or tapped this frame.
     pub clicked: bool,
+    /// The pointer while a mouse button holds the slot (a mouse drag), `None` otherwise.
+    /// Fingers never set it: their drags are [`SlotFrame::gestures`].
+    pub pressed: Option<(f64, f64)>,
+    /// Mouse-wheel / trackpad scroll over the slot this frame, `(dx, dy)`; a finger's
+    /// scroll is not reported here.
+    pub wheel: (f64, f64),
 }
 
 impl SlotFrame<'_> {
@@ -1915,7 +1934,8 @@ impl<'a> DomBuilder<'a> {
                     uzor::ui::dom::paint_slots(render, &d, &mut |ctx, key, content| {
                         let id = d.boxes.iter().find(|b| b.slot.as_deref() == Some(key)).and_then(|b| b.id.as_deref()).unwrap_or(key);
                         let wid = WidgetId::from(id);
-                        let frame = SlotFrame { key, rect: content, gestures: v.captured_gestures(&wid), pointer: v.pointer_over(&wid), clicked: v.clicked(&wid) };
+                        let (pressed, wheel) = slot_mouse(v, &wid);
+                        let frame = SlotFrame { key, rect: content, gestures: v.captured_gestures(&wid), pointer: v.pointer_over(&wid), clicked: v.clicked(&wid), pressed, wheel };
                         ctx.save();
                         ctx.begin_path();
                         ctx.rect(content.x, content.y, content.width, content.height);
@@ -1964,7 +1984,11 @@ impl<'a> DomBuilder<'a> {
                     }
                 } else if b.tab || b.id.is_some() {
                     let mut sense = if b.tab { focusable() } else { Sense::CLICK | Sense::HOVER };
-                    if b.captures_touch() {
+                    if b.slot.is_some() && b.captures_touch() {
+                        // A paint slot (a chart): its fingers, and the mouse drag and
+                        // wheel too (`SlotFrame::pressed`, `SlotFrame::wheel`).
+                        sense = sense.union(paint_slot_sense());
+                    } else if b.captures_touch() {
                         // `touch-action: none`: the element takes its fingers whole
                         // (`VisualView::captured_gestures`).
                         sense = sense.with_touch().with_gesture();
@@ -2010,6 +2034,10 @@ pub struct SlotResponse {
     pub pointer: Option<(f64, f64)>,
     /// Clicked or tapped.
     pub clicked: bool,
+    /// The pointer while a mouse button holds the slot ([`SlotFrame::pressed`]).
+    pub pressed: Option<(f64, f64)>,
+    /// Wheel scroll over the slot this frame ([`SlotFrame::wheel`]).
+    pub wheel: (f64, f64),
 }
 
 /// A custom-paint slot `id` at `rect`: registered as a click target that captures touch
@@ -2027,15 +2055,16 @@ impl PaintSlot<'_> {
         cx.with_paint(|render, widgets, v, _| {
             let (coord, _, layer) = parts(widgets);
             let wid = WidgetId::from(id);
-            coord.register_atomic(wid.clone(), WidgetKind::Button, rect, (Sense::CLICK | Sense::HOVER).with_touch().with_gesture(), layer);
-            let frame = SlotFrame { key: id, rect, gestures: v.captured_gestures(&wid), pointer: v.pointer_over(&wid), clicked: v.clicked(&wid) };
+            coord.register_atomic(wid.clone(), WidgetKind::Button, rect, paint_slot_sense(), layer);
+            let (pressed, wheel) = slot_mouse(v, &wid);
+            let frame = SlotFrame { key: id, rect, gestures: v.captured_gestures(&wid), pointer: v.pointer_over(&wid), clicked: v.clicked(&wid), pressed, wheel };
             render.save();
             render.begin_path();
             render.rect(rect.x, rect.y, rect.width, rect.height);
             render.clip();
             paint(render, &frame);
             render.restore();
-            SlotResponse { gestures: frame.gestures, pointer: frame.pointer, clicked: frame.clicked }
+            SlotResponse { gestures: frame.gestures, pointer: frame.pointer, clicked: frame.clicked, pressed: frame.pressed, wheel: frame.wheel }
         })
     }
 }

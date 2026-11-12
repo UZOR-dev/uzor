@@ -652,6 +652,37 @@ fn standalone_paint_slot_captures_and_reports() {
     assert_eq!(h.coord.touch_capture_at(100.0, 100.0), Some(WidgetId::from("book")));
 }
 
+/// A chart in a DOM tree on a desktop: the paint slot takes the mouse drag and the
+/// wheel as well as its fingers, and its frame reports them.
+#[test]
+fn paint_slot_takes_the_mouse_drag_and_the_wheel() {
+    use uzor::ui::dom::El;
+    let sheet = uzor::ui::style::Sheet::parse(domkit::KIT_CSS).unwrap();
+    let tree = || El::new("div").css("height: 400px").child(El::new("div").paint_slot("chart").css("height: 300px"));
+    let mut v = VisualView::<K>::default();
+    v.pressed = Some(WidgetId::from("chart"));
+    v.hovered = Some(WidgetId::from("chart"));
+    v.pointer = Some((120.0, 150.0));
+    v.scroll = (0.0, 2.0);
+    let mut h = Harness { keep_coord: true, ..Default::default() };
+    let seen = std::cell::Cell::new(None);
+    let mut painter = |_: &mut dyn uzor::render::RenderContext, f: &SlotFrame<'_>| seen.set(Some((f.pressed, f.wheel, f.pointer)));
+    h.frame(&v, |cx| dom(Rect::new(0.0, 0.0, 800.0, 400.0), &sheet, tree()).paint_slots(&mut painter).build(cx));
+    assert_eq!(seen.get(), Some((Some((120.0, 150.0)), (0.0, 2.0), Some((120.0, 150.0)))));
+    let sense = h.coord.widget_sense(&WidgetId::from("chart")).expect("registered");
+    assert!(sense.drag && sense.scroll && sense.click && sense.touch && sense.gesture, "{sense:?}");
+    // A finger's scroll is not a wheel; a finger never presses like a mouse.
+    v.scroll_touch = true;
+    v.coarse_pointer = true;
+    h.frame(&v, |cx| dom(Rect::new(0.0, 0.0, 800.0, 400.0), &sheet, tree()).paint_slots(&mut painter).build(cx));
+    assert_eq!(seen.get().map(|s| (s.0, s.1)), Some((None, (0.0, 0.0))));
+    // The standalone slot too.
+    let r = h.frame(&VisualView::<K> { pressed: Some(WidgetId::from("book")), pointer: Some((30.0, 40.0)), ..Default::default() }, |cx| paint_slot("book", Rect::new(10.0, 20.0, 300.0, 200.0)).paint(cx, |_, _| {}));
+    assert_eq!(r.pressed, Some((30.0, 40.0)));
+    let sense = h.coord.widget_sense(&WidgetId::from("book")).expect("registered");
+    assert!(sense.drag && sense.scroll && sense.touch);
+}
+
 #[test]
 fn dom_search_bar_and_virtual_list_are_live_controls() {
     use uzor::ui::dom::{Edit, El};
