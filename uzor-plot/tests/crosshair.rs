@@ -78,3 +78,18 @@ fn tooltip_flips_and_clamps() {
     let p = Crosshair::new().tooltip_position(0.0, false, (100.0, 50.0), size, (-10.0, -10.0));
     assert_eq!(p, (0.0, 0.0));
 }
+
+#[test]
+fn degenerate_spacing_and_area_do_not_panic() {
+    assert_eq!(CrosshairMode::StrongMagnet.snap_tolerance(f64::NAN), Some(20.0));
+    assert_eq!(CrosshairMode::WeakMagnet.snap_tolerance(f64::NAN), Some(10.0));
+    assert_eq!(CrosshairMode::StrongMagnet.snap_tolerance(f64::INFINITY), Some(80.0));
+    assert_eq!(CrosshairMode::WeakMagnet.snap_tolerance(-5.0), Some(10.0));
+    let c = at(CrosshairMode::Free, 100.0);
+    for area in [(0.0, 0.0), (f64::NAN, f64::NAN), (-10.0, -10.0)] {
+        let _ = c.tooltip_position(0.0, false, area, (50.0, 20.0), (8.0, 8.0));
+    }
+    let mut c = Crosshair::new();
+    c.update_clamped(0.0, 50.0, None, 0.0, 0.0, true, true, f64::NAN);
+    assert_eq!(c.y, 0.0);
+}

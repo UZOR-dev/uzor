@@ -30,8 +30,9 @@ impl CrosshairMode {
     }
 
     /// Snap distance in pixels for slots `spacing` px apart; `None` when the
-    /// mode does not snap.
+    /// mode does not snap. A `NaN` spacing gives the smallest distance.
     pub fn snap_tolerance(self, spacing: f64) -> Option<f64> {
+        let spacing = if spacing.is_nan() { 0.0 } else { spacing };
         match self {
             Self::StrongMagnet => Some((spacing * 0.4).clamp(20.0, 80.0)),
             Self::WeakMagnet => Some((spacing * 0.25).clamp(10.0, 50.0)),
