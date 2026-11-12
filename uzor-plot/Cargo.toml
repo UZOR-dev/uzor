@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Plot math for uzor: nice-step ticks, label precision, value scales (linear, log, percent, indexed), auto-range, time scales, viewport and crosshair models. No rendering, no DOM."
+readme = "README.md"
 keywords = ["chart", "scale", "ticks", "axis", "uzor"]
 categories = ["visualization", "mathematics"]
 
