@@ -1420,14 +1420,18 @@ impl TextRenderer for TinySkiaCpuRenderContext {
             let gw = metrics.width  as i32;
             let gh = metrics.height as i32;
 
+            // `as i32` saturates a far-off (or non-finite) pen; the adds below saturate
+            // too, so such a glyph lands outside the surface and is skipped instead of
+            // overflowing.
             let gx0 = (pen_x + metrics.xmin as f32).round() as i32;
             let gy0 = (pen_y - metrics.ymin as f32 - gh as f32).round() as i32;
+            let rows = if pen_x.is_finite() && pen_y.is_finite() { gh } else { 0 };
 
-            for row in 0..gh {
-                let py_coord = gy0 + row;
+            for row in 0..rows {
+                let py_coord = gy0.saturating_add(row);
                 if py_coord < 0 || py_coord >= ph { continue; }
                 for col in 0..gw {
-                    let px_coord = gx0 + col;
+                    let px_coord = gx0.saturating_add(col);
                     if px_coord < 0 || px_coord >= pw { continue; }
                     let mut coverage = bitmap[(row * gw + col) as usize];
                     if coverage == 0 { continue; }
