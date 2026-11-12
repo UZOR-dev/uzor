@@ -2,7 +2,7 @@
 
 All crates in the workspace share one version.
 
-## Unreleased
+## 1.5.39
 
 ### Raster images in the DOM (`uzor`)
 
