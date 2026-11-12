@@ -1774,7 +1774,7 @@ pub struct DomBuilder<'a> {
     scroll: f64,
     viewport: Option<Rect>,
     slots: Option<&'a mut dyn FnMut(&mut dyn RenderContext, &SlotFrame<'_>)>,
-    registry: Option<&'a mut uzor::ui::dom::SlotRegistry>,
+    registry: Option<&'a mut dyn SlotHooks>,
     numbers: Vec<(String, uzor::ui::domkit::NumberSpec)>,
     key: Option<&'a KeyInput>,
     /// Framework-owned `overflow: auto | scroll` containers ([`DomBuilder::dom_scroll`]).
@@ -1950,7 +1950,9 @@ impl<'a> DomBuilder<'a> {
     /// painters return is [`DomResponse::slot_actions`]. Slots without a painter still go
     /// to [`DomBuilder::paint_slots`], if given.
     pub fn slot_registry(mut self, reg: &'a mut uzor::ui::dom::SlotRegistry) -> Self {
-        self.registry = Some(reg);
+        // Through a trait object made only here: a tree that never calls this does
+        // not link the registry's dispatch (HQ's wasm stays as it was).
+        self.registry = Some(reg as &mut dyn SlotHooks);
         self
     }
 
@@ -2017,7 +2019,7 @@ fn build_paint(
     scroll: f64,
     viewport: Option<Rect>,
     mut slots: Option<&mut dyn FnMut(&mut dyn RenderContext, &SlotFrame<'_>)>,
-    mut registry: Option<&mut uzor::ui::dom::SlotRegistry>,
+    mut registry: Option<&mut dyn SlotHooks>,
     numbers: &[(String, uzor::ui::domkit::NumberSpec)],
     key: Option<&KeyInput>,
     own_scroll: bool,
@@ -2219,22 +2221,11 @@ fn build_paint(
             let id = d.boxes.iter().find(|b| b.slot.as_deref() == Some(key)).and_then(|b| b.id.as_deref()).unwrap_or(key);
             let wid = WidgetId::from(id);
             let (pressed, wheel) = slot_mouse(v, &wid);
-            if let Some(reg) = registry.as_deref_mut().filter(|r| r.contains(key)) {
-                let focused = v.is_focused(&wid);
-                let input = uzor::ui::dom::SlotInput {
-                    pointer: v.pointer_over(&wid),
-                    pressed,
-                    clicked: v.clicked(&wid),
-                    wheel,
-                    focused,
-                    key: if focused { key_code(key_in) } else { None },
-                    events: v.captured_gestures(&wid).iter().filter_map(|g| slot_gesture(g, content)).collect(),
-                };
-                slot_key_used |= input.key.is_some();
-                slot_actions.extend(reg.input(key, content, &input));
+            if let Some(reg) = registry.as_deref_mut() {
                 let style = d.boxes.iter().find(|b| b.slot.as_deref() == Some(key)).map(|b| &b.style);
-                reg.paint_slot(ctx, key, content, style);
-                return;
+                if reg.slot(ctx, v, &wid, key, content, style, key_in, &mut slot_actions, &mut slot_key_used) {
+                    return;
+                }
             }
             let Some(paint) = slots.as_mut() else { return };
             let frame = SlotFrame { key, rect: content, gestures: v.captured_gestures(&wid), pointer: v.pointer_over(&wid), clicked: v.clicked(&wid), pressed, wheel };
@@ -2289,8 +2280,8 @@ fn build_paint(
                 ime = b.caret_rect();
             }
         } else if b.tab || b.id.is_some() {
-            let painter = b.slot.as_deref().and_then(|k| registry.as_deref().and_then(|r| r.painter(k)));
-            let tab = b.tab || painter.is_some_and(|p| p.focusable());
+            let painter = b.slot.as_deref().and_then(|k| registry.as_deref().and_then(|r| r.info(k)));
+            let tab = b.tab || painter.as_ref().is_some_and(|p| p.0);
             let mut sense = if tab { focusable() } else { Sense::CLICK | Sense::HOVER };
             if b.slot.is_some() && b.captures_touch() {
                 // A paint slot (a chart): its fingers, and the mouse drag and
@@ -2304,12 +2295,14 @@ fn build_paint(
             if scrollers.iter().any(|(i, _, _, _)| i == id) {
                 sense = sense.union(Sense::SCROLL);
             }
-            if painter.is_some_and(|p| p.focusable()) {
+            if painter.as_ref().is_some_and(|p| p.0) {
                 // Arrows and the like reach the painter (with `DomBuilder::key`).
                 sense = sense.with_keyboard();
             }
-            let kind = painter.map_or(WidgetKind::Button, |p| slot_widget_kind(p.role()));
-            let name = painter.and_then(|p| p.name()).unwrap_or(name);
+            let (kind, name) = match painter {
+                Some((_, kind, pname)) => (kind, pname.unwrap_or(name)),
+                None => (WidgetKind::Button, name),
+            };
             coord.register_atomic(wid.clone(), kind, vis, sense, layer);
             coord.set_a11y(&wid, &name, b.control.as_ref().and_then(Control::checked));
         }
@@ -2347,9 +2340,68 @@ fn build_paint(
     (DomResponse { dom: d, clicked, captured, hovered, focused, edited, scrolls, key_used, slot_actions }, ime, more)
 }
 
-/// A key press as a slot sees it.
-fn key_code(k: Option<&KeyInput>) -> Option<(uzor::input::KeyCode, Option<String>)> {
-    k.map(|k| (k.code, k.text.clone()))
+/// What a [`dom`] tree needs from a [`uzor::ui::dom::SlotRegistry`]. A trait object
+/// built only by [`DomBuilder::slot_registry`], so trees that never call it do not
+/// link the registry.
+trait SlotHooks {
+    /// Feed slot `key` its input and paint it; `false` when nobody is registered.
+    #[allow(clippy::too_many_arguments)]
+    fn slot(
+        &mut self,
+        ctx: &mut dyn RenderContext,
+        v: &dyn crate::handle::VisualQuery,
+        wid: &WidgetId,
+        key: &str,
+        content: Rect,
+        style: Option<&uzor::ui::style::Style>,
+        key_in: Option<&KeyInput>,
+        actions: &mut Vec<uzor::ui::dom::SlotAction>,
+        key_used: &mut bool,
+    ) -> bool;
+    /// `(focusable, widget kind, name)` of `key`'s painter.
+    fn info(&self, key: &str) -> Option<(bool, WidgetKind, Option<String>)>;
+    fn wants_frame(&self) -> bool;
+}
+
+impl SlotHooks for uzor::ui::dom::SlotRegistry {
+    fn slot(
+        &mut self,
+        ctx: &mut dyn RenderContext,
+        v: &dyn crate::handle::VisualQuery,
+        wid: &WidgetId,
+        key: &str,
+        content: Rect,
+        style: Option<&uzor::ui::style::Style>,
+        key_in: Option<&KeyInput>,
+        actions: &mut Vec<uzor::ui::dom::SlotAction>,
+        key_used: &mut bool,
+    ) -> bool {
+        if !self.contains(key) {
+            return false;
+        }
+        let (pressed, wheel) = slot_mouse(v, wid);
+        let focused = v.is_focused(wid);
+        let input = uzor::ui::dom::SlotInput {
+            pointer: v.pointer_over(wid),
+            pressed,
+            clicked: v.clicked(wid),
+            wheel,
+            focused,
+            key: if focused { key_in.map(|k| (k.code, k.text.clone())) } else { None },
+            events: v.captured_gestures(wid).iter().filter_map(|g| slot_gesture(g, content)).collect(),
+        };
+        *key_used |= input.key.is_some();
+        actions.extend(self.input(key, content, &input));
+        self.paint_slot(ctx, key, content, style);
+        true
+    }
+    fn info(&self, key: &str) -> Option<(bool, WidgetKind, Option<String>)> {
+        let p = self.painter(key)?;
+        Some((p.focusable(), slot_widget_kind(p.role()), p.name()))
+    }
+    fn wants_frame(&self) -> bool {
+        uzor::ui::dom::SlotRegistry::wants_frame(self)
+    }
 }
 
 /// A captured gesture (window coordinates) as a slot event (slot-local).
