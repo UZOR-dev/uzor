@@ -406,20 +406,27 @@ mod linux {
                             return;
                         }
                     };
+                    // GTK calls these from C: a panic must not unwind out of them (that aborts
+                    // the process); logged once, the tray keeps running.
                     MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
-                        if let Some(id) = ids.get(&e.id) {
-                            let _ = ev_tx.send(TrayEvent::MenuClick(*id));
-                            crate::platform::wake();
-                        }
+                        let _ = super::super::tray_widget::guarded("tray menu", || {
+                            if let Some(id) = ids.get(&e.id) {
+                                let _ = ev_tx.send(TrayEvent::MenuClick(*id));
+                                crate::platform::wake();
+                            }
+                        });
                     }));
                     let _ = ready_tx.send(Ok(()));
                     gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
                         loop {
                             match cmd_rx.try_recv() {
                                 Ok(Cmd::Icon(i)) => {
-                                    if let Ok(i) = Icon::from_rgba(i.pixels, i.width, i.height) {
-                                        let _ = tray.set_icon(Some(i));
-                                    }
+                                    // The icon stays as it was when setting it panicked.
+                                    let _ = super::super::tray_widget::guarded("tray icon", || {
+                                        if let Ok(i) = Icon::from_rgba(i.pixels, i.width, i.height) {
+                                            let _ = tray.set_icon(Some(i));
+                                        }
+                                    });
                                 }
                                 Ok(Cmd::Tooltip(t)) => {
                                     let _ = tray.set_tooltip(Some(&t));

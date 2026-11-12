@@ -532,8 +532,14 @@ pub fn paint_slot(ctx: &mut dyn RenderContext, key: &str, r: Rect, m: &TrayModel
     let Some(i) = key.strip_prefix("@tw-critter:").and_then(|s| s.parse::<usize>().ok()) else { return };
     let Some(a) = m.agents.get(i) else { return };
     if let Some(f) = CRITTER_PAINTER.with(|p| p.borrow().clone()) {
-        f(ctx, r, a, t, reduced);
-        return;
+        // The app's code, drawn from OS callbacks too (the taskbar thumbnail): a panic in it
+        // never unwinds into them. Logged once; the painter is dropped and uzor's critter
+        // draws from then on (this slot too).
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(ctx, r, a, t, reduced))).is_ok() {
+            return;
+        }
+        log::error!("tray: the app's critter painter panicked; uzor's critter draws from now on");
+        CRITTER_PAINTER.with(|c| *c.borrow_mut() = None);
     }
     let mut v = critter_view(&a.name, a.family);
     v.off = a.state == CritterState::Off;
@@ -656,6 +662,26 @@ mod tests {
         set_critter_painter(None);
         paint_slot(&mut ctx, "@tw-critter:0", Rect::new(0.0, 0.0, 20.0, 20.0), &m, 0.0, false);
         assert_eq!(seen.get(), 1);
+    }
+
+    #[test]
+    fn a_panicking_app_painter_falls_back_to_the_critter() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let calls = Rc::new(Cell::new(0usize));
+        let c2 = calls.clone();
+        set_critter_painter(Some(Rc::new(move |_ctx: &mut dyn RenderContext, _r: Rect, _a: &TrayAgent, _t: f64, _red: bool| {
+            c2.set(c2.get() + 1);
+            panic!("app painter bug");
+        })));
+        let m = TrayModel { agents: vec![TrayAgent::new("k1", "one")], ..Default::default() };
+        let mut ctx = crate::testing::RecordingRenderContext::new();
+        paint_slot(&mut ctx, "@tw-critter:0", Rect::new(0.0, 0.0, 20.0, 20.0), &m, 0.0, false);
+        let drawn = ctx.ops.len();
+        assert!(drawn > 0, "uzor's critter drew the slot instead");
+        paint_slot(&mut ctx, "@tw-critter:0", Rect::new(0.0, 0.0, 20.0, 20.0), &m, 0.0, false);
+        assert_eq!(calls.get(), 1, "the painter is dropped after its panic");
+        assert!(CRITTER_PAINTER.with(|p| p.borrow().is_none()));
     }
     use crate::ui::dom::lay_out_in;
 

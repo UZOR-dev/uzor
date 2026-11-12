@@ -2,6 +2,25 @@
 
 All crates in the workspace share one version.
 
+## 1.5.35
+
+### Media environment per thread (`uzor`)
+
+- `uzor::ui::media::current` / `set_current`: the environment a thread set is the one it
+  reads (a host and the sheets it parses live on one thread), so two hosts on two threads
+  never read each other's safe-area insets. A thread that never set one reads the last one
+  any thread set, as before. Fixes the parallel race behind the flaky
+  `floating_controls_are_a_top_safe_area_inset`.
+
+### Tray widgets: a panic while drawing never takes the app down (`uzor`, `uzor-framework`)
+
+- The app's critter painter (`set_critter_painter`) panicking: logged once, the painter is
+  dropped and uzor's critter draws from then on.
+- The Windows taskbar thumbnail and peek preview (a DWM window procedure), the tray flyout,
+  the tray badge, the macOS dock icon and the Linux tray's GTK callbacks draw under
+  `catch_unwind`: a panic is logged once per place and a static image stands in (the plain
+  card with the status dot, the icon without the dot, or the system's own thumbnail).
+
 ## 1.5.34
 
 ### Tray widgets: the app's own creatures (`uzor`)

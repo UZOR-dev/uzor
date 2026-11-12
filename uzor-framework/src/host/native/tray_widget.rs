@@ -200,6 +200,35 @@ thread_local! {
     static SHEET: Sheet = tray::sheet();
 }
 
+/// Runs tray / taskbar / dock drawing `f`. A panic in it (the app's painter, a bug) never
+/// unwinds into the OS callback that asked (a Windows window procedure, a GTK timeout, the
+/// event loop): logged once per `site`, `None` back, and the caller falls back to a static
+/// image.
+pub(crate) fn guarded<R>(site: &'static str, f: impl FnOnce() -> R) -> Option<R> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(r) => Some(r),
+        Err(p) => {
+            static SEEN: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+            let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+            if !seen.contains(&site) {
+                seen.push(site);
+                let why = p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_default();
+                log::error!("{site}: drawing panicked ({why}); a static image is shown instead");
+            }
+            None
+        }
+    }
+}
+
+/// The static stand-in of widget `w` (`pw`×`ph` px) when drawing it panicked: the plain card
+/// with the status dot.
+pub fn static_card(pw: u32, ph: u32, cfg: &TrayWidgetConfig) -> RgbaIcon {
+    let bg = if cfg.dark { [0x1e, 0x1e, 0x22, 0xff] } else { [0xf4, 0xf4, 0xf6, 0xff] };
+    let (pw, ph) = (pw.max(1), ph.max(1));
+    let card = RgbaIcon::from_rgba(pw, ph, bg.iter().copied().cycle().take((pw * ph * 4) as usize).collect());
+    tray::badge(&card, cfg.model.status.rgba())
+}
+
 /// Widget `w` of `cfg` rendered on the CPU at `scale` into an RGBA image of its size
 /// (transparent outside the card's rounded corners).
 pub fn render_rgba(w: TrayWidget, cfg: &TrayWidgetConfig, look: &TrayLook, scale: f64, t: f64) -> RgbaIcon {
@@ -208,9 +237,14 @@ pub fn render_rgba(w: TrayWidget, cfg: &TrayWidgetConfig, look: &TrayLook, scale
     let (pw, ph) = ((wd * scale).round().max(1.0) as u32, (ht * scale).round().max(1.0) as u32);
     let mut ctx = TinySkiaCpuRenderContext::new(pw, ph, scale);
     uzor::render::Painter::scale(&mut ctx, scale, scale);
-    SHEET.with(|sheet| {
-        tray::render(&mut ctx, sheet, w, &cfg.model, &cfg.labels, look, 0.0, 0.0, t);
+    let drawn = guarded("tray widget", || {
+        SHEET.with(|sheet| {
+            tray::render(&mut ctx, sheet, w, &cfg.model, &cfg.labels, look, 0.0, 0.0, t);
+        })
     });
+    if drawn.is_none() {
+        return static_card(pw, ph, cfg);
+    }
     let pm = ctx.pixmap();
     // tiny-skia keeps premultiplied RGBA: unpremultiply for the icon contract.
     let mut px = pm.data().to_vec();
@@ -395,7 +429,9 @@ impl TrayWidgets {
         let want = if self.cfg.badge { self.cfg.model.status.rgba() } else { None };
         if let (Some(t), Some(base)) = (tray, self.base_icon.as_ref()) {
             if self.badge_on != Some(want) {
-                let _ = t.set_icon(tray::badge(base, want));
+                // A failed badge keeps the plain icon.
+                let icon = guarded("tray badge", || tray::badge(base, want)).unwrap_or_else(|| base.clone());
+                let _ = t.set_icon(icon);
                 self.badge_on = Some(want);
             }
         }
@@ -405,7 +441,10 @@ impl TrayWidgets {
             let dot = if self.cfg.thumbnail { self.cfg.model.status.rgba() } else { None };
             if self.dock != Some(dot) {
                 if let Some(base) = self.base_icon.as_ref() {
-                    mac::set_dock_icon(&tray::badge(base, dot));
+                    if guarded("dock icon", || mac::set_dock_icon(&tray::badge(base, dot))).is_none() {
+                        // The app's own icon, no dot.
+                        let _ = guarded("dock icon", || mac::set_dock_icon(base));
+                    }
                     self.dock = Some(dot);
                 }
             }
@@ -610,10 +649,14 @@ fn paint_flyout(f: &mut Flyout, cfg: &TrayWidgetConfig, hub: &uzor_render_hub::R
     let w = f.widget;
     f.rs.begin_frame();
     let _ = f.rs.with_render_context(|ctx| {
-        SHEET.with(|sheet| {
-            let (wd, ht) = w.size();
-            let d = uzor::ui::dom::lay_out_in(ctx, sheet, &tray::tray_widget(w, &cfg.model, &cfg.labels, &look), 0.0, 0.0, wd, Some(Rect::new(0.0, 0.0, wd, ht)), &|_| uzor::ui::style::State::NONE);
-            tray::paint(ctx, &d, &cfg.model, t, cfg.reduced_motion);
+        // A panic mid-paint leaves the frame as far as it got (the app's painter is dropped
+        // by then: uzor's critters next frame), never the event loop.
+        let _ = guarded("tray flyout", || {
+            SHEET.with(|sheet| {
+                let (wd, ht) = w.size();
+                let d = uzor::ui::dom::lay_out_in(ctx, sheet, &tray::tray_widget(w, &cfg.model, &cfg.labels, &look), 0.0, 0.0, wd, Some(Rect::new(0.0, 0.0, wd, ht)), &|_| uzor::ui::style::State::NONE);
+                tray::paint(ctx, &d, &cfg.model, t, cfg.reduced_motion);
+            })
         });
     });
     let out = uzor_render_hub::submit_frame(
@@ -790,14 +833,26 @@ mod win {
         hbmp
     }
 
+    /// A window procedure: a panic must not unwind out of it (that aborts the process).
+    /// Drawing that panicked answers with the system's own thumbnail (`DefSubclassProc`).
     unsafe extern "system" fn proc(hwnd: Hwnd, msg: u32, wp: usize, lp: isize, _id: usize, data: usize) -> isize {
         if msg == WM_DWMSENDICONICTHUMBNAIL || msg == WM_DWMSENDICONICLIVEPREVIEWBITMAP {
+            if let Some(Some(r)) = super::guarded("taskbar thumbnail", || unsafe { iconic(hwnd, msg, lp, data) }) {
+                return r;
+            }
+        }
+        DefSubclassProc(hwnd, msg, wp, lp)
+    }
+
+    /// The thumbnail or peek bitmap for DWM; `None`: let the system draw it.
+    unsafe fn iconic(hwnd: Hwnd, msg: u32, lp: isize, data: usize) -> Option<isize> {
+        {
             let handle = &*(data as *const TrayWidgetHandle);
             let cfg = match handle.inner.try_lock() {
                 Ok(g) => g.cfg.clone(),
-                Err(_) => return DefSubclassProc(hwnd, msg, wp, lp),
+                Err(_) => return None,
             };
-            let Some(w) = cfg.widget.filter(|_| cfg.thumbnail) else { return DefSubclassProc(hwnd, msg, wp, lp) };
+            let Some(w) = cfg.widget.filter(|_| cfg.thumbnail) else { return None };
             let (wd, ht) = w.size();
             let look = uzor::ui::tray::TrayLook::solid(cfg.dark);
             if msg == WM_DWMSENDICONICTHUMBNAIL {
@@ -822,9 +877,8 @@ mod win {
                     DeleteObject(h);
                 }
             }
-            return 0;
+            Some(0)
         }
-        DefSubclassProc(hwnd, msg, wp, lp)
     }
 }
 
@@ -902,5 +956,25 @@ mod tests {
         });
         assert_eq!(i.pixels.len(), 16 * 16 * 4);
         assert!(i.pixels[0] > 250 && (120..=135).contains(&i.pixels[3]));
+    }
+
+    /// The app's painter panicking inside a widget render (the taskbar thumbnail's path):
+    /// no unwind out, an image of the widget's size back; a panic elsewhere in the drawing
+    /// gives the static card.
+    #[test]
+    fn a_panic_while_drawing_never_leaves_the_render() {
+        use std::rc::Rc;
+        use uzor::ui::tray::{TrayAgent, TrayModel};
+        let cfg = TrayWidgetConfig { widget: Some(TrayWidget::Agents), model: TrayModel { agents: vec![TrayAgent::new("k1", "one")], ..Default::default() }, ..Default::default() };
+        let w = cfg.widget.unwrap();
+        uzor::ui::tray::set_critter_painter(Some(Rc::new(|_: &mut dyn RenderContext, _: Rect, _: &TrayAgent, _: f64, _: bool| panic!("app painter bug"))));
+        let img = render_rgba(w, &cfg, &TrayLook::solid(true), 1.0, 0.0);
+        let (wd, ht) = w.size();
+        assert_eq!((img.width, img.height), (wd.round() as u32, ht.round() as u32));
+        uzor::ui::tray::set_critter_painter(None);
+        assert_eq!(guarded("test site", || panic!("x")), None::<()>);
+        assert_eq!(guarded("test site", || 7), Some(7));
+        let card = static_card(30, 20, &cfg);
+        assert_eq!((card.width, card.height, card.pixels.len()), (30, 20, 30 * 20 * 4));
     }
 }
