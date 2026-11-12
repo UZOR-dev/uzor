@@ -197,13 +197,13 @@ impl ValueScale {
     }
 
     /// Value → pixel coordinate on an axis `length` px long (top = max).
-    /// An empty range maps everything to the middle.
+    /// An empty, inverted or `NaN` range maps everything to the middle.
     #[inline]
     pub fn value_to_coord(&self, value: f64, length: f64) -> f64 {
         match self.kind {
             ScaleKind::Linear => {
                 let range = self.max - self.min;
-                if range <= 0.0 {
+                if range.is_nan() || range <= 0.0 {
                     return length / 2.0;
                 }
                 length * (1.0 - (value - self.min) / range)
@@ -213,7 +213,7 @@ impl ValueScale {
                 let p_min = self.to_percent(self.min);
                 let p_max = self.to_percent(self.max);
                 let range = p_max - p_min;
-                if range <= 0.0 {
+                if range.is_nan() || range <= 0.0 {
                     return length / 2.0;
                 }
                 length * (1.0 - (p - p_min) / range)
@@ -223,7 +223,7 @@ impl ValueScale {
                 let i_min = self.to_indexed(self.min);
                 let i_max = self.to_indexed(self.max);
                 let range = i_max - i_min;
-                if range <= 0.0 {
+                if range.is_nan() || range <= 0.0 {
                     return length / 2.0;
                 }
                 length * (1.0 - (i - i_min) / range)
@@ -234,7 +234,7 @@ impl ValueScale {
                 let hi = self.max.max(lo + LOG_FLOOR);
                 let (lv, l0, l1) = (v.ln(), lo.ln(), hi.ln());
                 let range = l1 - l0;
-                if range <= 0.0 {
+                if range.is_nan() || range <= 0.0 {
                     return length / 2.0;
                 }
                 length * (1.0 - (lv - l0) / range)
@@ -243,30 +243,36 @@ impl ValueScale {
     }
 
     /// Pixel coordinate → value on an axis `length` px long.
+    ///
+    /// An axis with no usable length (zero, negative or non-finite) reads
+    /// every coordinate as the middle of the range, mirroring
+    /// [`Self::value_to_coord`] on an empty range, instead of returning
+    /// `±inf` or `NaN`.
     #[inline]
     pub fn coord_to_value(&self, coord: f64, length: f64) -> f64 {
+        let t = if length.is_finite() && length > 0.0 { coord / length } else { 0.5 };
         match self.kind {
             ScaleKind::Linear => {
                 let range = self.max - self.min;
-                self.max - (coord / length) * range
+                self.max - t * range
             }
             ScaleKind::Percent => {
                 let p_min = self.to_percent(self.min);
                 let p_max = self.to_percent(self.max);
                 let range = p_max - p_min;
-                self.from_percent(p_max - (coord / length) * range)
+                self.from_percent(p_max - t * range)
             }
             ScaleKind::Indexed => {
                 let i_min = self.to_indexed(self.min);
                 let i_max = self.to_indexed(self.max);
                 let range = i_max - i_min;
-                self.from_indexed(i_max - (coord / length) * range)
+                self.from_indexed(i_max - t * range)
             }
             ScaleKind::Log => {
                 let lo = self.min.max(LOG_FLOOR);
                 let hi = self.max.max(lo + LOG_FLOOR);
                 let (l0, l1) = (lo.ln(), hi.ln());
-                (l1 - (coord / length) * (l1 - l0)).exp()
+                (l1 - t * (l1 - l0)).exp()
             }
         }
     }
@@ -333,6 +339,9 @@ impl ValueScale {
     /// maximum's label), for sizing the axis text.
     pub fn max_label_len(&self, length: f64) -> usize {
         let step = self.step(length);
+        if !(self.min.is_finite() && self.max.is_finite()) {
+            return self.labels.format(self.max, step).len();
+        }
         let first = (self.min / step).ceil() * step;
         let n = ((self.max - first) / step).ceil() as i32 + 1;
         let mut max_len = 0;

@@ -115,3 +115,49 @@ fn mode_cycles() {
     assert_eq!(RangeFit::Follow.next(), RangeFit::Manual);
     assert_eq!(RangeFit::Manual.next(), RangeFit::Auto);
 }
+
+// Degenerate input: no panics, no NaN/inf leaking out.
+
+#[test]
+fn coord_to_value_zero_length_reads_the_middle() {
+    let s = ValueScale::new(0.0, 100.0);
+    for len in [0.0, -10.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(s.coord_to_value(150.0, len), 50.0, "linear, length {len}");
+    }
+    for kind in [ScaleKind::Linear, ScaleKind::Log, ScaleKind::Percent, ScaleKind::Indexed] {
+        let s = ValueScale::new(10.0, 1000.0).with_kind(kind).with_base(100.0);
+        let v = s.coord_to_value(42.0, 0.0);
+        assert!(v.is_finite(), "{kind:?}: {v}");
+        assert!(v > 10.0 && v < 1000.0, "{kind:?}: {v}");
+    }
+    let log = ValueScale::new(1.0, 100.0).with_kind(ScaleKind::Log);
+    assert!((log.coord_to_value(0.0, 0.0) - 10.0).abs() < 1e-9);
+}
+
+#[test]
+fn nan_range_maps_to_the_middle() {
+    for kind in [ScaleKind::Linear, ScaleKind::Percent, ScaleKind::Indexed] {
+        let s = ValueScale::new(f64::NAN, 100.0).with_kind(kind);
+        assert_eq!(s.value_to_coord(5.0, 300.0), 150.0, "{kind:?}");
+    }
+    // Log floors a NaN minimum like any value below the floor.
+    let log = ValueScale::new(f64::NAN, 100.0).with_kind(ScaleKind::Log);
+    assert!(log.value_to_coord(5.0, 300.0).is_finite());
+}
+
+#[test]
+fn ticks_and_labels_survive_degenerate_input() {
+    for kind in [ScaleKind::Linear, ScaleKind::Log, ScaleKind::Percent, ScaleKind::Indexed] {
+        let s = ValueScale::new(0.0, 100.0).with_kind(kind);
+        for len in [0.0, f64::NAN] {
+            assert!(s.ticks(len).iter().all(|v| v.is_finite()), "{kind:?} length {len}");
+            let _ = s.max_label_len(len);
+        }
+        let inf = ValueScale::new(0.0, f64::INFINITY).with_kind(kind);
+        assert!(inf.ticks(300.0).iter().all(|v| !v.is_nan()), "{kind:?}");
+        let _ = inf.max_label_len(300.0);
+        let nan = ValueScale::new(f64::NAN, f64::NAN).with_kind(kind);
+        assert!(nan.ticks(300.0).iter().all(|v| v.is_finite()), "{kind:?}");
+        let _ = nan.max_label_len(300.0);
+    }
+}
