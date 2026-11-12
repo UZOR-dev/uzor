@@ -33,6 +33,10 @@ pub struct GestureConfig {
     pub velocity_window: f64,
     /// A finger that rested this long before lifting leaves with zero velocity, s.
     pub velocity_rest: f64,
+    /// A second tap within this long after the first is a double-tap, s.
+    pub double_tap: f64,
+    /// …and within this distance of it, px.
+    pub double_tap_slop: f64,
 }
 
 impl Default for GestureConfig {
@@ -49,6 +53,8 @@ impl Default for GestureConfig {
             fling_stop_speed: 20.0,
             velocity_window: 0.1,
             velocity_rest: 0.05,
+            double_tap: 0.3,
+            double_tap_slop: 24.0,
         }
     }
 }
@@ -101,6 +107,23 @@ pub enum Gesture {
         /// Where.
         pos: Point,
     },
+    /// A second tap close to the first one in time and place (sent after its `Tap`).
+    DoubleTap {
+        /// Where the second tap lifted.
+        pos: Point,
+    },
+    /// The long-pressed finger moved (a chart crosshair, a drag-to-reorder).
+    LongPressDrag {
+        /// Where the finger is.
+        pos: Point,
+        /// Motion since the last event.
+        delta: (f64, f64),
+    },
+    /// The long-pressed finger lifted.
+    LongPressEnd {
+        /// Where.
+        pos: Point,
+    },
     /// One finger left the slop: a pan begins.
     PanStart {
         /// Where the finger went down.
@@ -141,12 +164,22 @@ pub enum Gesture {
         /// Release speed along `dir`, px/s.
         speed: f64,
     },
-    /// Two fingers: the pinch changed.
+    /// Two fingers: the pinch changed. The midpoint moving is the two-finger pan
+    /// ([`Gesture::PinchPan`] carries its step).
     Pinch {
         /// Midpoint between the fingers.
         center: Point,
         /// Distance now / distance when the second finger went down.
         scale: f64,
+    },
+    /// Two fingers: the midpoint moved (sent with the `Pinch` of the same motion).
+    PinchPan {
+        /// Midpoint between the fingers.
+        center: Point,
+        /// Midpoint motion since the last event.
+        delta: (f64, f64),
+        /// Midpoint motion since the second finger went down.
+        total: (f64, f64),
     },
     /// The second finger lifted (or the gesture was cancelled).
     PinchEnd {
@@ -290,7 +323,14 @@ pub struct GestureRecognizer {
     edge: Option<Edge>,
     pinch0: f64,
     scale: f64,
+    /// Midpoint when the second finger went down, and at the last event.
+    center0: Point,
+    center: Point,
     vel: VelocityTracker,
+    /// Time and place of the last tap that may still become a double-tap.
+    last_tap: Option<(f64, Point)>,
+    /// The current long-press is live (its finger may drag and lift).
+    held: bool,
 }
 
 impl Default for GestureRecognizer {
@@ -321,7 +361,11 @@ impl GestureRecognizer {
             edge: None,
             pinch0: 1.0,
             scale: 1.0,
+            center0: Point::new(0.0, 0.0),
+            center: Point::new(0.0, 0.0),
             vel: VelocityTracker::default(),
+            last_tap: None,
+            held: false,
         }
     }
 
@@ -390,9 +434,16 @@ impl GestureRecognizer {
                 if let Phase::Pan(_) = self.phase {
                     out.push(Gesture::PanEnd { pos: self.last, velocity: (0.0, 0.0), edge: self.edge });
                 }
+                if self.held {
+                    out.push(Gesture::LongPressEnd { pos: self.last });
+                    self.held = false;
+                }
                 self.phase = Phase::Pinch;
                 self.pinch0 = dist(self.contacts[0].1, self.contacts[1].1).max(1.0);
                 self.scale = 1.0;
+                self.center0 = mid(self.contacts[0].1, self.contacts[1].1);
+                self.center = self.center0;
+                self.last_tap = None;
             }
             _ => {}
         }
@@ -403,6 +454,8 @@ impl GestureRecognizer {
     pub fn poll(&mut self, now: f64) -> Option<Gesture> {
         if self.phase == Phase::Pending && now - self.down_at >= self.cfg.long_press {
             self.phase = Phase::LongPressed;
+            self.held = true;
+            self.last_tap = None;
             return Some(Gesture::LongPress { pos: self.last });
         }
         None
@@ -417,7 +470,13 @@ impl GestureRecognizer {
             if self.contacts.len() >= 2 {
                 let (a, b) = (self.contacts[0].1, self.contacts[1].1);
                 self.scale = dist(a, b) / self.pinch0;
-                out.push(Gesture::Pinch { center: mid(a, b), scale: self.scale });
+                let c = mid(a, b);
+                out.push(Gesture::Pinch { center: c, scale: self.scale });
+                let delta = (c.x - self.center.x, c.y - self.center.y);
+                if delta != (0.0, 0.0) {
+                    out.push(Gesture::PinchPan { center: c, delta, total: (c.x - self.center0.x, c.y - self.center0.y) });
+                }
+                self.center = c;
             }
             return out;
         }
@@ -432,6 +491,7 @@ impl GestureRecognizer {
                     // Too late to long-press; a pan of the stronger axis.
                     let axis = if dx.abs() > dy.abs() { Axis::Horizontal } else { Axis::Vertical };
                     self.phase = Phase::Pan(axis);
+                    self.last_tap = None;
                     out.push(Gesture::PanStart { origin: self.origin, pos, axis, edge: self.edge });
                     self.last = pos;
                 } else {
@@ -442,6 +502,13 @@ impl GestureRecognizer {
                 let delta = (pos.x - self.last.x, pos.y - self.last.y);
                 self.last = pos;
                 out.push(Gesture::Pan { pos, delta, total: (dx, dy), edge: self.edge });
+            }
+            Phase::LongPressed if self.held => {
+                let delta = (pos.x - self.last.x, pos.y - self.last.y);
+                self.last = pos;
+                if delta != (0.0, 0.0) {
+                    out.push(Gesture::LongPressDrag { pos, delta });
+                }
             }
             Phase::LongPressed | Phase::Idle | Phase::Pinch => self.last = pos,
         }
@@ -463,6 +530,18 @@ impl GestureRecognizer {
             }
             Phase::Pending if i == 0 => {
                 out.push(Gesture::Tap { pos });
+                match self.last_tap {
+                    Some((t0, p0)) if t - t0 <= self.cfg.double_tap && dist(p0, pos) <= self.cfg.double_tap_slop => {
+                        out.push(Gesture::DoubleTap { pos });
+                        self.last_tap = None;
+                    }
+                    _ => self.last_tap = Some((t, pos)),
+                }
+                self.phase = Phase::Idle;
+            }
+            Phase::LongPressed if i == 0 && self.held => {
+                out.push(Gesture::LongPressEnd { pos });
+                self.held = false;
                 self.phase = Phase::Idle;
             }
             Phase::Pan(axis) if i == 0 => {
@@ -502,6 +581,10 @@ impl GestureRecognizer {
             match self.phase {
                 Phase::Pinch if self.contacts.len() < 2 => out.push(Gesture::PinchEnd { scale: self.scale }),
                 Phase::Pan(_) => out.push(Gesture::PanEnd { pos: self.last, velocity: (0.0, 0.0), edge: self.edge }),
+                Phase::LongPressed if self.held => {
+                    out.push(Gesture::LongPressEnd { pos: self.last });
+                    self.held = false;
+                }
                 _ => {}
             }
             self.phase = if self.contacts.is_empty() { Phase::Idle } else { Phase::LongPressed };
@@ -548,8 +631,9 @@ mod tests {
         assert_eq!(g.poll(1.3), None);
         assert_eq!(g.poll(1.5), Some(Gesture::LongPress { pos: p(50.0, 50.0) }));
         assert_eq!(g.poll(1.6), None, "fires once");
-        assert!(g.moved(1, p(80.0, 50.0), 1.7).is_empty(), "no pan after a long-press");
-        assert!(g.end(1, p(80.0, 50.0), 1.8).is_empty(), "no tap after a long-press");
+        let out = g.moved(1, p(80.0, 50.0), 1.7);
+        assert_eq!(out, vec![Gesture::LongPressDrag { pos: p(80.0, 50.0), delta: (30.0, 0.0) }], "no pan after a long-press: the held finger drags");
+        assert_eq!(g.end(1, p(80.0, 50.0), 1.8), vec![Gesture::LongPressEnd { pos: p(80.0, 50.0) }], "no tap after a long-press");
     }
 
     #[test]
@@ -638,7 +722,7 @@ mod tests {
         g.start(2, p(200.0, 100.0), 0.01);
         assert_eq!(g.phase(), Phase::Pinch);
         let out = g.moved(2, p(300.0, 100.0), 0.02);
-        assert_eq!(out, vec![Gesture::Pinch { center: p(200.0, 100.0), scale: 2.0 }]);
+        assert_eq!(out[0], Gesture::Pinch { center: p(200.0, 100.0), scale: 2.0 });
         assert_eq!(g.end(2, p(300.0, 100.0), 0.03), vec![Gesture::PinchEnd { scale: 2.0 }]);
         assert!(g.end(1, p(100.0, 100.0), 0.04).is_empty(), "the remaining finger does not tap");
         assert_eq!(g.phase(), Phase::Idle);
@@ -684,5 +768,73 @@ mod tests {
         assert!(g.cancel(1).is_empty());
         assert_eq!(g.phase(), Phase::Idle);
         assert!(g.end(1, p(10.0, 10.0), 0.1).is_empty());
+    }
+
+    #[test]
+    fn two_quick_taps_close_together_double_tap() {
+        let mut g = GestureRecognizer::default();
+        g.start(1, p(100.0, 100.0), 0.0);
+        assert_eq!(g.end(1, p(100.0, 100.0), 0.05), vec![Gesture::Tap { pos: p(100.0, 100.0) }]);
+        g.start(2, p(110.0, 104.0), 0.2);
+        assert_eq!(g.end(2, p(110.0, 104.0), 0.25), vec![Gesture::Tap { pos: p(110.0, 104.0) }, Gesture::DoubleTap { pos: p(110.0, 104.0) }]);
+        // A third tap starts a new pair: no triple.
+        g.start(3, p(110.0, 104.0), 0.4);
+        assert_eq!(g.end(3, p(110.0, 104.0), 0.45), vec![Gesture::Tap { pos: p(110.0, 104.0) }]);
+    }
+
+    #[test]
+    fn slow_or_far_taps_stay_single() {
+        let mut g = GestureRecognizer::default();
+        g.start(1, p(100.0, 100.0), 0.0);
+        g.end(1, p(100.0, 100.0), 0.05);
+        g.start(2, p(100.0, 100.0), 0.5);
+        assert_eq!(g.end(2, p(100.0, 100.0), 0.55).len(), 1, "too slow");
+        g.start(3, p(200.0, 100.0), 0.6);
+        assert_eq!(g.end(3, p(200.0, 100.0), 0.65).len(), 1, "too far");
+        // A pan between taps breaks the pair.
+        g.start(4, p(200.0, 100.0), 0.7);
+        g.moved(4, p(200.0, 140.0), 0.72);
+        g.end(4, p(200.0, 140.0), 0.74);
+        g.start(5, p(200.0, 140.0), 0.8);
+        assert_eq!(g.end(5, p(200.0, 140.0), 0.82).len(), 1, "pan in between");
+    }
+
+    #[test]
+    fn long_press_drag_follows_the_finger_and_ends_on_lift() {
+        let mut g = GestureRecognizer::default();
+        g.start(1, p(50.0, 50.0), 0.0);
+        g.poll(0.6);
+        assert_eq!(g.moved(1, p(50.0, 50.0), 0.65), vec![], "no motion, no drag");
+        assert_eq!(g.moved(1, p(60.0, 45.0), 0.7), vec![Gesture::LongPressDrag { pos: p(60.0, 45.0), delta: (10.0, -5.0) }]);
+        assert_eq!(g.cancel(1), vec![Gesture::LongPressEnd { pos: p(60.0, 45.0) }], "a cancel ends it too");
+        assert_eq!(g.phase(), Phase::Idle);
+    }
+
+    #[test]
+    fn pinch_reports_scale_and_the_midpoint_pan() {
+        let mut g = GestureRecognizer::default();
+        g.start(1, p(100.0, 100.0), 0.0);
+        g.start(2, p(200.0, 100.0), 0.01);
+        assert_eq!(g.phase(), Phase::Pinch);
+        // Spread to twice the distance, midpoint unchanged: scale only.
+        assert_eq!(g.moved(2, p(250.0, 100.0), 0.02), vec![Gesture::Pinch { center: p(175.0, 100.0), scale: 1.5 }, Gesture::PinchPan { center: p(175.0, 100.0), delta: (25.0, 0.0), total: (25.0, 0.0) }]);
+        // Both fingers move up 20 px: a two-finger pan at the same scale.
+        g.moved(1, p(100.0, 80.0), 0.03);
+        let out = g.moved(2, p(250.0, 80.0), 0.04);
+        assert_eq!(out[0], Gesture::Pinch { center: p(175.0, 80.0), scale: 1.5 });
+        assert_eq!(out[1], Gesture::PinchPan { center: p(175.0, 80.0), delta: (0.0, -10.0), total: (25.0, -20.0) });
+        assert_eq!(g.end(2, p(250.0, 80.0), 0.05), vec![Gesture::PinchEnd { scale: 1.5 }]);
+        // The finger left down neither taps nor long-press-drags.
+        assert!(g.moved(1, p(120.0, 80.0), 0.06).is_empty());
+        assert!(g.end(1, p(120.0, 80.0), 0.07).is_empty());
+    }
+
+    #[test]
+    fn a_second_finger_ends_a_long_press() {
+        let mut g = GestureRecognizer::default();
+        g.start(1, p(50.0, 50.0), 0.0);
+        g.poll(0.6);
+        assert_eq!(g.start(2, p(150.0, 50.0), 0.7), vec![Gesture::LongPressEnd { pos: p(50.0, 50.0) }]);
+        assert_eq!(g.phase(), Phase::Pinch);
     }
 }

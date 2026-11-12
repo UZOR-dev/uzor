@@ -148,6 +148,11 @@ pub(crate) struct Kernel<S: Spec> {
     coarse_pointer: bool,
     /// Gestures recognised this tick, per window (`VisualView::gestures`).
     gestures: VecMap<WindowId, Vec<crate::types::gesture::Gesture>>,
+    /// The widget that captured the current touch sequence (`Sense::touch`):
+    /// its gestures go to `VisualView::captured_gestures`, nothing scrolls.
+    touch_capture: Option<(WindowId, uzor::WidgetId)>,
+    /// Captured gestures of this tick, per window, with the widget that owns them.
+    captured: VecMap<WindowId, Vec<(uzor::WidgetId, crate::types::gesture::Gesture)>>,
     /// Debug-only phase order assertions (design §4.2 `PhaseClock`).
     clock: PhaseClock,
     /// F12 inspector (feature `inspector`).
@@ -173,6 +178,10 @@ pub(crate) enum TouchMode {
     Held,
     /// Two fingers: pan scrolls, pinch is reported.
     Multi,
+    /// The first finger landed on a touch-capturing widget (`Sense::touch`): every
+    /// finger of the sequence is its gestures. Nothing scrolls or flings, a long-press
+    /// is not a context click, a tap still clicks the widget.
+    Captured,
 }
 
 impl<S: Spec> Kernel<S> {
@@ -204,6 +213,8 @@ impl<S: Spec> Kernel<S> {
             touch_clock: None,
             coarse_pointer: cfg!(any(target_os = "ios", target_os = "android")),
             gestures: VecMap::new(),
+            touch_capture: None,
+            captured: VecMap::new(),
             clock: PhaseClock::new(),
             #[cfg(feature = "inspector")]
             inspector: Default::default(),
