@@ -90,7 +90,8 @@ pub struct CardStyle {
 }
 
 impl crate::ui::style::StyleField for Option<Shadow> {
-    /// `box-shadow: <x> <dy> <blur> <color>` (x is ignored), or `none`.
+    /// `box-shadow: <x> <dy> <blur> <color>`, or `none`. [`Shadow`] keeps dy and blur;
+    /// the DOM painter ([`crate::ui::dom`]) also honours x, the card widgets ignore it.
     fn from_css(v: &str) -> Option<Self> {
         let v = v.trim();
         if v == "none" {

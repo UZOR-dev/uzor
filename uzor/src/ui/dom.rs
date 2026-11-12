@@ -1378,15 +1378,16 @@ fn paint_box_unclipped(ctx: &mut dyn RenderContext, b: &Placed) {
         ctx.blur_backdrop(r.x, r.y, r.width, r.height, blur, s.border_radius.unwrap_or(0.0));
     }
     let shadow: Option<Shadow> = s.box_shadow.as_deref().and_then(<Option<Shadow>>::from_css).flatten();
+    let sdx = if shadow.is_some() { shadow_dx(s.box_shadow.as_deref()) } else { 0.0 };
     let bg = s.background.as_deref().filter(|b| *b != "transparent" && *b != "none");
     if s.border_radii.is_some() || s.border_widths.is_some() || s.border_colors.is_some() {
-        paint_frame(ctx, r, s, bg, shadow);
+        paint_frame(ctx, r, s, bg, shadow, sdx);
     } else {
         let rad = s.border_radius.unwrap_or(0.0);
         let bw = s.border_width.unwrap_or(0.0);
         let border = s.border_color.as_deref().filter(|_| bw > 0.0 && s.border_drawn());
         if let Some(sh) = shadow {
-            ctx.set_shadow(0.0, sh.dy, sh.blur, sh.color);
+            ctx.set_shadow(sdx, sh.dy, sh.blur, sh.color);
         }
         if let Some(bg) = bg {
             fill_round_rect(ctx, r, rad, bg);
@@ -1825,14 +1826,26 @@ fn inner_radii(rad: [[f64; 2]; 4], e: [f64; 4]) -> [[f64; 2]; 4] {
     ]
 }
 
+/// The x offset of a `box-shadow: <dx> <dy> <blur> <color>` (the first length;
+/// 0 when it has fewer than three). [`Shadow`] keeps only dy and blur, so the DOM
+/// reads dx here instead of widening that public struct.
+fn shadow_dx(css: Option<&str>) -> f64 {
+    let Some(v) = css else { return 0.0 };
+    let mut it = v.split_whitespace().map(|t| t.trim_end_matches("px").parse::<f64>());
+    match (it.next(), it.next(), it.next()) {
+        (Some(Ok(dx)), Some(Ok(_)), Some(Ok(_))) => dx,
+        _ => 0.0,
+    }
+}
+
 /// Paint a CSS box's background and border with per-corner radii and per-side border
 /// widths / colours (the uniform case keeps the classic single-radius path).
-fn paint_frame(ctx: &mut dyn RenderContext, r: Rect, s: &Style, bg: Option<&str>, shadow: Option<Shadow>) {
+fn paint_frame(ctx: &mut dyn RenderContext, r: Rect, s: &Style, bg: Option<&str>, shadow: Option<Shadow>, sdx: f64) {
     let rad = fit_radii(r, s.radii());
     let e = s.border_edges();
     let colors: [Option<&str>; 4] = [0, 1, 2, 3].map(|i| s.border_side_color(i));
     if let Some(sh) = shadow {
-        ctx.set_shadow(0.0, sh.dy, sh.blur, sh.color);
+        ctx.set_shadow(sdx, sh.dy, sh.blur, sh.color);
     }
     if let Some(fill) = bg.or(shadow.map(|sh| sh.color)) {
         ctx.begin_path();
@@ -1967,6 +1980,16 @@ pub fn render(ctx: &mut dyn RenderContext, sheet: &Sheet, root: &El, x: f64, y: 
 mod tests {
     use super::*;
     use crate::testing::NullRenderContext;
+
+    #[test]
+    fn box_shadow_dx_is_the_first_of_three_lengths() {
+        assert_eq!(shadow_dx(Some("3px 4px 0 rgba(0,0,0,0.5)")), 3.0);
+        assert_eq!(shadow_dx(Some("-6px 0 2px #000")), -6.0);
+        assert_eq!(shadow_dx(Some("0 8px 16px #000")), 0.0);
+        assert_eq!(shadow_dx(Some("4px 8px")), 0.0, "fewer than three lengths: no offset read");
+        assert_eq!(shadow_dx(Some("none")), 0.0);
+        assert_eq!(shadow_dx(None), 0.0);
+    }
 
     #[test]
     fn inline_custom_properties_reach_the_subtree() {
