@@ -15,10 +15,25 @@ pub struct JsAnimHost(Rc<Inner>);
 
 struct Inner {
     // Fields drop in declaration order. Detach the JIT before the runtime.
-    _jit: Jit,
+    // `None` is a plain interpreter: the platform has no W^X backend, or the
+    // guard refused to attach. The script still runs.
+    _jit: Option<Jit>,
     _rt: Runtime,
     ctx: Context,
     slots: RefCell<Vec<AnimBitmap>>,
+}
+
+/// Attach native codegen when this target has it. Otherwise keep QuickJS
+/// as an interpreter. A failed attach does not fail the host.
+fn attach_jit(rt: &Runtime) -> Option<Jit> {
+    let jit = Jit::attach(rt, JitConfig::default()).ok()?;
+    match jit.require_native() {
+        Ok(()) => Some(jit),
+        // iOS, Android, and every other target whose code-memory backend is
+        // `NoopBackend`. The guard stays so drop order is unchanged.
+        Err(rquickjs_jit::JitError::UnsupportedPlatform) => Some(jit),
+        Err(_) => None,
+    }
 }
 
 fn err(e: rquickjs::Error, ctx: &rquickjs::Ctx<'_>) -> AnimScriptError {
@@ -36,14 +51,11 @@ fn err(e: rquickjs::Error, ctx: &rquickjs::Ctx<'_>) -> AnimScriptError {
 
 impl JsAnimHost {
     pub fn new() -> Result<Self, AnimScriptError> {
-        let rt = Runtime::new().map_err(|e| AnimScriptError::Script(e.to_string()))?;
+        let rt = Runtime::new().map_err(|_| AnimScriptError::Unavailable("quickjs runtime failed to start"))?;
         // Rider + palm + a few offscreen copies of the rider. 32 MiB is short of that.
         rt.set_memory_limit(96 << 20);
-        let jit = Jit::attach(&rt, JitConfig::default())
-            .map_err(|e| AnimScriptError::Script(format!("quickjs-jit attach: {e:?}")))?;
-        jit.require_native()
-            .map_err(|e| AnimScriptError::Script(format!("quickjs-jit native: {e:?}")))?;
-        let ctx = Context::full(&rt).map_err(|e| AnimScriptError::Script(e.to_string()))?;
+        let jit = attach_jit(&rt);
+        let ctx = Context::full(&rt).map_err(|_| AnimScriptError::Unavailable("quickjs context failed to start"))?;
         ctx.with(|c| -> Result<(), AnimScriptError> {
             let m = Module::declare(c.clone(), "uzor-anim-prelude", PRELUDE_JS).map_err(|e| err(e, &c))?;
             let (_m, p) = m.eval().map_err(|e| err(e, &c))?;
@@ -119,8 +131,11 @@ impl JsAnimHost {
     }
 
     pub(crate) fn run(&self, name: &str, t: f64, q: &[f64; 14], out: &mut Vec<f64>) -> Result<(), AnimScriptError> {
-        // Install code compiled on the previous frame. poll stays on this thread.
-        self.0._jit.poll();
+        // Install code compiled on the previous frame. No guard means the
+        // interpreter, and there is nothing to install. poll stays on this thread.
+        if let Some(jit) = self.0._jit.as_ref() {
+            jit.poll();
+        }
         self.0.ctx.with(|c| {
             let f: Function = c.globals().get("__uzorAnimRun").map_err(|e| err(e, &c))?;
             let a: TypedArray<f64> = f.call((name, t, q.to_vec())).map_err(|e| err(e, &c))?;

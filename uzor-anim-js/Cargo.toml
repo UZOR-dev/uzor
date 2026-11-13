@@ -25,9 +25,11 @@ rquickjs-jit = { package = "quickjs-jit-runtime", version = "=0.14.1", features 
 
 # The crate ships no aarch64-apple-ios or Android bindings. bindgen generates them with
 # the iOS SDK or the NDK sysroot (BINDGEN_EXTRA_CLANG_ARGS_<target>="--sysroot=...").
+# No `compiler` feature here: those targets have no W^X backend, so Cranelift
+# would be dead weight. QuickJS runs the scene as the interpreter.
 [target.'cfg(all(not(target_arch = "wasm32"), any(target_os = "ios", target_os = "android")))'.dependencies]
 rquickjs = { package = "quickjs-jit", version = "=0.14.1", default-features = false, features = ["std", "jit-abi", "loader", "bindgen"], optional = true }
-rquickjs-jit = { package = "quickjs-jit-runtime", version = "=0.14.1", features = ["compiler"], optional = true }
+rquickjs-jit = { package = "quickjs-jit-runtime", version = "=0.14.1", optional = true }
 
 [features]
 # Embedded QuickJS JIT for native targets. Without it `JsAnimHost::new`

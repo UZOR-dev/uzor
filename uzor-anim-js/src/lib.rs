@@ -11,7 +11,9 @@
 //!   without `unsafe-eval`); scripts come from same-origin `<script>` tags or
 //!   app snippets. [`JsAnimHost::load`] evaluates source text only where the
 //!   CSP allows eval. No interpreter bytes in the wasm.
-//! - **native**: embedded QuickJS behind the `quickjs` feature.
+//! - **native**: embedded QuickJS behind the `quickjs` feature. Windows,
+//!   macOS and Linux (x86_64 / aarch64) compile hot functions. Every other
+//!   native target runs the same scripts on the interpreter.
 //!
 //! ```ignore
 //! let host = JsAnimHost::new()?;

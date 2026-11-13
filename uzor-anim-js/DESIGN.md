@@ -8,7 +8,7 @@ only interface, so producers are interchangeable:
 | producer | where | cost |
 |---|---|---|
 | page JS engine (V8/SpiderMonkey/JSC) | web | no interpreter in the wasm; prelude is a same-origin wasm-bindgen snippet, so no `unsafe-eval` is needed |
-| embedded QuickJS (`quickjs` feature) | native | about +0.7 MB stripped, about 1 ms startup |
+| embedded QuickJS (`quickjs` feature) | native. Windows, macOS and Linux x86_64/aarch64 compile hot functions. iOS, Android and every other target run the same script on the interpreter: those platforms have no W^X backend in quickjs-jit, and iOS does not grant third-party apps executable-writable pages | about +0.7 MB stripped, about 1 ms startup |
 | `BakedAnim` (frames baked offline in node) | both | no engine; data only; loses mouse and live params |
 | Rust `AnimOpWriter` (hand port) | both | none; the final form for hot paths |
 
