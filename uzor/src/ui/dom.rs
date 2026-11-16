@@ -61,7 +61,7 @@
 use crate::render::{AnimParams, AnimRegistry, RenderContext, TextAlign};
 use crate::types::Rect;
 use crate::ui::css_box::ellipsize;
-use crate::ui::css_text::{fill_text_css, INTER};
+use crate::ui::css_text::{fill_text_css, metrics_for};
 use crate::ui::flow::{layout_in, LBox, Laid};
 use crate::ui::style::{apply_decl, Node, Sheet, State, Style, StyleField};
 use crate::ui::widgets::composite::dialog::{fill_round_rect, path_round_rect, Shadow};
@@ -1452,7 +1452,7 @@ fn paint_box_unclipped(ctx: &mut dyn RenderContext, b: &Placed) {
         paint_runs(ctx, inl, content, color);
     }
     if let Some(t) = &b.text {
-        let (_, px, lh, _) = font_of(s);
+        let (_, px, lh, fam) = font_of(s);
         ctx.set_font(&font_str(s));
         let lines: Vec<String> = if wraps(s) {
             let u = units(ctx, t, true);
@@ -1480,7 +1480,7 @@ fn paint_box_unclipped(ctx: &mut dyn RenderContext, b: &Placed) {
         let top = content.y + ((content.height - lh * lines.len() as f64) / 2.0).max(0.0);
         ctx.set_fill_color(color);
         for (i, l) in lines.iter().enumerate() {
-            fill_text_css(ctx, l, x, top + lh * i as f64, px, lh, INTER, align);
+            fill_text_css(ctx, l, x, top + lh * i as f64, px, lh, metrics_for(&fam), align);
         }
     }
     if let Some(svg) = &b.svg {
@@ -1539,10 +1539,10 @@ fn paint_runs(ctx: &mut dyn RenderContext, inl: &Inline, c: Rect, fg: &str) {
         for p in &line.pieces {
             let Some(run) = inl.runs.get(p.run) else { continue };
             let rs = &run.style;
-            let (_, px, _, _) = font_of(rs);
+            let (_, px, _, fam) = font_of(rs);
             ctx.set_font(&font_str(rs));
             ctx.set_fill_color(rs.color.as_deref().unwrap_or(fg));
-            fill_text_css(ctx, &p.text, c.x + p.x + p.pad, c.y + line.y, px, line.height, INTER, TextAlign::Left);
+            fill_text_css(ctx, &p.text, c.x + p.x + p.pad, c.y + line.y, px, line.height, metrics_for(&fam), TextAlign::Left);
         }
     }
 }
@@ -1621,7 +1621,7 @@ fn paint_control(ctx: &mut dyn RenderContext, b: &Placed, ctl: &Control, c: Rect
             }
         }
         Control::Input(e) => {
-            let (_, px, lh, _) = font_of(s);
+            let (_, px, lh, fam) = font_of(s);
             let top = c.y + ((c.height - lh) / 2.0).max(0.0);
             let scroll = b.input_scroll();
             ctx.save();
@@ -1632,7 +1632,7 @@ fn paint_control(ctx: &mut dyn RenderContext, b: &Placed, ctl: &Control, c: Rect
             let x0 = c.x - scroll;
             if e.shows_placeholder() {
                 ctx.set_fill_color(s.custom("--placeholder").unwrap_or("#8a8a8a"));
-                fill_text_css(ctx, &e.placeholder, x0, top, px, lh, INTER, TextAlign::Left);
+                fill_text_css(ctx, &e.placeholder, x0, top, px, lh, metrics_for(&fam), TextAlign::Left);
             } else {
                 let at = |i: usize| b.bounds.get(i).copied().unwrap_or(0.0);
                 if let (Some(a), Some(k)) = (e.anchor, e.caret) {
@@ -1643,7 +1643,7 @@ fn paint_control(ctx: &mut dyn RenderContext, b: &Placed, ctl: &Control, c: Rect
                     }
                 }
                 ctx.set_fill_color(fg);
-                fill_text_css(ctx, &e.display(), x0, top, px, lh, INTER, TextAlign::Left);
+                fill_text_css(ctx, &e.display(), x0, top, px, lh, metrics_for(&fam), TextAlign::Left);
                 if let (Some(p), Some(k)) = (&e.preedit, e.caret) {
                     let (a, z) = (at(k), at(k + p.chars().count()));
                     ctx.set_stroke_color(fg);
@@ -2074,6 +2074,20 @@ mod tests {
         assert_eq!(shadow_dx(Some("4px 8px")), 0.0, "fewer than three lengths: no offset read");
         assert_eq!(shadow_dx(Some("none")), 0.0);
         assert_eq!(shadow_dx(None), 0.0);
+    }
+
+    #[test]
+    fn text_baseline_uses_the_familys_own_metrics() {
+        let mut ys = Vec::new();
+        for fam in ["Inter", "monospace", "Roboto"] {
+            let mut ctx = crate::testing::RecordingRenderContext::with_char_width(7.0);
+            let sh = Sheet::parse(&format!("div.t {{ font-family: {fam}; font-size: 20px; line-height: 40px }}")).unwrap();
+            render(&mut ctx, &sh, &El::new("div.t").text("Ag"), 0.0, 0.0, 400.0, &|_| State::NONE);
+            ys.push(ctx.fill_texts()[0].2);
+        }
+        assert!((ys[0] - 27.275390625).abs() < 1e-6, "Inter {}", ys[0]);
+        assert!((ys[1] - 27.2).abs() < 1e-6, "monospace {}", ys[1]);
+        assert!((ys[2] - ys[0]).abs() > 1e-6, "Roboto must not land on Inter's baseline");
     }
 
     #[test]
