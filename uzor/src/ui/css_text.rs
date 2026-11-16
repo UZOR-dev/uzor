@@ -19,6 +19,29 @@ pub struct FontMetrics {
 /// Inter 4 (ascender 1984, descender -494, 2048 upem).
 pub const INTER: FontMetrics = FontMetrics { ascent: 1984.0 / 2048.0, descent: 494.0 / 2048.0 };
 
+/// JetBrains Mono (ascender 1020, descender -300, 1000 upem).
+pub const JETBRAINS_MONO: FontMetrics = FontMetrics { ascent: 1.02, descent: 0.30 };
+
+/// Roboto (hhea ascender 1900, descender -500, 2048 upem).
+pub const ROBOTO: FontMetrics = FontMetrics { ascent: 1900.0 / 2048.0, descent: 500.0 / 2048.0 };
+
+/// PT Root UI (ascender 950, descender -250, 1000 upem).
+pub const PT_ROOT_UI: FontMetrics = FontMetrics { ascent: 0.95, descent: 0.25 };
+
+/// The vertical metrics of the first family in a CSS `font-family` list. A
+/// browser centres each face's own ascent+descent in the line box; known faces
+/// use their own metrics here, anything else falls back to Inter (the catalog
+/// default), so unset / Inter / sans-serif text keeps its old placement.
+pub fn metrics_for(family: &str) -> FontMetrics {
+    let first = family.split(',').next().unwrap_or("").trim().trim_matches('"').trim_matches('\'').to_ascii_lowercase();
+    match first.as_str() {
+        "jetbrains mono" | "monospace" => JETBRAINS_MONO,
+        "roboto" => ROBOTO,
+        "pt root ui" => PT_ROOT_UI,
+        _ => INTER,
+    }
+}
+
 /// Baseline offset from the top of a CSS line box.
 pub fn baseline(px: f64, line_height: f64, m: FontMetrics) -> f64 {
     (line_height - (m.ascent + m.descent) * px) / 2.0 + m.ascent * px
@@ -39,5 +62,19 @@ mod tests {
     fn inter_14_21() {
         let b = baseline(14.0, 21.0, INTER);
         assert!((b - 15.59).abs() < 0.02, "{b}");
+    }
+
+    #[test]
+    fn metrics_for_resolves_the_first_family_and_falls_back_to_inter() {
+        assert_eq!(metrics_for("Inter, sans-serif"), INTER);
+        assert_eq!(metrics_for(""), INTER);
+        assert_eq!(metrics_for("sans-serif"), INTER);
+        assert_eq!(metrics_for("monospace"), JETBRAINS_MONO);
+        assert_eq!(metrics_for("\"JetBrains Mono\", monospace"), JETBRAINS_MONO);
+        assert_eq!(metrics_for("Roboto"), ROBOTO);
+        assert_eq!(metrics_for("PT Root UI"), PT_ROOT_UI);
+        // A browser centres each face's own metrics: mono lands off Inter's.
+        assert!((baseline(20.0, 40.0, JETBRAINS_MONO) - 27.2).abs() < 1e-9);
+        assert!((baseline(20.0, 40.0, INTER) - 27.275390625).abs() < 1e-9);
     }
 }
