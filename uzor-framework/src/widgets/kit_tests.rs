@@ -184,6 +184,33 @@ fn splitter_drags_within_range() {
 }
 
 #[test]
+fn dom_draggable_reports_pointer_deltas_while_pressed() {
+    let mut h = Harness::default();
+    let sheet = uzor::ui::domkit::sheet();
+    let rect = Rect::new(0.0, 0.0, 400.0, 300.0);
+    let tree = || {
+        uzor::ui::dom::El::new("div")
+            .id("dlg")
+            .css("width: 200px; height: 100px")
+            .child(uzor::ui::dom::El::new("div").id("hdr").css("height: 24px").text("head"))
+    };
+    let mut press = VisualView::<K>::default();
+    press.pressed = Some(WidgetId::from("hdr"));
+    press.button_down = true;
+    press.pointer = Some((50.0, 10.0));
+    let r = h.frame(&press, |cx| dom(rect, &sheet, tree()).draggable("hdr").build(cx));
+    assert!(r.moved.is_empty(), "the first pressed frame seeds the position");
+    press.pointer = Some((58.0, 14.0));
+    let r = h.frame(&press, |cx| dom(rect, &sheet, tree()).draggable("hdr").build(cx));
+    assert_eq!(r.moved, vec![("hdr".to_string(), 8.0, 4.0)]);
+    let r = h.frame(&idle(), |cx| dom(rect, &sheet, tree()).draggable("hdr").build(cx));
+    assert!(r.moved.is_empty(), "release ends the drag");
+    // Without the opt-in nothing is reported even under a press.
+    let r = h.frame(&press, |cx| dom(rect, &sheet, tree()).build(cx));
+    assert!(r.moved.is_empty(), "draggable is opt-in");
+}
+
+#[test]
 fn toasts_keep_frames_coming_until_they_expire() {
     let mut h = Harness::default();
     let mut stack = ToastStackState::new();
