@@ -116,3 +116,17 @@ The CLI takes the new methods as `uzor-dev wait-for '#id' [state=gone]`,
 `uzor-dev settle 500`, `uzor-dev record on`, `uzor-dev record off --out
 s.jsonl`, `uzor-dev replay s.jsonl secrets=@secrets.json` (a `@PATH` value is
 read from the file, so secrets stay off the command line).
+
+## Pixel compare (local, no app)
+
+`uzor-dev compare <ref.png> <port.png> [out.png] [--tol N] [--region name:x,y,w,h ...] [--json]`
+compares two equal-size screenshots for the pixel-perfect port rule. A pixel
+differ when its max per-channel absolute difference exceeds `--tol` (default
+8). It writes a `reference | port | diff` composite to `out.png` (or `--out`):
+the diff panel paints every differing pixel red `(255,40,40)` over the
+reference dimmed to 40%, so divergence is visible at a glance. It prints the
+differing-pixel share overall and per `--region`; `--json` prints
+`{width, height, tol, all, regions:{name:share}, out}` for a test loop to
+gate on. Palette/grayscale PNGs are expanded to RGB; alpha is ignored. This
+is the Rust equivalent of the port's `tools/compare_shots.py`, so the loop
+needs no Python.

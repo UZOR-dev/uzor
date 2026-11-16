@@ -8,6 +8,7 @@
 
 #![deny(missing_docs)]
 
+pub mod compare;
 pub mod discovery;
 pub mod events;
 pub mod server;

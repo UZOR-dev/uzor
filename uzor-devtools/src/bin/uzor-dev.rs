@@ -18,7 +18,12 @@
 //!   uzor-dev replay session.jsonl [speed=2] [secrets=@secrets.json]
 //!   uzor-dev events [since=0] [wait_ms=5000]
 //!   uzor-dev raw '{"method":"ping"}'
+//!   uzor-dev compare ref.png port.png out.png [--tol 8] [--region name:x,y,w,h ...] [--json]
 //! ```
+//!
+//! `compare` is local (no running app): it writes a `reference | port | diff`
+//! composite (differing pixels red over a dimmed reference) and prints the
+//! differing-pixel share overall and per region.
 //!
 //! ARGS are `key=value` pairs (a value that parses as JSON is taken as
 //! JSON), or one JSON object, or for click/hover/focus/scroll a bare
@@ -30,7 +35,7 @@
 //! found under `$XDG_RUNTIME_DIR/<app>/` (else `~/.config/<app>/`); `--app`
 //! defaults to `hatchery-hq`, or `UZOR_DEV_APP`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use base64::Engine as _;
@@ -40,7 +45,8 @@ use uzor_devtools::server::http_call;
 
 fn usage() -> ExitCode {
     eprintln!("usage: uzor-dev [--app DIR] [--pid N] [--file PATH] <method> [ARGS...] [--out FILE]");
-    eprintln!("methods: {} events raw", uzor_devtools::METHODS.join(" "));
+    eprintln!("methods: {} events raw compare", uzor_devtools::METHODS.join(" "));
+    eprintln!("compare: uzor-dev compare <ref.png> <port.png> [out.png] [--tol N] [--region name:x,y,w,h ...] [--json]");
     ExitCode::from(2)
 }
 
@@ -69,6 +75,10 @@ fn main() -> ExitCode {
         i += 1;
     }
     let Some((method, params)) = rest.split_first() else { return usage() };
+
+    if method == "compare" {
+        return compare_cmd(params, out);
+    }
 
     let info = match locate(&app, pid, file) {
         Ok(i) => i,
@@ -137,6 +147,70 @@ fn main() -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
+    }
+}
+
+fn compare_cmd(args: &[String], out_override: Option<PathBuf>) -> ExitCode {
+    let mut positional: Vec<String> = Vec::new();
+    let mut opts = uzor_devtools::compare::CompareOptions::default();
+    let mut json_out = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--tol" => {
+                i += 1;
+                match args.get(i).and_then(|v| v.parse::<u8>().ok()) {
+                    Some(t) => opts.tol = t,
+                    None => {
+                        eprintln!("uzor-dev compare: --tol needs a number 0-255");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            "--region" => {
+                i += 1;
+                match args.get(i).map(|s| uzor_devtools::compare::Region::parse(s)) {
+                    Some(Ok(r)) => opts.regions.push(r),
+                    _ => {
+                        eprintln!("uzor-dev compare: --region needs name:x,y,w,h");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            "--json" => json_out = true,
+            other => positional.push(other.to_string()),
+        }
+        i += 1;
+    }
+    if positional.len() < 2 {
+        eprintln!("usage: uzor-dev compare <ref.png> <port.png> [out.png] [--tol N] [--region name:x,y,w,h ...] [--json]");
+        return ExitCode::from(2);
+    }
+    let Some(out_path) = out_override.or_else(|| positional.get(2).map(PathBuf::from)) else {
+        eprintln!("uzor-dev compare: need an output path (positional or --out)");
+        return ExitCode::from(2);
+    };
+    match uzor_devtools::compare::compare_pngs(Path::new(&positional[0]), Path::new(&positional[1]), &out_path, &opts) {
+        Ok(r) => {
+            if json_out {
+                let regions: Map<String, Value> = r.regions.iter().map(|(n, f)| (n.clone(), json!(f))).collect();
+                println!(
+                    "{}",
+                    json!({"width": r.width, "height": r.height, "tol": r.tol, "all": r.all, "regions": regions, "out": out_path.display().to_string()})
+                );
+            } else {
+                println!("all: {:.2}% of pixels differ", r.all * 100.0);
+                for (n, f) in &r.regions {
+                    println!("{n}: {:.2}%", f * 100.0);
+                }
+                println!("composite: {}", out_path.display());
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("uzor-dev compare: {e}");
+            ExitCode::from(1)
+        }
     }
 }
 
