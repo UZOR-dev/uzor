@@ -1779,6 +1779,10 @@ pub struct DomBuilder<'a> {
     key: Option<&'a KeyInput>,
     /// Framework-owned `overflow: auto | scroll` containers ([`DomBuilder::dom_scroll`]).
     own_scroll: bool,
+    /// Elements whose press-drag deltas are reported ([`DomBuilder::draggable`]).
+    drag: Vec<String>,
+    /// Grips whose press-drag deltas are reported as size ([`DomBuilder::resizable`]).
+    resize: Vec<String>,
 }
 
 fn number_char(c: char) -> bool {
@@ -1865,6 +1869,21 @@ pub struct DomResponse {
     /// What the registered slot painters reported this frame
     /// ([`DomBuilder::slot_registry`]), in paint order.
     pub slot_actions: Vec<uzor::ui::dom::SlotAction>,
+    /// Opt-in dialog drag ([`DomBuilder::draggable`]): `(id, dx, dy)` pointer deltas
+    /// this frame while the element holds the press; the app moves its own dialog.
+    /// Empty unless the opt-in is used.
+    pub moved: Vec<(String, f64, f64)>,
+    /// Opt-in dialog resize ([`DomBuilder::resizable`]): `(id, dw, dh)` pointer deltas
+    /// this frame while the grip holds the press; the app resizes its own dialog.
+    /// Empty unless the opt-in is used.
+    pub resized: Vec<(String, f64, f64)>,
+}
+
+/// The last pointer position of an opt-in drag / resize ([`DomBuilder::draggable`],
+/// [`DomBuilder::resizable`]); `None` while the element does not hold the press.
+#[derive(Default)]
+struct DomDrag {
+    last: Option<(f64, f64)>,
 }
 
 /// The scroll state of one framework-owned DOM scroll container.
@@ -1920,7 +1939,7 @@ pub fn dom_scroll_top<'c, C: ContentCx<'c>>(cx: &mut C, id: &str) -> f64 {
 ///
 /// [`El::name`]: uzor::ui::dom::El::name
 pub fn dom<'a>(rect: Rect, sheet: &'a uzor::ui::style::Sheet, root: uzor::ui::dom::El) -> DomBuilder<'a> {
-    DomBuilder { rect, sheet, root, scroll: 0.0, viewport: None, slots: None, registry: None, numbers: Vec::new(), key: None, own_scroll: false }
+    DomBuilder { rect, sheet, root, scroll: 0.0, viewport: None, slots: None, registry: None, numbers: Vec::new(), key: None, own_scroll: false, drag: Vec::new(), resize: Vec::new() }
 }
 
 impl<'a> DomBuilder<'a> {
@@ -1981,15 +2000,28 @@ impl<'a> DomBuilder<'a> {
         self.own_scroll = true;
         self
     }
+    /// Report pointer deltas while element `id` holds the press as
+    /// [`DomResponse::moved`] `(id, dx, dy)`, so the app can move its own dialog by
+    /// its header. Off unless asked; the framework never moves the tree itself.
+    pub fn draggable(mut self, id: impl Into<String>) -> Self {
+        self.drag.push(id.into());
+        self
+    }
+    /// The same for a resize grip: [`DomResponse::resized`] `(id, dw, dh)` while the
+    /// grip holds the press; the app applies the delta to its own dialog size.
+    pub fn resizable(mut self, id: impl Into<String>) -> Self {
+        self.resize.push(id.into());
+        self
+    }
 
     /// Paint the tree and register its hit targets and fields.
     pub fn build<'c, C: ContentCx<'c>>(self, cx: &mut C) -> DomResponse {
         let now_ms = cx.time_ms();
         let frame_now = cx.frame_now_ms();
         let overlay = cx.is_overlay();
-        let DomBuilder { rect, sheet, mut root, scroll, viewport, slots, registry, numbers, key, own_scroll } = self;
+        let DomBuilder { rect, sheet, mut root, scroll, viewport, slots, registry, numbers, key, own_scroll, drag, resize } = self;
         let (resp, ime, more) = cx.with_paint(|render, widgets, v, _| {
-            build_paint(render, widgets, v, now_ms, frame_now, overlay, rect, sheet, &mut root, scroll, viewport, slots, registry, &numbers, key, own_scroll)
+            build_paint(render, widgets, v, now_ms, frame_now, overlay, rect, sheet, &mut root, scroll, viewport, slots, registry, &numbers, key, own_scroll, &drag, &resize)
         });
         if let Some(at) = ime {
             cx.ime_area(at);
@@ -2023,6 +2055,8 @@ fn build_paint(
     numbers: &[(String, uzor::ui::domkit::NumberSpec)],
     key: Option<&KeyInput>,
     own_scroll: bool,
+    drag: &[String],
+    resize: &[String],
 ) -> (DomResponse, Option<Rect>, bool) {
     use uzor::ui::dom::{Control, El};
     use uzor::ui::style::State;
@@ -2337,7 +2371,30 @@ fn build_paint(
         }
     }
     let key_used = key_used || slot_key_used;
-    (DomResponse { dom: d, clicked, captured, hovered, focused, edited, scrolls, key_used, slot_actions }, ime, more)
+    // Opt-in dialog drag / resize: pointer deltas while the element holds the press.
+    // The first pressed frame only seeds the position; release forgets it.
+    let mut moved = Vec::new();
+    let mut resized = Vec::new();
+    for (ids, out) in [(drag, &mut moved), (resize, &mut resized)] {
+        for id in ids {
+            let wid = WidgetId::from(id.as_str());
+            let st = widgets.states.get_or_insert_with(WidgetId::from(format!("{id}:dom-drag")), DomDrag::default);
+            if v.is_pressed(&wid) {
+                if let Some(p) = v.raw_pointer() {
+                    if let Some(last) = st.last {
+                        let (dx, dy) = (p.0 - last.0, p.1 - last.1);
+                        if dx != 0.0 || dy != 0.0 {
+                            out.push((id.clone(), dx, dy));
+                        }
+                    }
+                    st.last = Some(p);
+                }
+            } else {
+                st.last = None;
+            }
+        }
+    }
+    (DomResponse { dom: d, clicked, captured, hovered, focused, edited, scrolls, key_used, slot_actions, moved, resized }, ime, more)
 }
 
 /// What a [`dom`] tree needs from a [`uzor::ui::dom::SlotRegistry`]. A trait object
