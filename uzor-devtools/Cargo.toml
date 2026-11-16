@@ -15,6 +15,7 @@ readme = "README.md"
 serde_json = "1"
 base64 = "0.22"
 getrandom = "0.2"
+png = "0.17"
 
 [[bin]]
 name = "uzor-dev"

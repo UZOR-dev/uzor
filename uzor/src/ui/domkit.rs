@@ -21,6 +21,7 @@
 //! | tabs | [`tabs`] | `div.k-tabs` > `button.k-tab` (`.on`) | `{id}:tab:{i}` |
 //! | segmented | [`segmented`] | `div.k-seg` > `button.k-seg-btn` (`.on`) | `{id}:{i}` |
 //! | list | [`list`] | `div.k-list` > `div.k-li` (`.sel`) | `{id}:row:{i}` |
+//! | radio group | [`radio_group`] | `div.k-radio-group` > `div.k-radio` (`.sel`) > ring + dot | `{id}:{key}` |
 //! | table | [`table`] | `div.k-table` > grid `div.k-tr` (`.k-th`, `.sel`) > `div.k-td` (`.num`) | `{id}:row:{i}` |
 //! | menu | [`menu`] | fixed `div.k-menu` > `div.k-mi` (`.danger`, `.dis`), `div.k-sep` | `{id}:item:{i}` |
 //! | dialog | [`dialog`] | fixed `div.k-scrim` + `div.k-dialog` > head, body, foot | `{id}:scrim`, `{id}:close`, `{id}:foot:{i}` |
@@ -66,6 +67,13 @@ button.k-switch:checked:hover { background: var(--k-accent-hover) }
 div.k-check { display: flex; align-items: center; gap: 8px }
 span.k-box { width: 16px; height: 16px; padding: 1px; border-radius: 4px; border: 1.5px solid var(--k-track-hover); --check: #ffffff; --check-width: 2px }
 span.k-box:checked { background: var(--k-accent); border-color: var(--k-accent) }
+div.k-radio-group { display: flex; flex-direction: column; gap: 4px }
+div.k-radio { display: flex; align-items: center; height: 32px; padding: 0 6px 0 3.25px; border-radius: 6px; gap: 11.25px }
+div.k-radio:hover { background: var(--k-hover) }
+span.k-radio-ring { display: flex; align-items: center; justify-content: center; width: 15.5px; height: 15.5px; border: 1.5px solid var(--k-line); border-radius: 7.75px; flex: none }
+div.k-radio.sel span.k-radio-ring { border-color: var(--k-accent) }
+span.k-radio-dot { width: 8px; height: 8px; border-radius: 4px; background: var(--k-accent) }
+span.k-radio-label { font-size: 13px; color: var(--k-fg) }
 div.k-input { height: 32px; padding: 0 10px; border-radius: 8px; background: var(--k-field); border: 1px solid var(--k-line);
               --placeholder: var(--k-muted); --selection: rgba(59,130,246,0.4); --caret: var(--k-fg) }
 div.k-input:hover { border-color: var(--k-track) }
@@ -230,6 +238,7 @@ button.k-btn { padding: 12px 18px; min-height: 44px; border-radius: 10px }
 button.k-switch { width: 44px; height: 26px; padding: 3px; border-radius: 13px }
 span.k-box { width: 22px; height: 22px; border-radius: 6px }
 div.k-check { gap: 12px; min-height: 44px }
+div.k-radio { min-height: 44px }
 div.k-input { height: 44px; padding: 0 12px; border-radius: 10px }
 select.k-select { height: 44px; padding: 0 34px 0 14px; border-radius: 10px }
 div.k-opt { padding: 12px 12px; border-radius: 8px }
@@ -331,6 +340,27 @@ pub fn switch_at(id: &str, on: bool, pos: f64, name: &str) -> El {
 /// A checkbox with its label; the row is the hit.
 pub fn checkbox(id: &str, on: bool, label: &str) -> El {
     El::new("div.k-check").id(id).tab().name(label).child(El::new("span.k-box").control(Control::checkbox(on))).child(El::new("span").text(label))
+}
+
+/// A radio group: one choice of many, compact 32 px rows 4 px apart (the mlc
+/// language-picker metrics: 15.5 px ring with a 1.5 px border, an 8 px dot when
+/// on, a 13 px label at x=30). Each row is a hit `{id}:{key}`; the selected row
+/// carries `.sel` (accent ring + dot). The hover highlight is
+/// `div.k-radio:hover` — set `--k-hover: transparent` to turn it off.
+pub fn radio_group(id: &str, opts: &[(&str, &str)], selected: usize) -> El {
+    El::new("div.k-radio-group").id(id).children(opts.iter().enumerate().map(|(i, (key, label))| {
+        El::new(if i == selected { "div.k-radio.sel" } else { "div.k-radio" })
+            .id(format!("{id}:{key}"))
+            .tab()
+            .name(*label)
+            .child(El::new("span.k-radio-ring").child_if(i == selected, || El::new("span.k-radio-dot")))
+            .child(El::new("span.k-radio-label").text(*label))
+    }))
+}
+
+/// The key of a radio row hit (`{id}:{key}`), if `hit` is one of this group's rows.
+pub fn picked_radio<'a>(id: &str, hit: &'a str) -> Option<&'a str> {
+    hit.strip_prefix(&format!("{id}:")).filter(|k| !k.is_empty())
 }
 
 /// A busy spinner at time `t` seconds.
@@ -1318,6 +1348,39 @@ mod tests {
         assert_eq!((r.x, r.y), (600.0, 40.0), "below, pulled back inside");
         let r = flyout_at(Rect::new(4.0, 560.0, 32.0, 32.0), vp, 200.0, 150.0, true);
         assert_eq!(r.y, 450.0, "lifted to fit");
+    }
+
+    #[test]
+    fn radio_group_rows_are_hits_with_a_sel_ring_and_dot() {
+        let opts = [("en", "English"), ("ru", "Russian"), ("de", "German")];
+        let g = radio_group("lang", &opts, 1);
+        assert_eq!(g.children.len(), 3);
+        assert_eq!(g.children[0].spec, "div.k-radio");
+        assert_eq!(g.children[1].spec, "div.k-radio.sel");
+        let dots = |row: &El| {
+            row.children
+                .iter()
+                .filter(|c| c.spec == "span.k-radio-ring")
+                .flat_map(|r| r.children.iter())
+                .filter(|d| d.spec == "span.k-radio-dot")
+                .count()
+        };
+        assert_eq!(dots(&g.children[0]), 0, "no dot off");
+        assert_eq!(dots(&g.children[1]), 1, "dot on the selected row");
+        assert_eq!(picked_radio("lang", "lang:ru"), Some("ru"));
+        assert_eq!(picked_radio("lang", "lang:en"), Some("en"));
+        assert_eq!(picked_radio("lang", "other:ru"), None);
+
+        let mut ctx = NullRenderContext::default();
+        let sheet = sheet();
+        let row = El::new("div").css("width: 300px").child(g);
+        let dom = lay_out_in(&mut ctx, &sheet, &row, 0.0, 0.0, 300.0, None, &|_| State::NONE);
+        let ids: Vec<&str> = dom.hits().map(|(id, _)| id).collect();
+        // the group container is a hit too (like a toolbar bar); rows sit on top
+        assert_eq!(ids, ["lang", "lang:en", "lang:ru", "lang:de"]);
+        let (a, b) = (dom.rect("lang:en").unwrap(), dom.rect("lang:ru").unwrap());
+        assert_eq!((a.height, b.height), (32.0, 32.0), "compact rows");
+        assert_eq!(b.y - a.y, 36.0, "32 px row + 4 px gap");
     }
 
     #[test]

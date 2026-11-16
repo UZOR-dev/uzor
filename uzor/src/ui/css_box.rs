@@ -167,9 +167,19 @@ impl TextBox {
 /// One-line ellipsis with the current font (`text-overflow:ellipsis`).
 /// Whitespace runs collapse to one space first, like `white-space:nowrap`.
 pub fn ellipsize(ctx: &mut dyn RenderContext, s: &str, max: f64) -> String {
-    let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    if ctx.measure_text(&flat) <= max {
-        return flat;
+    fit_ellipsis(ctx, &s.split_whitespace().collect::<Vec<_>>().join(" "), max)
+}
+
+/// One-line ellipsis that keeps the run's own spaces (`white-space: pre`):
+/// leading and doubled spaces survive; the line is cut with an ellipsis
+/// only when it overflows `max`.
+pub fn ellipsize_preserve(ctx: &mut dyn RenderContext, s: &str, max: f64) -> String {
+    fit_ellipsis(ctx, s, max)
+}
+
+fn fit_ellipsis(ctx: &mut dyn RenderContext, flat: &str, max: f64) -> String {
+    if ctx.measure_text(flat) <= max {
+        return flat.to_string();
     }
     let chars: Vec<char> = flat.chars().collect();
     let fits = |ctx: &mut dyn RenderContext, n: usize| ctx.measure_text(&format!("{}…", chars[..n].iter().collect::<String>())) <= max;

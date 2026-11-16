@@ -60,7 +60,7 @@
 
 use crate::render::{AnimParams, AnimRegistry, RenderContext, TextAlign};
 use crate::types::Rect;
-use crate::ui::css_box::ellipsize;
+use crate::ui::css_box::{ellipsize, ellipsize_preserve};
 use crate::ui::css_text::{fill_text_css, INTER};
 use crate::ui::flow::{layout_in, LBox, Laid};
 use crate::ui::style::{apply_decl, Node, Sheet, State, Style, StyleField};
@@ -1468,6 +1468,8 @@ fn paint_box_unclipped(ctx: &mut dyn RenderContext, b: &Placed) {
                 }
             }
             v
+        } else if matches!(s.white_space.as_deref(), Some("pre")) {
+            vec![ellipsize_preserve(ctx, t, content.width + 0.5)]
         } else {
             vec![ellipsize(ctx, t, content.width + 0.5)]
         };
@@ -2074,6 +2076,20 @@ mod tests {
         assert_eq!(shadow_dx(Some("4px 8px")), 0.0, "fewer than three lengths: no offset read");
         assert_eq!(shadow_dx(Some("none")), 0.0);
         assert_eq!(shadow_dx(None), 0.0);
+    }
+
+    #[test]
+    fn white_space_pre_keeps_leading_and_doubled_spaces_on_one_line() {
+        let el = El::new("div.t").text("  Events  log");
+        let mut ctx = crate::testing::RecordingRenderContext::with_char_width(7.0);
+        let sh = Sheet::parse("div.t { font-size: 12px; line-height: 20px; white-space: pre }").unwrap();
+        render(&mut ctx, &sh, &el, 0.0, 0.0, 400.0, &|_| State::NONE);
+        assert_eq!(ctx.fill_texts()[0].0, "  Events  log");
+        // nowrap keeps the CSS collapse; only pre preserves the run's spaces.
+        let mut ctx2 = crate::testing::RecordingRenderContext::with_char_width(7.0);
+        let sh2 = Sheet::parse("div.t { font-size: 12px; line-height: 20px; white-space: nowrap }").unwrap();
+        render(&mut ctx2, &sh2, &el, 0.0, 0.0, 400.0, &|_| State::NONE);
+        assert_eq!(ctx2.fill_texts()[0].0, "Events log");
     }
 
     #[test]
