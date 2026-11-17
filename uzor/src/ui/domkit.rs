@@ -82,6 +82,24 @@ div.k-slider-thumb { position: absolute; top: 3px; width: 14px; height: 14px; bo
 div.k-swatches { display: flex; flex-wrap: wrap; gap: 6px }
 div.k-swatch { width: 22px; height: 22px; border-radius: 5px; border: 1px solid var(--k-line) }
 div.k-swatch.sel { border: 2px solid var(--k-accent) }
+div.k-selectable { user-select: text; color: var(--k-fg); font-size: 13px; white-space: pre-wrap }
+div.k-gridpresets { display: flex; gap: 6px; flex-wrap: wrap }
+button.k-gp { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--k-line); color: var(--k-muted); font-size: 12px }
+button.k-gp.on { background: var(--k-sel); border-color: var(--k-accent); color: var(--k-fg) }
+div.k-table { display: flex; flex-direction: column; border: 1px solid var(--k-line); border-radius: 8px; overflow: auto }
+div.k-thead { display: flex; position: sticky; top: 0; background: var(--k-panel); border-bottom: 1px solid var(--k-line) }
+div.k-th { flex: 1; padding: 6px 10px; font-size: 11px; font-weight: 600; color: var(--k-muted) }
+div.k-tbody { display: flex; flex-direction: column }
+div.k-tr { display: flex; border-bottom: 1px solid var(--k-line) }
+div.k-tr:hover { background: var(--k-hover) }
+div.k-td { flex: 1; padding: 6px 10px; font-size: 12px; color: var(--k-fg) }
+span.k-reorder { color: var(--k-muted); cursor: grab; padding: 0 4px }
+div.k-combo { position: relative }
+button.k-combo-trigger { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--k-line); background: var(--k-field); color: var(--k-fg); font-size: 12px }
+div.k-combo-pop { position: absolute; top: 100%; left: 0; min-width: 160px; padding: 4px; border-radius: 10px; background: var(--k-panel); border: 1px solid var(--k-line); z-index: 120; display: flex; flex-direction: column }
+div.k-combo-query { padding: 5px 8px; border-bottom: 1px solid var(--k-line); color: var(--k-fg); font-size: 12px }
+div.k-combo-opt { padding: 6px 8px; border-radius: 6px; color: var(--k-fg); font-size: 12px }
+div.k-combo-opt:hover { background: var(--k-hover) }
 div.k-input { height: 32px; padding: 0 10px; border-radius: 8px; background: var(--k-field); border: 1px solid var(--k-line);
               --placeholder: var(--k-muted); --selection: rgba(59,130,246,0.4); --caret: var(--k-fg) }
 div.k-input:hover { border-color: var(--k-track) }
@@ -432,6 +450,70 @@ pub fn swatches(id: &str, colors: &[&str], selected: usize) -> El {
 /// The index of a swatch hit (`{id}:{i}`), if `hit` is one of this grid's cells.
 pub fn picked_swatch(id: &str, hit: &str) -> Option<usize> {
     hit.strip_prefix(&format!("{id}:"))?.parse().ok()
+}
+
+/// Read-only text the user can select / copy (G10). Selection is the DOM's own
+/// text selection; the box is a hit `{id}` so the app can focus it.
+pub fn selectable_text(id: &str, text: &str) -> El {
+    El::new("div.k-selectable").id(id).tab().text(text)
+}
+
+/// A docking / layout preset picker (G14): one button per preset, hit `{id}:{key}`,
+/// the active one carries `.on`.
+pub fn grid_presets(id: &str, presets: &[(&str, &str)], active: &str) -> El {
+    El::new("div.k-gridpresets").id(id).children(presets.iter().map(|(key, label)| {
+        El::new(if *key == active { "button.k-gp.on" } else { "button.k-gp" }).id(format!("{id}:{key}")).tab().text(*label)
+    }))
+}
+
+/// A data table (G7): sticky header with per-column sort hits `{id}:sort:{i}` and
+/// row hits `{id}:row:{i}`. `sort` = (column, ascending) draws the arrow.
+pub fn data_table(id: &str, columns: &[(&str, &str)], rows: &[Vec<String>], sort: Option<(usize, bool)>) -> El {
+    let head = El::new("div.k-thead").children(columns.iter().enumerate().map(|(i, (_, label))| {
+        let arrow = match sort {
+            Some((c, asc)) if c == i => {
+                if asc {
+                    " ↑"
+                } else {
+                    " ↓"
+                }
+            }
+            _ => "",
+        };
+        El::new("div.k-th").id(format!("{id}:sort:{i}")).tab().text(format!("{label}{arrow}"))
+    }));
+    let body = El::new("div.k-tbody").children(rows.iter().enumerate().map(|(r, row)| {
+        El::new("div.k-tr").id(format!("{id}:row:{r}")).tab().children(row.iter().map(|c| El::new("div.k-td").text(c.clone())))
+    }));
+    El::new("div.k-table").id(id).child(head).child(body)
+}
+
+/// A drag handle for row / tab reordering (G8): hit `{id}:drag:{i}`; the app owns
+/// the drag (pointer capture) and reorders its own model.
+pub fn reorder_handle(id: &str, i: usize) -> El {
+    El::new("span.k-reorder").id(format!("{id}:drag:{i}")).tab().name("Reorder").text("⋮")
+}
+
+/// The index of a reorder handle hit (`{id}:drag:{i}`).
+pub fn picked_reorder(id: &str, hit: &str) -> Option<usize> {
+    hit.strip_prefix(&format!("{id}:drag:"))?.parse().ok()
+}
+
+/// A searchable combobox (G5): trigger hit `{id}:trigger`; when `open`, a popover
+/// with a query field `{id}:query` and option hits `{id}:opt:{i}` (already filtered
+/// by the app). The app owns open / query state and re-renders.
+pub fn combo(id: &str, label: &str, open: bool, options: &[String]) -> El {
+    let mut c = El::new("div.k-combo").id(id).child(
+        El::new(if open { "button.k-combo-trigger.open" } else { "button.k-combo-trigger" }).id(format!("{id}:trigger")).tab().text(label),
+    );
+    if open {
+        c = c.child(
+            El::new("div.k-combo-pop")
+                .child(El::new("div.k-combo-query").id(format!("{id}:query")).tab().text(""))
+                .children(options.iter().enumerate().map(|(i, o)| El::new("div.k-combo-opt").id(format!("{id}:opt:{i}")).tab().text(o.clone()))),
+        );
+    }
+    c
 }
 
 /// A busy spinner at time `t` seconds.
@@ -1548,6 +1630,26 @@ mod tests {
         let ids: Vec<&str> = dom.hits().map(|(i, _)| i).collect();
         assert!(ids.contains(&"m:item:0") && ids.contains(&"m:item:1"));
         assert!(ids.contains(&"m:sub:1:0") && ids.contains(&"m:sub:1:1"));
+    }
+
+    #[test]
+    fn catalog_g5_g7_g8_g10_g14_hits() {
+        let mut ctx = NullRenderContext::default();
+        let sheet = sheet();
+        let row = El::new("div").css("width: 400px").child(
+            El::new("div").css("display: flex; flex-direction: column; gap: 8px")
+                .child(selectable_text("sel", "copy me"))
+                .child(grid_presets("gp", &[("1", "One"), ("2", "Two")], "2"))
+                .child(data_table("t", &[("a", "A"), ("b", "B")], &[vec!["1".into(), "2".into()]], Some((0, true))))
+                .child(reorder_handle("rh", 3))
+                .child(combo("c", "Pick", true, &["x".to_string(), "y".to_string()])),
+        );
+        let dom = lay_out_in(&mut ctx, &sheet, &row, 0.0, 0.0, 400.0, None, &|_| State::NONE);
+        let ids: Vec<&str> = dom.hits().map(|(i, _)| i).collect();
+        for want in ["sel", "gp:1", "gp:2", "t:sort:0", "t:sort:1", "t:row:0", "rh:drag:3", "c:trigger", "c:query", "c:opt:0", "c:opt:1"] {
+            assert!(ids.contains(&want), "missing {want}");
+        }
+        assert_eq!(picked_reorder("rh", "rh:drag:3"), Some(3));
     }
 
     #[test]
