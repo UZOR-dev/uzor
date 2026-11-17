@@ -95,7 +95,7 @@ default-members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.5.47"
+version = "1.5.49"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["ZENG3LD"]

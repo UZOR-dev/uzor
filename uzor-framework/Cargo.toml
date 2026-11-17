@@ -1,8 +1,7 @@
 [package]
 name = "uzor-framework"
 authors.workspace = true
-# Hotfix over the 1.5.47 workspace: scroll-container a11y name borrow fix.
-version = "1.5.48"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
