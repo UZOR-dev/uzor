@@ -138,6 +138,11 @@ div.k-card-body { padding: 4px 12px 10px; white-space: normal; color: var(--k-bo
 button.k-chip { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--k-line); color: var(--k-muted); font-size: 12px }
 button.k-chip:hover { color: var(--k-fg) }
 button.k-chip.on { background: var(--k-sel); border-color: var(--k-accent); color: var(--k-fg) }
+div.k-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border: 1px solid var(--k-line); border-radius: 8px; background: var(--k-field) }
+span.k-chip-token { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 999px; background: var(--k-sel); color: var(--k-fg); font-size: 12px }
+button.k-chip-rm { width: 14px; height: 14px; border-radius: 7px; color: var(--k-muted); font-size: 10px }
+button.k-chip-rm:hover { color: var(--k-fg) }
+div.k-chips-field { flex: 1; min-width: 60px; height: 22px; color: var(--k-muted); font-size: 12px }
 div.k-banner { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; border-left: 3px solid var(--k-info); background: rgba(59,130,246,0.12) }
 div.k-banner.warn { border-left: 3px solid var(--k-warn); background: rgba(245,158,11,0.12) }
 div.k-banner.error { border-left: 3px solid var(--k-error); background: rgba(239,68,68,0.12) }
@@ -169,7 +174,10 @@ div.k-td.num { text-align: right }
 div.k-menu { position: fixed; z-index: 120; padding: 4px; border-radius: 10px; background: var(--k-panel); border: 1px solid var(--k-line);
              box-shadow: 0 8px 24px var(--k-shadow); display: flex; flex-direction: column }
 div.k-menu-title { padding: 6px 10px 4px; color: var(--k-muted); font-size: 11px; font-weight: 600 }
-div.k-mi { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px; flex-shrink: 0 }
+div.k-mi { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px; flex-shrink: 0; position: relative }
+div.k-submenu { display: none; position: absolute; left: 100%; top: -4px; min-width: 160px; padding: 4px; border-radius: 10px; background: var(--k-panel); border: 1px solid var(--k-line); z-index: 121 }
+div.k-mi.open > div.k-submenu { display: block }
+span.k-mi-chev { margin-left: auto; color: var(--k-muted) }
 div.k-mi:hover { background: var(--k-hover) }
 div.k-mi.danger { color: var(--k-error) }
 div.k-mi.dis { color: var(--k-dis) }
@@ -734,6 +742,23 @@ pub fn chip(id: &str, label: &str, on: bool) -> El {
     El::new(if on { "button.k-chip.on" } else { "button.k-chip" }).id(id).tab().text(label)
 }
 
+/// A chips input (G11): removable tokens (`{id}:rm:{i}`) plus a trailing field hit
+/// `{id}:field` the app focuses for typing. [`picked_chip_remove`] reads the index.
+pub fn chips_input(id: &str, chips: &[String], placeholder: &str) -> El {
+    let tokens = chips.iter().enumerate().map(|(i, c)| {
+        El::new("span.k-chip-token")
+            .child(El::new("span").text(c.clone()))
+            .child(El::new("button.k-chip-rm").id(format!("{id}:rm:{i}")).tab().name(format!("Remove {c}")).text("×"))
+    });
+    let field = std::iter::once(El::new("div.k-chips-field").id(format!("{id}:field")).tab().text(placeholder.to_string()));
+    El::new("div.k-chips").id(id).children(tokens.chain(field))
+}
+
+/// The index of a chip remove hit (`{id}:rm:{i}`), if `hit` is one of this input's tokens.
+pub fn picked_chip_remove(id: &str, hit: &str) -> Option<usize> {
+    hit.strip_prefix(&format!("{id}:rm:"))?.parse().ok()
+}
+
 /// A banner (`kind`: `info`, `warn`, `error`) with an optional action button
 /// (`{id}:act`) and a close button (`{id}:close`).
 pub fn banner(id: &str, kind: &str, text: &str, action: Option<&str>, closable: bool) -> El {
@@ -835,6 +860,8 @@ pub struct MenuItem {
     pub disabled: bool,
     /// A divider line instead of an item.
     pub separator: bool,
+    /// A nested submenu (G12), shown when the row carries `.open`.
+    pub sub: Option<Vec<MenuItem>>,
 }
 
 impl MenuItem {
@@ -860,12 +887,22 @@ impl MenuItem {
         self.disabled = on;
         self
     }
+    pub fn sub(mut self, items: Vec<MenuItem>) -> Self {
+        self.sub = Some(items);
+        self
+    }
 }
 
 /// A context menu / command list as a `position: fixed` box at `at` (viewport
 /// coordinates; see [`popover_at`]). Enabled items are hits `{id}:item:{i}` (`i` counts
 /// separators too, so it is the index into `items`).
 pub fn menu(id: &str, title: Option<&str>, items: &[MenuItem], at: Rect) -> El {
+    menu_with_open(id, title, items, at, None)
+}
+
+/// [`menu`] with row `open_sub` carrying `.open` so its nested submenu (G12) shows.
+/// Submenu items are hits `{id}:sub:{i}:{j}`.
+pub fn menu_with_open(id: &str, title: Option<&str>, items: &[MenuItem], at: Rect, open_sub: Option<usize>) -> El {
     let mut m = El::new("div.k-menu").id(format!("{id}:menu")).css(format!("top: {}px; left: {}px; width: {}px", at.y, at.x, at.width));
     if let Some(t) = title {
         m = m.child(El::new("div.k-menu-title").text(t));
@@ -874,26 +911,48 @@ pub fn menu(id: &str, title: Option<&str>, items: &[MenuItem], at: Rect) -> El {
         if it.separator {
             return El::new("div.k-sep");
         }
-        let mut spec = String::from("div.k-mi");
-        if it.danger {
-            spec.push_str(".danger");
-        }
-        if it.disabled {
-            spec.push_str(".dis");
-        }
-        let mut row = El::new(spec).name(&it.label);
-        if let Some(ic) = it.icon {
-            row = row.child(El::new("span.k-mi-icon").svg(icon(ic)));
-        }
-        row = row.child(El::new("div.k-mi-label").text(&it.label));
-        if let Some(k) = &it.kbd {
-            row = row.child(kbd(k));
-        }
-        if !it.disabled {
-            row = row.id(format!("{id}:item:{i}")).tab();
+        let hit = if it.disabled { None } else { Some(format!("{id}:item:{i}")) };
+        let mut row = mi_row(it, hit, open_sub == Some(i));
+        if let Some(sub) = &it.sub {
+            let sub_box = El::new("div.k-submenu").children(sub.iter().enumerate().map(|(j, sit)| {
+                if sit.separator {
+                    return El::new("div.k-sep");
+                }
+                mi_row(sit, if sit.disabled { None } else { Some(format!("{id}:sub:{i}:{j}")) }, false)
+            }));
+            row = row.child(sub_box);
         }
         row
     }))
+}
+
+/// One menu row (shared by [`menu`] and nested submenus); `open` shows its submenu.
+fn mi_row(it: &MenuItem, hit: Option<String>, open: bool) -> El {
+    let mut spec = String::from("div.k-mi");
+    if it.danger {
+        spec.push_str(".danger");
+    }
+    if it.disabled {
+        spec.push_str(".dis");
+    }
+    if open {
+        spec.push_str(".open");
+    }
+    let mut row = El::new(spec).name(&it.label);
+    if let Some(ic) = it.icon {
+        row = row.child(El::new("span.k-mi-icon").svg(icon(ic)));
+    }
+    row = row.child(El::new("div.k-mi-label").text(&it.label));
+    if let Some(k) = &it.kbd {
+        row = row.child(kbd(k));
+    }
+    if it.sub.is_some() {
+        row = row.child(El::new("span.k-mi-chev").svg(icon(icons::RIGHT)));
+    }
+    if let Some(h) = hit {
+        row = row.id(h).tab();
+    }
+    row
 }
 
 /// What a toolbar entry is.
@@ -1461,6 +1520,34 @@ mod tests {
         let dom2 = lay_out_in(&mut ctx, &sheet, &row2, 0.0, 0.0, 300.0, None, &|_| State::NONE);
         let ids2: Vec<&str> = dom2.hits().map(|(i, _)| i).collect();
         assert!(ids2.contains(&"rng:lo") && ids2.contains(&"rng:hi"));
+    }
+
+    #[test]
+    fn chips_input_tokens_and_field_hits() {
+        let mut ctx = NullRenderContext::default();
+        let sheet = sheet();
+        let chips = vec!["BTC".to_string(), "ETH".to_string()];
+        let row = El::new("div").css("width: 300px").child(chips_input("sym", &chips, "Add symbol…"));
+        let dom = lay_out_in(&mut ctx, &sheet, &row, 0.0, 0.0, 300.0, None, &|_| State::NONE);
+        let ids: Vec<&str> = dom.hits().map(|(i, _)| i).collect();
+        assert_eq!(ids, ["sym", "sym:rm:0", "sym:rm:1", "sym:field"]);
+        assert_eq!(picked_chip_remove("sym", "sym:rm:1"), Some(1));
+        assert_eq!(picked_chip_remove("sym", "sym:field"), None);
+    }
+
+    #[test]
+    fn menu_nested_submenu_hits_when_open() {
+        let mut ctx = NullRenderContext::default();
+        let sheet = sheet();
+        let items = vec![
+            MenuItem::new("Top"),
+            MenuItem::new("More").sub(vec![MenuItem::new("A"), MenuItem::new("B")]),
+        ];
+        let row = El::new("div").css("width: 300px; height: 200px").child(menu_with_open("m", None, &items, Rect::new(0.0, 0.0, 180.0, 0.0), Some(1)));
+        let dom = lay_out_in(&mut ctx, &sheet, &row, 0.0, 0.0, 300.0, None, &|_| State::NONE);
+        let ids: Vec<&str> = dom.hits().map(|(i, _)| i).collect();
+        assert!(ids.contains(&"m:item:0") && ids.contains(&"m:item:1"));
+        assert!(ids.contains(&"m:sub:1:0") && ids.contains(&"m:sub:1:1"));
     }
 
     #[test]
