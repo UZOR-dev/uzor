@@ -74,6 +74,14 @@ span.k-radio-ring { display: flex; align-items: center; justify-content: center;
 div.k-radio.sel span.k-radio-ring { border-color: var(--k-accent) }
 span.k-radio-dot { width: 8px; height: 8px; border-radius: 4px; background: var(--k-accent) }
 span.k-radio-label { font-size: 13px; color: var(--k-fg) }
+div.k-radio.sel span.k-radio-label { color: var(--k-radio-on-fg, var(--k-fg)) }
+div.k-slider { position: relative; height: 20px }
+div.k-slider-track { position: absolute; left: 0; top: 8px; height: 4px; border-radius: 2px; background: var(--k-line) }
+div.k-slider-fill { position: absolute; top: 8px; height: 4px; border-radius: 2px; background: var(--k-accent) }
+div.k-slider-thumb { position: absolute; top: 3px; width: 14px; height: 14px; border-radius: 7px; background: var(--k-accent) }
+div.k-swatches { display: flex; flex-wrap: wrap; gap: 6px }
+div.k-swatch { width: 22px; height: 22px; border-radius: 5px; border: 1px solid var(--k-line) }
+div.k-swatch.sel { border: 2px solid var(--k-accent) }
 div.k-input { height: 32px; padding: 0 10px; border-radius: 8px; background: var(--k-field); border: 1px solid var(--k-line);
               --placeholder: var(--k-muted); --selection: rgba(59,130,246,0.4); --caret: var(--k-fg) }
 div.k-input:hover { border-color: var(--k-track) }
@@ -361,6 +369,61 @@ pub fn radio_group(id: &str, opts: &[(&str, &str)], selected: usize) -> El {
 /// The key of a radio row hit (`{id}:{key}`), if `hit` is one of this group's rows.
 pub fn picked_radio<'a>(id: &str, hit: &'a str) -> Option<&'a str> {
     hit.strip_prefix(&format!("{id}:")).filter(|k| !k.is_empty())
+}
+
+/// A horizontal slider of explicit pixel width `w` (G3): a 4 px track, an accent
+/// fill up to `value`, and a 14 px thumb. Hits: `{id}:track` and `{id}:thumb`;
+/// map a pointer x back with [`slider_value`]. The thumb/track are hits so the
+/// app owns the drag (pointer capture) and re-renders with the new value.
+pub fn slider(id: &str, value: f64, min: f64, max: f64, w: f64) -> El {
+    let f = slider_fraction(value, min, max);
+    El::new("div.k-slider").id(id).css(format!("width: {w}px"))
+        .child(El::new("div.k-slider-track").id(format!("{id}:track")).css(format!("width: {w}px")))
+        .child(El::new("div.k-slider-fill").css(format!("left: 0px; width: {}px", f * w)))
+        .child(El::new("div.k-slider-thumb").id(format!("{id}:thumb")).css(format!("left: {}px", f * w - 7.0)))
+}
+
+/// A two-thumb range slider (G3 dual): fills between `lo` and `hi`. Hits
+/// `{id}:track`, `{id}:lo`, `{id}:hi`; the app decides which thumb a drag moves.
+pub fn range2(id: &str, lo: f64, hi: f64, min: f64, max: f64, w: f64) -> El {
+    let a = slider_fraction(lo, min, max);
+    let b = slider_fraction(hi, min, max);
+    El::new("div.k-slider").id(id).css(format!("width: {w}px"))
+        .child(El::new("div.k-slider-track").id(format!("{id}:track")).css(format!("width: {w}px")))
+        .child(El::new("div.k-slider-fill").css(format!("left: {}px; width: {}px", a * w, (b - a) * w)))
+        .child(El::new("div.k-slider-thumb").id(format!("{id}:lo")).css(format!("left: {}px", a * w - 7.0)))
+        .child(El::new("div.k-slider-thumb").id(format!("{id}:hi")).css(format!("left: {}px", b * w - 7.0)))
+}
+
+/// Normalised position of `value` in `[min, max]`, clamped to 0..=1.
+pub fn slider_fraction(value: f64, min: f64, max: f64) -> f64 {
+    if max <= min {
+        return 0.0;
+    }
+    ((value - min) / (max - min)).clamp(0.0, 1.0)
+}
+
+/// Map a pointer x (relative to the slider's left edge, width `w`) to a value.
+pub fn slider_value(x: f64, min: f64, max: f64, w: f64) -> f64 {
+    min + slider_fraction(x, 0.0, w) * (max - min)
+}
+
+/// A wrapping grid of colour swatches (G4 L1). Each cell is a hit `{id}:{i}`;
+/// the selected cell carries `.sel` (accent border). [`picked_swatch`] reads the
+/// index back from a hit.
+pub fn swatches(id: &str, colors: &[&str], selected: usize) -> El {
+    El::new("div.k-swatches").id(id).children(colors.iter().enumerate().map(|(i, c)| {
+        El::new(if i == selected { "div.k-swatch.sel" } else { "div.k-swatch" })
+            .id(format!("{id}:{i}"))
+            .tab()
+            .name(*c)
+            .css(format!("background: {c}"))
+    }))
+}
+
+/// The index of a swatch hit (`{id}:{i}`), if `hit` is one of this grid's cells.
+pub fn picked_swatch(id: &str, hit: &str) -> Option<usize> {
+    hit.strip_prefix(&format!("{id}:"))?.parse().ok()
 }
 
 /// A busy spinner at time `t` seconds.
@@ -1381,6 +1444,36 @@ mod tests {
         let (a, b) = (dom.rect("lang:en").unwrap(), dom.rect("lang:ru").unwrap());
         assert_eq!((a.height, b.height), (32.0, 32.0), "compact rows");
         assert_eq!(b.y - a.y, 36.0, "32 px row + 4 px gap");
+    }
+
+    #[test]
+    fn slider_and_range2_expose_track_and_thumb_hits() {
+        let mut ctx = NullRenderContext::default();
+        let sheet = sheet();
+        let row = El::new("div").css("width: 300px").child(slider("vol", 50.0, 0.0, 100.0, 200.0));
+        let dom = lay_out_in(&mut ctx, &sheet, &row, 0.0, 0.0, 300.0, None, &|_| State::NONE);
+        let ids: Vec<&str> = dom.hits().map(|(i, _)| i).collect();
+        assert!(ids.contains(&"vol:track") && ids.contains(&"vol:thumb"));
+        assert_eq!(dom.rect("vol:thumb").unwrap().x, 100.0 - 7.0, "thumb centred on half-way");
+        assert_eq!(slider_value(100.0, 0.0, 100.0, 200.0), 50.0);
+        assert_eq!(slider_fraction(150.0, 0.0, 100.0), 1.0, "clamped");
+        let row2 = El::new("div").css("width: 300px").child(range2("rng", 20.0, 80.0, 0.0, 100.0, 200.0));
+        let dom2 = lay_out_in(&mut ctx, &sheet, &row2, 0.0, 0.0, 300.0, None, &|_| State::NONE);
+        let ids2: Vec<&str> = dom2.hits().map(|(i, _)| i).collect();
+        assert!(ids2.contains(&"rng:lo") && ids2.contains(&"rng:hi"));
+    }
+
+    #[test]
+    fn swatches_grid_hits_and_selection() {
+        let mut ctx = NullRenderContext::default();
+        let sheet = sheet();
+        let colors = ["#ff0000", "#00ff00", "#0000ff"];
+        let row = El::new("div").css("width: 300px").child(swatches("pal", &colors, 1));
+        let dom = lay_out_in(&mut ctx, &sheet, &row, 0.0, 0.0, 300.0, None, &|_| State::NONE);
+        let ids: Vec<&str> = dom.hits().map(|(i, _)| i).collect();
+        assert_eq!(ids, ["pal", "pal:0", "pal:1", "pal:2"]);
+        assert_eq!(picked_swatch("pal", "pal:2"), Some(2));
+        assert_eq!(picked_swatch("pal", "other:1"), None);
     }
 
     #[test]
