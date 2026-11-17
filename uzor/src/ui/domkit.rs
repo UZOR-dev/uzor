@@ -382,13 +382,21 @@ pub fn checkbox(id: &str, on: bool, label: &str) -> El {
 /// carries `.sel` (accent ring + dot). The hover highlight is
 /// `div.k-radio:hover` — set `--k-hover: transparent` to turn it off.
 pub fn radio_group(id: &str, opts: &[(&str, &str)], selected: usize) -> El {
+    // Pen-anchored baseline: the label's alphabetic baseline lands exactly at the
+    // row centre (16 px), matching app renderers that anchor text by pen rather
+    // than by line-box centering. margin-top = row/2 - baseline-in-line-box.
+    let label_px = 13.0;
+    let line_h = 16.0;
+    let base_in = crate::ui::css_text::baseline(label_px, line_h, crate::ui::css_text::INTER);
+    let label_mt = 16.0 - base_in;
     El::new("div.k-radio-group").id(id).children(opts.iter().enumerate().map(|(i, (key, label))| {
         El::new(if i == selected { "div.k-radio.sel" } else { "div.k-radio" })
             .id(format!("{id}:{key}"))
             .tab()
             .name(*label)
-            .child(El::new("span.k-radio-ring").child_if(i == selected, || El::new("span.k-radio-dot")))
-            .child(El::new("span.k-radio-label").text(*label))
+            .css("align-items: flex-start")
+            .child(El::new("span.k-radio-ring").css("margin-top: 8.25px").child_if(i == selected, || El::new("span.k-radio-dot")))
+            .child(El::new("span.k-radio-label").css(format!("line-height: {line_h}px; margin-top: {label_mt}px")).text(*label))
     }))
 }
 
