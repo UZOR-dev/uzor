@@ -516,6 +516,65 @@ pub fn combo(id: &str, label: &str, open: bool, options: &[String]) -> El {
     c
 }
 
+/// Render a widget-data-contract preset from tolerant fill data — the HQ panel's
+/// runtime widget. Unknown presets return `None` (the panel falls back to a
+/// generic view). Charts expose a paint slot the host fills via `SlotRegistry`.
+pub fn preset(preset: &str, data: &serde_json::Value) -> Option<El> {
+    let g = |k: &str| data.get(k);
+    let s = |v: &serde_json::Value| match v {
+        serde_json::Value::String(t) => t.clone(),
+        other => other.to_string(),
+    };
+    match preset {
+        "list" => {
+            let items = g("items")?.as_array()?;
+            let owned: Vec<(String, String)> = items
+                .iter()
+                .enumerate()
+                .map(|(i, it)| {
+                    (
+                        it.get("id").map(&s).unwrap_or_else(|| i.to_string()),
+                        it.get("label").map(&s).unwrap_or_default(),
+                    )
+                })
+                .collect();
+            let refs: Vec<(&str, Option<&str>)> = owned.iter().map(|(a, b)| (a.as_str(), Some(b.as_str()))).collect();
+            let sel = g("selected").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            Some(list("w", &refs, Some(sel)))
+        }
+        "table" => {
+            let cols = g("columns")?.as_array()?;
+            let owned: Vec<(String, String)> = cols
+                .iter()
+                .map(|c| (c.get("key").map(&s).unwrap_or_default(), c.get("label").map(&s).unwrap_or_default()))
+                .collect();
+            let crefs: Vec<(&str, &str)> = owned.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+            let rows = g("rows").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let rrows: Vec<Vec<String>> = rows
+                .iter()
+                .map(|r| owned.iter().map(|(k, _)| r.get(k).map(&s).unwrap_or_default()).collect())
+                .collect();
+            Some(data_table("w", &crefs, &rrows, None))
+        }
+        "kv" | "status" => {
+            let pairs = g("pairs")?.as_array()?;
+            let rows: Vec<Vec<String>> = pairs
+                .iter()
+                .map(|p| vec![p.get("label").map(&s).unwrap_or_default(), p.get("value").map(&s).unwrap_or_default()])
+                .collect();
+            Some(data_table("w", &[("k", "Key"), ("v", "Value")], &rows, None))
+        }
+        "gauge" | "meter" => {
+            let value = g("value")?.as_f64()?;
+            let min = g("min").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let max = g("max").and_then(|v| v.as_f64()).unwrap_or(100.0);
+            Some(slider("w", value, min, max, 200.0))
+        }
+        "chart.candles" | "chart.line" => Some(El::new("div.k-chart").id("w").paint_slot("w:chart").css("width: 100%; height: 240px")),
+        _ => None,
+    }
+}
+
 /// A busy spinner at time `t` seconds.
 pub fn spinner(t: f64) -> El {
     El::new("span.k-spinner").name("Loading").control(Control::spinner(t))
@@ -1650,6 +1709,22 @@ mod tests {
             assert!(ids.contains(&want), "missing {want}");
         }
         assert_eq!(picked_reorder("rh", "rh:drag:3"), Some(3));
+    }
+
+    #[test]
+    fn preset_renders_from_tolerant_data() {
+        let mut ctx = NullRenderContext::default();
+        let sheet = sheet();
+        let list_data = serde_json::json!({"items": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}], "selected": 1});
+        let el = preset("list", &list_data).expect("list preset");
+        let dom = lay_out_in(&mut ctx, &sheet, &El::new("div").css("width: 300px").child(el), 0.0, 0.0, 300.0, None, &|_| State::NONE);
+        let ids: Vec<&str> = dom.hits().map(|(i, _)| i).collect();
+        assert!(ids.contains(&"w:row:0") && ids.contains(&"w:row:1"));
+        assert!(preset("table", &serde_json::json!({"columns": [{"key": "k", "label": "K"}], "rows": [{"k": "v"}]})).is_some());
+        assert!(preset("kv", &serde_json::json!({"pairs": [{"label": "L", "value": 1}]})).is_some());
+        assert!(preset("gauge", &serde_json::json!({"value": 50})).is_some());
+        assert!(preset("chart.candles", &serde_json::json!({})).is_some());
+        assert!(preset("unknown.preset", &serde_json::json!({})).is_none());
     }
 
     #[test]
