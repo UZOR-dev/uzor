@@ -61,7 +61,7 @@
 use crate::render::{AnimParams, AnimRegistry, RenderContext, TextAlign};
 use crate::types::Rect;
 use crate::ui::css_box::{ellipsize, ellipsize_preserve};
-use crate::ui::css_text::{fill_text_css, metrics_for};
+use crate::ui::css_text::{fill_text_css, metrics_for, FontMetrics, INTER};
 use crate::ui::flow::{layout_in, LBox, Laid};
 use crate::ui::style::{apply_decl, Node, Sheet, State, Style, StyleField};
 use crate::ui::widgets::composite::dialog::{fill_round_rect, path_round_rect, Shadow};
@@ -1003,6 +1003,17 @@ fn font_str(s: &Style) -> String {
     }
 }
 
+/// Per-family vertical metrics only under the inherited `font-metrics: auto`
+/// opt-in; otherwise the catalog's Inter metrics for every family, so layouts
+/// tuned before per-family baselines keep their pen position.
+fn text_metrics(s: &Style, fam: &str) -> FontMetrics {
+    if s.font_metrics.as_deref() == Some("auto") {
+        metrics_for(fam)
+    } else {
+        INTER
+    }
+}
+
 /// `up`: the ancestors' selector nodes (root first) when the sheet has descendant /
 /// child selectors (`None` otherwise, to skip the bookkeeping).
 fn resolve<'e>(
@@ -1482,7 +1493,7 @@ fn paint_box_unclipped(ctx: &mut dyn RenderContext, b: &Placed) {
         let top = content.y + ((content.height - lh * lines.len() as f64) / 2.0).max(0.0);
         ctx.set_fill_color(color);
         for (i, l) in lines.iter().enumerate() {
-            fill_text_css(ctx, l, x, top + lh * i as f64, px, lh, metrics_for(&fam), align);
+            fill_text_css(ctx, l, x, top + lh * i as f64, px, lh, text_metrics(s, &fam), align);
         }
     }
     if let Some(svg) = &b.svg {
@@ -1544,7 +1555,7 @@ fn paint_runs(ctx: &mut dyn RenderContext, inl: &Inline, c: Rect, fg: &str) {
             let (_, px, _, fam) = font_of(rs);
             ctx.set_font(&font_str(rs));
             ctx.set_fill_color(rs.color.as_deref().unwrap_or(fg));
-            fill_text_css(ctx, &p.text, c.x + p.x + p.pad, c.y + line.y, px, line.height, metrics_for(&fam), TextAlign::Left);
+            fill_text_css(ctx, &p.text, c.x + p.x + p.pad, c.y + line.y, px, line.height, text_metrics(rs, &fam), TextAlign::Left);
         }
     }
 }
@@ -1634,7 +1645,7 @@ fn paint_control(ctx: &mut dyn RenderContext, b: &Placed, ctl: &Control, c: Rect
             let x0 = c.x - scroll;
             if e.shows_placeholder() {
                 ctx.set_fill_color(s.custom("--placeholder").unwrap_or("#8a8a8a"));
-                fill_text_css(ctx, &e.placeholder, x0, top, px, lh, metrics_for(&fam), TextAlign::Left);
+                fill_text_css(ctx, &e.placeholder, x0, top, px, lh, text_metrics(s, &fam), TextAlign::Left);
             } else {
                 let at = |i: usize| b.bounds.get(i).copied().unwrap_or(0.0);
                 if let (Some(a), Some(k)) = (e.anchor, e.caret) {
@@ -1645,7 +1656,7 @@ fn paint_control(ctx: &mut dyn RenderContext, b: &Placed, ctl: &Control, c: Rect
                     }
                 }
                 ctx.set_fill_color(fg);
-                fill_text_css(ctx, &e.display(), x0, top, px, lh, metrics_for(&fam), TextAlign::Left);
+                fill_text_css(ctx, &e.display(), x0, top, px, lh, text_metrics(s, &fam), TextAlign::Left);
                 if let (Some(p), Some(k)) = (&e.preedit, e.caret) {
                     let (a, z) = (at(k), at(k + p.chars().count()));
                     ctx.set_stroke_color(fg);
@@ -2097,13 +2108,18 @@ mod tests {
         let mut ys = Vec::new();
         for fam in ["Inter", "monospace", "Roboto"] {
             let mut ctx = crate::testing::RecordingRenderContext::with_char_width(7.0);
-            let sh = Sheet::parse(&format!("div.t {{ font-family: {fam}; font-size: 20px; line-height: 40px }}")).unwrap();
+            let sh = Sheet::parse(&format!("div.t {{ font-family: {fam}; font-size: 20px; line-height: 40px; font-metrics: auto }}")).unwrap();
             render(&mut ctx, &sh, &El::new("div.t").text("Ag"), 0.0, 0.0, 400.0, &|_| State::NONE);
             ys.push(ctx.fill_texts()[0].2);
         }
         assert!((ys[0] - 27.275390625).abs() < 1e-6, "Inter {}", ys[0]);
         assert!((ys[1] - 27.2).abs() < 1e-6, "monospace {}", ys[1]);
         assert!((ys[2] - ys[0]).abs() > 1e-6, "Roboto must not land on Inter's baseline");
+        // Without the opt-in every family keeps Inter's baseline (old layouts unchanged).
+        let mut ctx = crate::testing::RecordingRenderContext::with_char_width(7.0);
+        let sh = Sheet::parse("div.t { font-family: monospace; font-size: 20px; line-height: 40px }").unwrap();
+        render(&mut ctx, &sh, &El::new("div.t").text("Ag"), 0.0, 0.0, 400.0, &|_| State::NONE);
+        assert!((ctx.fill_texts()[0].2 - 27.275390625).abs() < 1e-6, "default stays Inter");
     }
 
     #[test]

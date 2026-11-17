@@ -115,6 +115,10 @@ pub struct Style {
     /// px (a unitless multiplier resolves against the font size).
     pub line_height: Option<f64>,
     pub font_family: Option<String>,
+    /// `font-metrics` (inherited): `auto` centres each face's own ascent+descent in
+    /// the line box (browser behaviour); unset/`inter` keeps the catalog's Inter
+    /// metrics for every family, so existing layouts are unchanged unless opted in.
+    pub font_metrics: Option<String>,
     pub opacity: Option<f64>,
     pub width: Option<f64>,
     pub height: Option<f64>,
@@ -736,6 +740,7 @@ impl Sheet {
             s.font_size = p.font_size;
             s.font_weight = p.font_weight;
             s.font_family = p.font_family.clone();
+            s.font_metrics = p.font_metrics.clone();
             s.line_height = p.line_height;
             s.text_align = p.text_align.clone();
             s.white_space = p.white_space.clone();
@@ -1030,6 +1035,7 @@ fn apply(s: &mut Style, k: &str, v: &str) {
         }
         "line-height" => s.line_height = if v.ends_with("px") { px(v) } else { None },
         "font-family" => s.font_family = Some(v.into()),
+        "font-metrics" => s.font_metrics = Some(v.into()),
         "opacity" => s.opacity = v.parse().ok(),
         "width" => (s.width, s.width_pct) = len(v),
         "height" => (s.height, s.height_pct) = len(v),
@@ -1220,6 +1226,7 @@ pub fn standard(s: &Style, prop: &str) -> Option<String> {
         "font-weight" => s.font_weight.map(|w| w.to_string()),
         "line-height" => n(s.line_height),
         "font-family" => s.font_family.clone(),
+        "font-metrics" => s.font_metrics.clone(),
         "width" => n(s.width),
         "height" => n(s.height),
         "gap" => n(s.gap),
