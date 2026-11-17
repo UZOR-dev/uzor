@@ -2276,8 +2276,30 @@ fn build_paint(
     render.restore();
     coord.set_default_layer(Some(layer.clone()));
     let mut ime = None;
+    // Scroll containers register FIRST so their children (rows, buttons) sit on
+    // top for hover/click; otherwise the viewport swallows the pointer over its
+    // own body and inner controls never highlight or receive clicks.
     for b in &d.boxes {
         let Some(id) = b.id.as_deref() else { continue };
+        if !matches!(b.style.overflow.as_deref(), Some("auto" | "scroll")) {
+            continue;
+        }
+        let mut vis = b.clip.map_or(b.rect, |c| c.intersect(b.rect));
+        if !b.fixed {
+            vis = vis.intersect(rect);
+        }
+        if vis.width <= 0.0 || vis.height <= 0.0 {
+            continue;
+        }
+        let wid = WidgetId::from(id);
+        coord.register_atomic(wid.clone(), WidgetKind::Button, vis, focusable().union(Sense::SCROLL), layer);
+        coord.set_a11y(&wid, &b.accessible_name().unwrap_or_default(), None);
+    }
+    for b in &d.boxes {
+        let Some(id) = b.id.as_deref() else { continue };
+        if matches!(b.style.overflow.as_deref(), Some("auto" | "scroll")) {
+            continue; // registered above, below its children
+        }
         // What is visible of it: inside the panel (unless fixed) and its clips.
         let mut vis = b.clip.map_or(b.rect, |c| c.intersect(b.rect));
         if !b.fixed {
