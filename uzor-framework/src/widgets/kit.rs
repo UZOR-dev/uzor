@@ -2293,7 +2293,7 @@ fn build_paint(
         }
         let wid = WidgetId::from(id);
         coord.register_atomic(wid.clone(), WidgetKind::Button, vis, focusable().union(Sense::SCROLL), layer);
-        coord.set_a11y(&wid, &b.accessible_name().unwrap_or_default(), None);
+        coord.set_a11y(&wid, b.accessible_name().unwrap_or_default(), None);
     }
     for b in &d.boxes {
         let Some(id) = b.id.as_deref() else { continue };
