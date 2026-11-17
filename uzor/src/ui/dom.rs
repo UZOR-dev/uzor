@@ -2396,6 +2396,22 @@ mod tests {
     }
 
     #[test]
+    fn absolute_wrapper_auto_height_measures_flex_column() {
+        let mut ctx = NullRenderContext::default();
+        let sh = Sheet::parse(
+            "div.host { position: relative; width: 300px; height: 200px } \
+             div.abs { position: absolute; top: 0px; left: 0px; width: 200px } \
+             div.col { display: flex; flex-direction: column; gap: 4px } \
+             div.row { height: 32px }",
+        )
+        .unwrap();
+        let col = El::new("div.col").children((0..3).map(|_| El::new("div.row")));
+        let tree = El::new("div.host").child(El::new("div.abs").id("abs").child(col));
+        let dom = lay_out_in(&mut ctx, &sh, &tree, 0.0, 0.0, 300.0, None, &|_| State::NONE);
+        assert_eq!(dom.rect("abs").unwrap().height, 3.0 * 32.0 + 2.0 * 4.0, "absolute auto-height = flex column extent");
+    }
+
+    #[test]
     fn absolute_boxes_leave_the_flow_and_paint_on_top() {
         let mut ctx = NullRenderContext::default();
         let sh = Sheet::parse(
