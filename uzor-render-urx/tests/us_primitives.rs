@@ -192,7 +192,7 @@ fn dom_cubic_round_rect_matches_legacy_radii_commands_on_urx() {
 fn ink_centroid_y(px: &[u8]) -> f64 {
     let (mut sum, mut n) = (0f64, 0f64);
     for (i, c) in px.chunks_exact(4).enumerate() {
-        let d = (c[0].abs_diff(19) + c[1].abs_diff(23) + c[2].abs_diff(34)) as f64;
+        let d = (c[0].abs_diff(19) as u32 + c[1].abs_diff(23) as u32 + c[2].abs_diff(34) as u32) as f64;
         if d > 24.0 {
             let y = (i / W as usize) as f64;
             sum += y * d;
