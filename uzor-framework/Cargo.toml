@@ -34,6 +34,10 @@ uzor-render-hub = { workspace = true, optional = true }
 png = { version = "0.17", optional = true }
 # Offscreen screenshots for feature `automation`.
 uzor-render-tiny-skia = { workspace = true, optional = true }
+# The headless live-loop paint target (feature `automation`): URX scene
+# emission + the deterministic CPU rasteriser (uzor-urx family).
+uzor-render-urx = { workspace = true, optional = true }
+uzor-urx-cpu = { workspace = true, optional = true, features = ["glyph"] }
 log = { version = "0.4", optional = true }
 # `SubmitParams::base_color` type (same as hub).
 color = { version = "0.3", optional = true }
@@ -171,8 +175,9 @@ web = [
 ]
 # Automation port (`automation`): a tool drives the app through the
 # accessibility tree, injected input and screenshots. Off by default; a build
-# without it carries none of that code.
-automation = ["dep:uzor-render-tiny-skia", "dep:png"]
+# without it carries none of that code. The live-loop paint target is URX
+# CPU (deterministic, no GPU); offscreen screenshots stay tiny-skia for now.
+automation = ["dep:uzor-render-tiny-skia", "dep:png", "dep:uzor-render-urx", "dep:uzor-urx-cpu"]
 # Dev control: the one switch a builder turns on (`features = ["dev-control"]`).
 # The native host then serves `NativeOptions::dev_control` on loopback (see
 # `dev_control`); the RPC core, uzor-devtools and the automation port come with

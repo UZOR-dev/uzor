@@ -38,9 +38,48 @@ pub struct HeadlessHost<S: Spec, A: App<Spec = S>> {
     #[cfg(feature = "automation")]
     auto: HeadlessAuto,
     /// Paint target of `advance` instead of `ctx` (the live loop: real text
-    /// metrics, see [`run_headless`]).
+    /// metrics, see [`run_headless`]). URX scene emission rasterised by the
+    /// deterministic CPU backend — no GPU on the headless path.
     #[cfg(feature = "automation")]
-    live_ctx: Option<Box<dyn uzor::render::RenderContext>>,
+    live_ctx: Option<LiveUrxContext>,
+}
+
+/// The live-loop paint target (feature `automation`): a
+/// [`uzor_render_urx::UrxRenderContext`] scene emitter plus the
+/// [`uzor_urx_cpu::backend::CpuBackend`] that rasterises every frame into a
+/// 1×1 pixmap. Drawing is clipped away exactly as the old tiny-skia live
+/// context did, but text measures with the real fonts and the raster family
+/// is uzor-urx (owner directive 2026-11-18: parity + headless live rendering
+/// move off tiny-skia/vello onto URX; CPU stays the deterministic path).
+#[cfg(feature = "automation")]
+struct LiveUrxContext {
+    ctx: uzor_render_urx::UrxRenderContext,
+    backend: uzor_urx_cpu::backend::CpuBackend,
+    pixmap: uzor_urx_cpu::pixmap::Pixmap,
+}
+
+#[cfg(feature = "automation")]
+impl LiveUrxContext {
+    fn new(dpr: f64) -> Self {
+        Self {
+            ctx: uzor_render_urx::UrxRenderContext::new(dpr),
+            backend: uzor_urx_cpu::backend::CpuBackend::new(),
+            pixmap: uzor_urx_cpu::pixmap::Pixmap::new(1, 1),
+        }
+    }
+
+    /// Paint one frame request and rasterise it on the CPU. The 1×1 target
+    /// clips every primitive away; the scene is still built and submitted so
+    /// text metrics, glyph registration and the raster guards all run exactly
+    /// as in a real frame. Render errors are non-fatal here: the backend's
+    /// own counters make them observable (a live loop must not die on one
+    /// bad frame).
+    fn paint<S: Spec, A: App<Spec = S>>(&mut self, rt: &mut Runtime<S, A>, req: &crate::FrameRequest) {
+        self.ctx.begin_frame(1, 1);
+        rt.paint(req, &mut self.ctx);
+        let scene = self.ctx.take_scene();
+        let _ = self.backend.render(&scene, &mut self.pixmap);
+    }
 }
 
 /// Automation bookkeeping of the headless host.
@@ -163,8 +202,8 @@ impl<S: Spec, A: App<Spec = S>> HeadlessHost<S, A> {
         let frames = std::mem::take(&mut out.frames);
         for req in &frames {
             #[cfg(feature = "automation")]
-            match self.live_ctx.as_deref_mut() {
-                Some(ctx) => self.rt.paint(req, ctx),
+            match self.live_ctx.as_mut() {
+                Some(live) => live.paint(&mut self.rt, req),
                 None => self.rt.paint(req, &mut self.ctx),
             }
             #[cfg(not(feature = "automation"))]
@@ -346,11 +385,12 @@ pub fn run_headless<S: Spec, A: App<Spec = S>>(
     let s1 = Arc::clone(&sig);
     let (mut host, _handle) = HeadlessHost::with_waker(app, cfg, Waker::new(move || s1.wake()));
     host.dpr = if dpr > 0.0 { dpr } else { 1.0 };
-    // Frames paint into a 1x1 tiny-skia context: drawing is clipped away,
+    // Frames paint into a 1x1 URX CPU context: drawing is clipped away,
     // but text measures with the real fonts, exactly as in the offscreen
     // screenshots (the recorder's zero-wide text would leave layouts that
-    // apps cache, such as wrapped messages, collapsed).
-    host.live_ctx = Some(Box::new(uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1, 1, host.dpr)));
+    // apps cache, such as wrapped messages, collapsed). The raster family
+    // is uzor-urx (deterministic CPU — no GPU on the headless path).
+    host.live_ctx = Some(LiveUrxContext::new(host.dpr));
     let s2 = Arc::clone(&sig);
     port.set_waker(move || s2.wake());
     let start = Instant::now();
