@@ -18,7 +18,9 @@ use uzor::input::{ModifierKeys, MouseButton};
 use uzor::types::Rect;
 use crate::automation::{now_ms, AutoCmd, AutoError, AutoReply, AutoTree, AutomationClient, Delay, ShotSource};
 use crate::types::ids::WindowId;
-use crate::{ImeInput, InputEvent, KeyInput, KeyState, Point, PointerInput, WheelDelta, WheelInput};
+use crate::types::bus::WindowInput;
+use crate::types::window::SizePx;
+use crate::{DropInput, DroppedFile, ImeInput, InputEvent, KeyInput, KeyState, Point, PointerInput, TouchInput, WheelDelta, WheelInput};
 
 use super::events::EventLog;
 use super::keys;
@@ -29,12 +31,12 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// The methods this core answers.
 pub const METHODS: &[&str] = &[
-    "ping", "windows", "dump-tree", "click", "hover", "focus", "type", "key", "scroll", "drag", "screenshot", "state",
+    "ping", "windows", "dump-tree", "click", "hover", "focus", "type", "key", "scroll", "drag", "input", "screenshot", "capture", "state",
     "wait-for", "settle", "record", "replay",
 ];
 
 /// Methods a replay may run.
-const REPLAYABLE: &[&str] = &["click", "hover", "focus", "type", "key", "scroll", "drag", "wait-for", "settle"];
+const REPLAYABLE: &[&str] = &["click", "hover", "focus", "type", "key", "scroll", "drag", "input", "wait-for", "settle"];
 
 /// How long one host round trip may take.
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -181,7 +183,9 @@ impl Dispatcher {
                 "key" => self.key(p).await,
                 "scroll" => self.scroll(p).await,
                 "drag" => self.drag(p).await,
+                "input" => self.input_events(p).await,
                 "screenshot" => self.screenshot(p).await,
+                "capture" => self.capture(p).await,
                 "state" => self.state().await,
                 "wait-for" => self.wait_for(p).await,
                 "settle" => self.settle(p).await,
@@ -334,6 +338,64 @@ impl Dispatcher {
         // Let the app act on the release (scroll offset / slider value commit).
         self.input(win, vec![]).await?;
         Ok(json!({"id": id, "from": {"x": start.x, "y": start.y}, "to": {"x": end.x, "y": end.y}, "steps": steps}))
+    }
+
+    /// Universal synthetic-input injection: `events` is an array of InputEvent
+    /// JSON (`{kind: pointer|wheel|touch|ime|drop|paste, ...}`), exposing EVERY
+    /// action kind the windowing layer supports: pointer moved/down/up/entered/
+    /// left/cancelled/raw-delta (any button + mods), wheel pixels/lines + mods,
+    /// multi-contact touch (the kernel recognises tap/long-press/pan/swipe/pinch/
+    /// fling/double-tap from the contact sequence), IME enabled/preedit/commit/
+    /// disabled, file drop hovered/dropped/cancelled, and paste. Physical keys
+    /// (down/repeat/up) go through `key`. In-app synthetic: no OS mouse needed.
+    async fn input_events(&self, p: &Value) -> R<Value> {
+        let win = window_param(p)?;
+        let arr = p.get("events").and_then(Value::as_array).ok_or_else(|| RpcError::bad("give \"events\" array"))?;
+        let mut events = Vec::with_capacity(arr.len());
+        for e in arr {
+            events.push(parse_input_event(e)?);
+        }
+        let n = events.len();
+        self.input(win, events).await?;
+        // One more turn lets the app act on the batch (gesture recognise / commit).
+        self.input(win, vec![]).await?;
+        Ok(json!({ "sent": n }))
+    }
+
+    /// Time-resolved diff capture ("video"): `frames` screenshots at
+    /// `interval_ms`, each thermal-compared against the first frame; writes
+    /// `frame-NNNN.png` + `diff-NNNN.png` into `out_dir` and returns per-frame
+    /// differing-pixel shares, so behaviour over time can be watched rather than
+    /// a single still. The PNG sequence + thermal diffs are the source of truth;
+    /// assemble to mp4 externally (ffmpeg) when a playable video is wanted.
+    async fn capture(&self, p: &Value) -> R<Value> {
+        let out_dir = p.get("out_dir").and_then(Value::as_str).ok_or_else(|| RpcError::bad("give \"out_dir\""))?;
+        let frames = p.get("frames").and_then(Value::as_u64).unwrap_or(12).clamp(2, 240) as usize;
+        let interval = p.get("interval_ms").and_then(Value::as_f64).unwrap_or(100.0).clamp(16.0, 2000.0);
+        std::fs::create_dir_all(out_dir).map_err(|e| RpcError::new("io", e.to_string()))?;
+        let mut shares = Vec::new();
+        let mut have_first = false;
+        for i in 0..frames {
+            let shot = self.screenshot(&json!({})).await?;
+            let b64 = shot.get("png_base64").and_then(Value::as_str).ok_or_else(|| RpcError::new("failed", "screenshot gave no png"))?;
+            let bytes = base64::engine::general_purpose::STANDARD.decode(b64).map_err(|e| RpcError::new("failed", e.to_string()))?;
+            let fp = std::path::Path::new(out_dir).join(format!("frame-{i:04}.png"));
+            std::fs::write(&fp, &bytes).map_err(|e| RpcError::new("io", e.to_string()))?;
+            if !have_first {
+                have_first = true;
+                shares.push(0.0);
+            } else {
+                let f0 = std::path::Path::new(out_dir).join("frame-0000.png");
+                let dp = std::path::Path::new(out_dir).join(format!("diff-{i:04}.png"));
+                let opts = uzor_devtools::compare::CompareOptions { map: uzor_devtools::compare::MapMode::Thermal, ..Default::default() };
+                let rep = uzor_devtools::compare::compare_pngs(&f0, &fp, &dp, &opts).map_err(|e| RpcError::new("compare", e.to_string()))?;
+                shares.push(rep.all);
+            }
+            if i + 1 < frames {
+                Delay::ms(interval).await;
+            }
+        }
+        Ok(json!({ "frames": frames, "out_dir": out_dir, "diff_shares": shares }))
     }
 
     async fn focus(&self, p: &Value) -> R<Value> {
@@ -715,6 +777,106 @@ fn resolve(t: &AutoTree, sel: &str) -> R<(String, Rect)> {
 
 fn unexpected(other: AutoReply) -> RpcError {
     RpcError::new("failed", format!("unexpected host reply {other:?}"))
+}
+
+/// Mouse button name → [`MouseButton`] (default left).
+fn button_of(e: &Value) -> R<MouseButton> {
+    match e.get("button").and_then(Value::as_str).unwrap_or("left") {
+        "left" => Ok(MouseButton::Left),
+        "right" => Ok(MouseButton::Right),
+        "middle" => Ok(MouseButton::Middle),
+        other => Err(RpcError::bad(format!("unknown button '{other}'"))),
+    }
+}
+
+/// One synthetic InputEvent from JSON — every action kind the windowing layer
+/// supports (pointer phases, wheel units, multi-contact touch, IME, drop, paste).
+fn parse_input_event(e: &Value) -> R<InputEvent> {
+    let kind = e.get("kind").and_then(Value::as_str).ok_or_else(|| RpcError::bad("event needs \"kind\""))?;
+    let pos = |v: &Value| -> R<Point> {
+        Ok(Point::new(
+            v.get("x").and_then(Value::as_f64).ok_or_else(|| RpcError::bad("event needs \"x\""))?,
+            v.get("y").and_then(Value::as_f64).ok_or_else(|| RpcError::bad("event needs \"y\""))?,
+        ))
+    };
+    let mods = ModifierKeys::default();
+    Ok(match kind {
+        "pointer" => InputEvent::Pointer(match e.get("phase").and_then(Value::as_str).unwrap_or("moved") {
+            "moved" => PointerInput::Moved { pos: pos(e)?, mods },
+            "down" => PointerInput::Down { pos: pos(e)?, button: button_of(e)?, mods },
+            "up" => PointerInput::Up { pos: pos(e)?, button: button_of(e)?, mods },
+            "entered" => PointerInput::Entered,
+            "left" => PointerInput::Left,
+            "cancelled" => PointerInput::Cancelled,
+            "rawdelta" => PointerInput::RawDelta {
+                dx: e.get("dx").and_then(Value::as_f64).unwrap_or(0.0),
+                dy: e.get("dy").and_then(Value::as_f64).unwrap_or(0.0),
+            },
+            other => return Err(RpcError::bad(format!("unknown pointer phase '{other}'"))),
+        }),
+        "wheel" => {
+            let d = e.get("delta").unwrap_or(e);
+            let delta = if let Some(l) = d.get("lines") {
+                WheelDelta::Lines { x: l.get("x").and_then(Value::as_f64).unwrap_or(0.0), y: l.get("y").and_then(Value::as_f64).unwrap_or(0.0) }
+            } else {
+                let p = d.get("pixels").unwrap_or(d);
+                WheelDelta::Pixels { x: p.get("x").and_then(Value::as_f64).unwrap_or(0.0), y: p.get("y").and_then(Value::as_f64).unwrap_or(0.0) }
+            };
+            InputEvent::Wheel(WheelInput { pos: pos(e)?, delta, mods })
+        }
+        "touch" => {
+            let id = e.get("id").and_then(Value::as_u64).unwrap_or(0);
+            InputEvent::Touch(match e.get("phase").and_then(Value::as_str).unwrap_or("start") {
+                "start" => TouchInput::Start { id, pos: pos(e)? },
+                "move" => TouchInput::Move { id, pos: pos(e)? },
+                "end" => TouchInput::End { id, pos: pos(e)? },
+                "cancel" => TouchInput::Cancel { id },
+                other => return Err(RpcError::bad(format!("unknown touch phase '{other}'"))),
+            })
+        }
+        "ime" => InputEvent::Ime(match e.get("phase").and_then(Value::as_str).unwrap_or("commit") {
+            "enabled" => ImeInput::Enabled,
+            "disabled" => ImeInput::Disabled,
+            "preedit" => ImeInput::Preedit { text: e.get("text").and_then(Value::as_str).unwrap_or("").to_string(), cursor: None },
+            "commit" => ImeInput::Commit(e.get("text").and_then(Value::as_str).unwrap_or("").to_string()),
+            other => return Err(RpcError::bad(format!("unknown ime phase '{other}'"))),
+        }),
+        "drop" => {
+            let file = DroppedFile {
+                name: e.get("name").and_then(Value::as_str).unwrap_or("file").to_string(),
+                path: e.get("path").and_then(Value::as_str).map(std::path::PathBuf::from),
+                bytes: None,
+            };
+            InputEvent::Drop(match e.get("phase").and_then(Value::as_str).unwrap_or("dropped") {
+                "hovered" => DropInput::Hovered(file),
+                "dropped" => DropInput::Dropped(file),
+                "cancelled" => DropInput::Cancelled,
+                other => return Err(RpcError::bad(format!("unknown drop phase '{other}'"))),
+            })
+        }
+        "paste" => InputEvent::Paste(e.get("text").and_then(Value::as_str).unwrap_or("").to_string()),
+        "window" => InputEvent::Window(match e.get("phase").and_then(Value::as_str).unwrap_or("focused") {
+            "resized" => WindowInput::Resized {
+                size: SizePx::new(
+                    e.get("width").and_then(Value::as_u64).unwrap_or(1280) as u32,
+                    e.get("height").and_then(Value::as_u64).unwrap_or(800) as u32,
+                ),
+                dpr: e.get("dpr").and_then(Value::as_f64).unwrap_or(1.0),
+            },
+            "moved" => WindowInput::Moved {
+                position: (
+                    e.get("x").and_then(Value::as_i64).unwrap_or(0) as i32,
+                    e.get("y").and_then(Value::as_i64).unwrap_or(0) as i32,
+                ),
+            },
+            "focused" => WindowInput::Focused(e.get("flag").and_then(Value::as_bool).unwrap_or(true)),
+            "occluded" => WindowInput::Occluded(e.get("flag").and_then(Value::as_bool).unwrap_or(false)),
+            "minimized" => WindowInput::Minimized(e.get("flag").and_then(Value::as_bool).unwrap_or(false)),
+            "maximized" => WindowInput::Maximized(e.get("flag").and_then(Value::as_bool).unwrap_or(false)),
+            other => return Err(RpcError::bad(format!("unknown window phase '{other}'"))),
+        }),
+        other => return Err(RpcError::bad(format!("unknown input kind '{other}' (pointer|wheel|touch|ime|drop|paste|window; keys via `key`)"))),
+    })
 }
 
 fn pid() -> Value {
