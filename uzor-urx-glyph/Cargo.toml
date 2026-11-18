@@ -15,3 +15,8 @@ uzor-urx-core = { workspace = true }
 metrics = "0.24"
 swash = "0.2"
 zeno  = "0.3"
+
+[dev-dependencies]
+# The CJK regression tests rasterise the real Noto Sans CJK SC face
+# (opt-in `cjk` feature; build.rs fetches/validates the bytes).
+uzor-fonts = { workspace = true, features = ["cjk"] }

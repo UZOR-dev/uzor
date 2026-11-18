@@ -70,6 +70,19 @@ fn font_system() -> &'static Mutex<FontSystem> {
         if let Some(bytes) = uzor_fonts::color_emoji() {
             db.load_font_data(bytes.to_vec());
         }
+        // Opt-in CJK (uzor-fonts feature `cjk`): with the real Noto Sans CJK
+        // SC face loaded, the us language list's 中文/日本語/한국어 shape with
+        // their own glyphs instead of .notdef tofu — the glyph-id text path
+        // (URX `GlyphRun`) then rasterises the same face the legacy fontdue
+        // fallback chain uses. Without the feature `cjk_sc()` is `None` and
+        // the embedded set is unchanged (light stand-in behaviour).
+        if let Some(bytes) = uzor_fonts::cjk_sc() {
+            db.load_font_data(bytes.to_vec());
+        }
+        // Arabic + Devanagari are bundled light faces (no feature gate); the
+        // same language list's العربية / हिन्दी shape with their own faces.
+        db.load_font_data(f::NOTO_SANS_ARABIC.to_vec());
+        db.load_font_data(f::NOTO_SANS_DEVANAGARI.to_vec());
 
         // Set generic family names so Attrs::new().family(Family::SansSerif)
         // resolves to Roboto and Family::Monospace resolves to JetBrains Mono.
@@ -346,6 +359,82 @@ pub fn font_bytes_for(id: ShaperFontId) -> Option<Vec<u8>> {
 pub fn font_family_for(id: ShaperFontId) -> Option<String> {
     let fs = font_system().lock().ok()?;
     fs.db().face(id.0).and_then(|face| face.families.first().map(|(name, _)| name.clone()))
+}
+
+/// Cache for [`line_ascent`] — keyed by the full CSS font shorthand (the
+/// pixel size rides in the string), same shape as [`shape_cache`].
+fn ascent_cache() -> &'static Mutex<HashMap<String, f32>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, f32>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The resolved face's hhea ascent scaled to the CSS font's pixel size —
+/// the SAME metric fontdue's `horizontal_line_metrics(px).ascent` gives
+/// the tiny-skia adapter (`hhea.ascender * px / head.units_per_em`).
+/// `uzor-render-urx`'s `Top`/`Middle` baseline offsets use it so
+/// legacy-convention text lands on the identical device row under both
+/// CPU adapters (the URX heuristics `0.8·size` / `0.35·size` sat ~1.5 px
+/// above tiny-skia at 13 px and broke every legacy-vs-DOM pixel compare).
+/// The DOM `Alphabetic` path (offset 0, the caller's own baseline) is
+/// untouched — this is parity-neutral for already-shaped faces: it reads
+/// metrics, it does not change shaping, advances or font selection.
+/// A face without hhea falls back to `px * 0.75`, mirroring tiny-skia's
+/// own `unwrap_or`.
+pub fn line_ascent(font: &str) -> f32 {
+    if let Ok(cache) = ascent_cache().lock() {
+        if let Some(&a) = cache.get(font) { return a; }
+    }
+    let info = parse_css_font(font);
+    let px = info.size;
+    let family_name: &str = match info.family {
+        FontFamily::Roboto        => "Roboto",
+        FontFamily::PtRootUi      => "PT Root UI",
+        FontFamily::JetBrainsMono => "JetBrains Mono",
+        FontFamily::Inter         => "Inter",
+        FontFamily::SourceSerif4  => "Source Serif 4",
+    };
+    let ascent = (|| {
+        let fs = font_system().lock().ok()?;
+        let query = cosmic_text::fontdb::Query {
+            families: &[Family::Name(family_name)],
+            weight: cosmic_text::Weight(info.weight),
+            stretch: cosmic_text::fontdb::Stretch::Normal,
+            style: if info.italic { cosmic_text::Style::Italic } else { cosmic_text::Style::Normal },
+        };
+        let id = fs.db().query(&query)?;
+        fs.db().with_face_data(id, |data, face_index| hhea_ascent_px(data, face_index, px)).flatten()
+    })().unwrap_or(px * 0.75);
+    if let Ok(mut cache) = ascent_cache().lock() {
+        cache.insert(font.to_string(), ascent);
+    }
+    ascent
+}
+
+/// `hhea.ascender * px / head.units_per_em` straight off the sfnt bytes —
+/// exactly the ascent fontdue's `horizontal_line_metrics` reports (the
+/// same two tables fontdue reads), dependency-free. `None` when either
+/// table is missing or the face index is out of range.
+fn hhea_ascent_px(data: &[u8], face_index: u32, px: f32) -> Option<f32> {
+    let base = if data.len() >= 4 && &data[..4] == b"ttcf" {
+        let off = 12 + 4 * face_index as usize;
+        u32::from_be_bytes(data.get(off..off + 4)?.try_into().ok()?) as usize
+    } else { 0 };
+    let t = data.get(base..)?;
+    let num_tables = u16::from_be_bytes(t.get(4..6)?.try_into().ok()?) as usize;
+    let (mut head, mut hhea) = (None, None);
+    for i in 0..num_tables {
+        let rec = t.get(12 + 16 * i..12 + 16 * i + 16)?;
+        let off = u32::from_be_bytes(rec[8..12].try_into().ok()?) as usize;
+        match &rec[..4] {
+            b"head" => head = Some(off),
+            b"hhea" => hhea = Some(off),
+            _ => {}
+        }
+    }
+    let (head, hhea) = (head?, hhea?);
+    let upem = u16::from_be_bytes(t.get(head + 18..head + 20)?.try_into().ok()?) as f32;
+    let ascender = i16::from_be_bytes(t.get(hhea + 4..hhea + 6)?.try_into().ok()?) as f32;
+    (upem > 0.0).then(|| ascender * px / upem)
 }
 
 /// Shape `text` in `font` and return per-cluster [`GlyphMetric`] values.

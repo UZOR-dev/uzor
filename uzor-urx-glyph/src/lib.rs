@@ -134,7 +134,7 @@ pub fn register_font(bytes: Vec<u8>) -> Result<FontId, GlyphError> {
     let font_ref = FontRef::from_index(&bytes, 0)
         .ok_or(GlyphError::InvalidFont)?;
     let offset = font_ref.offset;
-    let mut g = REGISTRY.write().unwrap();
+    let mut g = REGISTRY.write().unwrap_or_else(|p| p.into_inner());
     let reg = g.get_or_insert_with(Registry::default);
     reg.next_id = reg.next_id.wrapping_add(1);
     let id = FontId(reg.next_id);
@@ -143,7 +143,7 @@ pub fn register_font(bytes: Vec<u8>) -> Result<FontId, GlyphError> {
 }
 
 pub fn unregister_font(id: FontId) -> bool {
-    let mut g = REGISTRY.write().unwrap();
+    let mut g = REGISTRY.write().unwrap_or_else(|p| p.into_inner());
     if let Some(reg) = g.as_mut() {
         reg.fonts.remove(&id.0).is_some()
     } else { false }
@@ -176,7 +176,9 @@ pub enum GlyphError {
 }
 
 fn with_font_ref<R>(id: FontId, f: impl FnOnce(FontRef<'_>) -> R) -> Result<R, GlyphError> {
-    let g = REGISTRY.read().unwrap();
+    // Poison-tolerant: a caught raster panic must not wedge every later
+    // glyph behind a poisoned registry lock.
+    let g = REGISTRY.read().unwrap_or_else(|p| p.into_inner());
     let reg = g.as_ref().ok_or(GlyphError::UnknownFont)?;
     let entry = reg.fonts.get(&id.0).ok_or(GlyphError::UnknownFont)?;
     let font_ref = FontRef {
@@ -189,16 +191,29 @@ fn with_font_ref<R>(id: FontId, f: impl FnOnce(FontRef<'_>) -> R) -> Result<R, G
 
 /// Rasterise a single glyph at a given pixel size + subpixel bin.
 /// Cached. Returns an `Arc<GlyphBitmap>` so cache lookups are cheap.
+///
+/// Graceful by contract: a glyph the face cannot rasterise (foreign or
+/// out-of-range glyph id after a font-fallback boundary, a charstring
+/// swash chokes on, a non-finite/zero pixel size) returns
+/// [`GlyphError::RasterFailed`] — it never panics the frame. A swash
+/// panic is caught at this boundary (the CJK regression: a bad glyph in
+/// a run must not kill the whole text pass), the thread-local
+/// `ScaleContext` is rebuilt afterwards so the next glyph starts clean,
+/// and the bitmap buffer is validated against its placement so the
+/// compositor's pixel loop can never index out of bounds.
 pub fn rasterise_glyph(
     font:     FontId,
     glyph_id: u16,
     px_size:  f32,
     subpx_x:  u8,
 ) -> Result<GlyphBitmapArc, GlyphError> {
+    if !px_size.is_finite() || px_size <= 0.0 {
+        return Err(GlyphError::RasterFailed);
+    }
     let key = GlyphKey::new(font, glyph_id as u32, px_size, subpx_x);
 
     {
-        let mut g = CACHE.write().unwrap();
+        let mut g = CACHE.write().unwrap_or_else(|p| p.into_inner());
         let lru = g.get_or_insert_with(GlyphLru::default);
         if let Some(bm) = lru.get(key) { return Ok(bm); }
     }
@@ -206,22 +221,45 @@ pub fn rasterise_glyph(
     let bm = SCALE_CTX.with(|ctx| -> Result<GlyphBitmapArc, GlyphError> {
         let mut ctx = ctx.borrow_mut();
         with_font_ref(font, |font_ref| -> Result<GlyphBitmapArc, GlyphError> {
-            let mut scaler = ctx.builder(font_ref)
-                .size(px_size)
-                .hint(true)
-                .build();
             let offset_x = (subpx_x as f32) / 4.0;
-            let image = Render::new(&[
-                Source::ColorOutline(0),
-                Source::ColorBitmap(StrikeWith::BestFit),
-                Source::Outline,
-            ])
-                .format(Format::Alpha)
-                .offset(Vector::new(offset_x, 0.0))
-                .render(&mut scaler, GlyphId::from(glyph_id))
-                .ok_or(GlyphError::RasterFailed)?;
+            // swash is the one fallible boundary here: a malformed or
+            // foreign glyph can panic inside its scaler/charstring
+            // interpreter. Catch it, degrade to RasterFailed, and rebuild
+            // the ScaleContext (a panicked render may leave it mid-state).
+            let rendered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut scaler = ctx.builder(font_ref)
+                    .size(px_size)
+                    .hint(true)
+                    .build();
+                Render::new(&[
+                    Source::ColorOutline(0),
+                    Source::ColorBitmap(StrikeWith::BestFit),
+                    Source::Outline,
+                ])
+                    .format(Format::Alpha)
+                    .offset(Vector::new(offset_x, 0.0))
+                    .render(&mut scaler, GlyphId::from(glyph_id))
+            }));
+            let image = match rendered {
+                Ok(Some(image)) => image,
+                Ok(None) => return Err(GlyphError::RasterFailed),
+                Err(_) => {
+                    *ctx = ScaleContext::new();
+                    metrics::counter!(
+                        uzor_urx_core::metrics_keys::KEY_RENDER_PRIMITIVES,
+                        "kind" => "urx_glyph_raster_panic_caught",
+                    ).increment(1);
+                    return Err(GlyphError::RasterFailed);
+                }
+            };
             let w = image.placement.width;
             let h = image.placement.height;
+            // The compositor indexes `alpha[y * width + x]` — a bitmap
+            // whose buffer disagrees with its placement would panic the
+            // pixel loop. Reject it here instead.
+            if image.data.len() != (w as usize) * (h as usize) {
+                return Err(GlyphError::RasterFailed);
+            }
             Ok(Arc::new(GlyphBitmap {
                 width:  w,
                 height: h,
@@ -233,7 +271,7 @@ pub fn rasterise_glyph(
     })?;
 
     {
-        let mut g = CACHE.write().unwrap();
+        let mut g = CACHE.write().unwrap_or_else(|p| p.into_inner());
         let lru = g.get_or_insert_with(GlyphLru::default);
         lru.insert(key, bm.clone());
     }
@@ -328,23 +366,53 @@ pub fn draw_glyph_run(
     for g in glyphs {
         let px = origin_x + g.x;
         let py = origin_y + g.y;
+        // A non-finite pen position (a shaping fallback gone wrong) has no
+        // rasterisable location — skip it, never let it reach the integer
+        // pen math below.
+        if !px.is_finite() || !py.is_finite() {
+            metrics::counter!(
+                uzor_urx_core::metrics_keys::KEY_RENDER_PRIMITIVES,
+                "kind" => "urx_glyph_skipped_nonfinite_pen",
+            ).increment(1);
+            continue;
+        }
         let subpx = subpixel_bin_for_x(px);
-        let bm = rasterise_glyph(font, g.glyph_id as u16, font_size, subpx)?;
+        // One glyph the face cannot rasterise (foreign id after a fallback
+        // boundary, a charstring swash rejects) must not abort the run —
+        // skip it, count it, keep compositing the rest (graceful
+        // missing-glyph handling; the CJK regression).
+        let bm = match rasterise_glyph(font, g.glyph_id as u16, font_size, subpx) {
+            Ok(bm) => bm,
+            Err(_) => {
+                metrics::counter!(
+                    uzor_urx_core::metrics_keys::KEY_RENDER_PRIMITIVES,
+                    "kind" => "urx_glyph_skipped_raster_error",
+                ).increment(1);
+                continue;
+            }
+        };
         if bm.width == 0 || bm.height == 0 { continue; }
-        let dst_x0 = (px.floor() as i32) + bm.left;
+        // i64 saturating pen math: an extreme pen position (a shaped glyph
+        // far off canvas, e.g. cosmic-text's f32::MAX sentinel for a glyph
+        // it could not place) saturates the f32→i64 cast instead of
+        // overflowing i32 — the CJK panic was `(px.floor() as i32) +
+        // bm.left` wrapping in debug. Saturating adds keep even the
+        // i64::MAX edge panic-free; the per-pixel bounds tests below clip
+        // such a glyph away exactly like any other off-canvas draw.
+        let dst_x0 = (px.floor() as i64).saturating_add(bm.left as i64);
         // swash returns `top` as glyph height ABOVE baseline. Bitmap
         // top-left = baseline_y - top.
-        let dst_y0 = (py.round() as i32) - bm.top;
+        let dst_y0 = (py.round() as i64).saturating_sub(bm.top as i64);
 
-        for gy in 0..bm.height as i32 {
-            let dy = dst_y0 + gy;
-            if dy < 0 || dy as u32 >= buf_h { continue; }
+        for gy in 0..bm.height as i64 {
+            let dy = dst_y0.saturating_add(gy);
+            if dy < 0 || dy >= buf_h as i64 { continue; }
             if let Some(c) = &clip {
                 if (dy as f32) < c.bounds.1 || (dy as f32) >= c.bounds.3 { continue; }
             }
-            for gx in 0..bm.width as i32 {
-                let dx = dst_x0 + gx;
-                if dx < 0 || dx as u32 >= buf_w { continue; }
+            for gx in 0..bm.width as i64 {
+                let dx = dst_x0.saturating_add(gx);
+                if dx < 0 || dx >= buf_w as i64 { continue; }
                 if let Some(c) = &clip {
                     if (dx as f32) < c.bounds.0 || (dx as f32) >= c.bounds.2 { continue; }
                 }
@@ -352,7 +420,7 @@ pub fn draw_glyph_run(
                 if mask == 0 { continue; }
                 if let Some(c) = &clip {
                     if let Some(sampler) = c.mask {
-                        let mask_cov = sampler(dx as i64, dy as i64) as u32;
+                        let mask_cov = sampler(dx, dy) as u32;
                         mask = (mask * mask_cov + 127) / 255;
                         if mask == 0 { continue; }
                     }
@@ -383,9 +451,9 @@ pub fn draw_glyph_run(
 
 #[doc(hidden)]
 pub fn _clear_caches_for_tests() {
-    let mut c = CACHE.write().unwrap();
+    let mut c = CACHE.write().unwrap_or_else(|p| p.into_inner());
     *c = None;
-    let mut r = REGISTRY.write().unwrap();
+    let mut r = REGISTRY.write().unwrap_or_else(|p| p.into_inner());
     *r = None;
 }
 
