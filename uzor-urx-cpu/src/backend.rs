@@ -369,7 +369,7 @@ impl CpuBackend {
                             bounds: clip_bounds,
                             mask: (!clip.all_rect()).then_some(&clip_sampler as &dyn Fn(i64, i64) -> u8),
                         };
-                        let _ = uzor_urx_glyph::draw_glyph_run(
+                        if uzor_urx_glyph::draw_glyph_run(
                             target.pixels_mut(),
                             pw, ph,
                             tx, ty,
@@ -379,7 +379,14 @@ impl CpuBackend {
                             [rgba.r, rgba.g, rgba.b, rgba.a],
                             gamma_lut,
                             Some(glyph_clip),
-                        );
+                        ).is_err() {
+                            // A failed glyph raster must be observable, not a
+                            // silent hole in the frame.
+                            metrics::counter!(
+                                uzor_urx_core::metrics_keys::KEY_RENDER_PRIMITIVES,
+                                "kind" => "urx_glyph_run_raster_error",
+                            ).increment(1);
+                        }
                     }
                     #[cfg(not(feature = "glyph"))]
                     {
