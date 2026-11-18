@@ -1431,11 +1431,22 @@ fn paint_box_unclipped(ctx: &mut dyn RenderContext, b: &Placed) {
         let rad = s.border_radius.unwrap_or(0.0);
         let bw = s.border_width.unwrap_or(0.0);
         let border = s.border_color.as_deref().filter(|_| bw > 0.0 && s.border_drawn());
+        // A square box whose radius reaches half its side is a true circle: raster it
+        // with `arc` (the same primitive hand-drawn rings/dots use) instead of the
+        // cubic corner approximation, so the two anti-alias identically.
+        let circ = full_circle(r, rad);
         if let Some(sh) = shadow {
             ctx.set_shadow(sdx, sh.dy, sh.blur, sh.color);
         }
         if let Some(bg) = bg {
-            fill_round_rect(ctx, r, rad, bg);
+            if let Some(cr) = circ {
+                ctx.begin_path();
+                ctx.arc(r.x + cr, r.y + cr, cr, 0.0, std::f64::consts::TAU);
+                ctx.set_fill_color(bg);
+                ctx.fill();
+            } else {
+                fill_round_rect(ctx, r, rad, bg);
+            }
         } else if let Some(sh) = shadow {
             // A shadow needs something to cast it.
             fill_round_rect(ctx, r, rad, sh.color);
@@ -1448,7 +1459,12 @@ fn paint_box_unclipped(ctx: &mut dyn RenderContext, b: &Placed) {
             if let Some(d) = dash {
                 ctx.set_line_dash(&d);
             }
-            path_round_rect(ctx, Rect::new(r.x + bw / 2.0, r.y + bw / 2.0, r.width - bw, r.height - bw), (rad - bw / 2.0).max(0.0));
+            if let Some(cr) = circ {
+                ctx.begin_path();
+                ctx.arc(r.x + cr, r.y + cr, (cr - bw / 2.0).max(0.0), 0.0, std::f64::consts::TAU);
+            } else {
+                path_round_rect(ctx, Rect::new(r.x + bw / 2.0, r.y + bw / 2.0, r.width - bw, r.height - bw), (rad - bw / 2.0).max(0.0));
+            }
             ctx.stroke();
             if dash.is_some() {
                 ctx.set_line_dash(&[]);
@@ -1771,6 +1787,17 @@ pub fn content_box(b: &Placed) -> Rect {
 fn content_rect(s: &Style, r: Rect) -> Rect {
     let (e, p) = (s.border_edges(), s.pad());
     Rect::new(r.x + p[3] + e[3], r.y + p[0] + e[0], (r.width - p[1] - p[3] - e[1] - e[3]).max(0.0), (r.height - p[0] - p[2] - e[0] - e[2]).max(0.0))
+}
+
+/// The centre radius when `r` is a square whose corner radius reaches half its
+/// side (a CSS circle, `border-radius: 50%`): such boxes raster as a true `arc`,
+/// matching hand-drawn rings/dots, rather than the cubic round-rect corners.
+fn full_circle(r: Rect, rad: f64) -> Option<f64> {
+    if r.width <= 0.0 || (r.width - r.height).abs() > 1e-9 {
+        return None;
+    }
+    let half = r.width / 2.0;
+    (rad + 1e-9 >= half).then_some(half)
 }
 
 /// Corner radii scaled down as CSS does when adjacent ones overflow a side.
