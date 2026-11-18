@@ -26,7 +26,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// The methods of protocol 1 (answered by `uzor_framework::dev_control::Dispatcher`).
 pub const METHODS: &[&str] = &[
-    "ping", "windows", "dump-tree", "click", "hover", "focus", "type", "key", "scroll", "drag", "screenshot", "state",
+    "ping", "windows", "dump-tree", "click", "hover", "focus", "type", "key", "scroll", "drag", "input", "screenshot", "capture", "state",
     "wait-for", "settle", "record", "replay",
 ];
 
