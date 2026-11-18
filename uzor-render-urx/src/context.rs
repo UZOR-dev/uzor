@@ -386,6 +386,18 @@ impl UrxRenderContext {
         }
     }
 
+    /// True when the current path is a closed outline with a non-zero
+    /// bounding box — the precondition for classifying it as a rounded
+    /// rect (`path_as_round_rect`) and routing it through the rect
+    /// commands. Open polylines (chart hairlines stroked with
+    /// `move_to`/`line_to`) and degenerate zero-area paths keep their
+    /// generic path raster.
+    fn path_is_closed_outline(&self) -> bool {
+        use kurbo::Shape as _;
+        matches!(self.path.elements().last(), Some(kurbo::PathEl::ClosePath))
+            && self.path.bounding_box().area() > 0.0
+    }
+
     /// Reset for a new frame. Discards any buffered draws + state.
     pub fn begin_frame(&mut self, width: u32, height: u32) {
         self.revision = self.revision.saturating_add(1);
@@ -559,6 +571,23 @@ impl UrxRenderContext {
     /// with a gradient, same as Canvas2D's own `fill()` contract).
     fn emit_fill_path(&mut self, brush: PenikoBrush) {
         if self.path.elements().is_empty() { return; }
+        // A rounded-rect path (the DOM painter's cubic `path_round_rect`
+        // fill) — or a plain axis-aligned rect path — fills through the
+        // SAME `FillRect`(+radii) command the legacy `fill_rounded_rect` /
+        // `fill_rect` emit: one draw path, one AA. Before this, kit rounded
+        // fills rasterised as a scanline path fill while legacy used the
+        // rounded-clip rect fill, and the two anti-aliased differently on
+        // URX (the strip tab-close background and colmenu row deltas).
+        // Solid brushes only — a gradient keeps the path (its sampler
+        // walks the path geometry). `emit_fill_rect` carries the same
+        // shadow pre-pass (soft layers for a rounded rect) this function
+        // would have emitted below.
+        if matches!(brush, PenikoBrush::Solid(_)) && self.path_is_closed_outline() {
+            if let Some((rect, r)) = path_as_round_rect(&self.path) {
+                self.emit_fill_rect(rect.x0, rect.y0, rect.width(), rect.height(), Some([r as f32; 4]));
+                return;
+            }
+        }
         let soft = self.shadow.as_ref().filter(|sh| sh.blur >= 1.0).and_then(|_| match self.path_hint {
             PathHint::FullCircle { cx, cy, radius } => Some((KRect::new(cx - radius, cy - radius, cx + radius, cy + radius), radius)),
             _ => path_as_round_rect(&self.path),
@@ -939,6 +968,26 @@ impl Painter for UrxRenderContext {
                 });
                 return;
             }
+            // A rounded-rect path (the DOM painter's cubic `path_round_rect`
+            // border box) strokes through the SAME `StrokeRect`+radii command
+            // the legacy `stroke_rounded_rect` emits — one draw path, one AA.
+            // Before this, kit borders rasterised as a generic path stroke
+            // while legacy borders used the rounded-rect stroke, and the two
+            // anti-aliased differently on URX (the us/strip ring delta).
+            // Closed non-degenerate outlines only — an open polyline (a chart
+            // hairline) must keep its generic line-stroke raster.
+            if self.path_is_closed_outline() {
+                if let Some((rect, r)) = path_as_round_rect(&self.path) {
+                    self.scene.push(DrawCommand::StrokeRect {
+                        rect,
+                        radii: Some([r as f32; 4]),
+                        stroke,
+                        brush,
+                        transform: self.transform,
+                    });
+                    return;
+                }
+            }
         }
         self.scene.push(DrawCommand::StrokePath {
             path:      self.path.clone(),
@@ -1255,9 +1304,20 @@ impl TextRenderer for UrxRenderContext {
         // it) — fixing only one side would have introduced a NEW
         // baseline disagreement between the two legs instead of
         // removing one.
+        //
+        // `Top`/`Middle` use the face's REAL hhea ascent (the same
+        // `fontdue::horizontal_line_metrics(px).ascent` the tiny-skia
+        // adapter uses), not the old `0.8·size` / `0.35·size`
+        // heuristics: at 13 px Roboto the heuristic Middle sat ~1.5 px
+        // above tiny-skia's, shifting every legacy-convention text row
+        // against the DOM `Alphabetic` pass and breaking the mlc
+        // legacy-vs-DOM pixel compares on URX (strip / toolbars /
+        // watchlist / bottom bar). `Alphabetic`/`Bottom` stay 0 — the
+        // DOM path is untouched, so this is parity-neutral for it.
+        let ascent = uzor::shaper::line_ascent(&font_str) as f64;
         let y_off = match self.text_baseline {
-            TextBaseline::Top        => self.font_info.size as f64 * 0.8,
-            TextBaseline::Middle     => self.font_info.size as f64 * 0.35,
+            TextBaseline::Top        => ascent,
+            TextBaseline::Middle     => ascent / 2.0,
             TextBaseline::Bottom     => 0.0,
             TextBaseline::Alphabetic => 0.0,
         };
@@ -1870,11 +1930,14 @@ mod tests {
         let scene = ctx.take_scene();
         assert_eq!(scene.commands.len(), 2);
         assert!(matches!(scene.commands[0], DrawCommand::FillPath { brush: PenikoBrush::Gradient(_), .. }));
+        // The solid rect path now fills through the unified FillRect
+        // command (same draw path as legacy fill_rect) — the leak check
+        // is about the BRUSH, not the command class.
         match &scene.commands[1] {
-            DrawCommand::FillPath { brush: PenikoBrush::Solid(c), .. } => {
+            DrawCommand::FillRect { brush: PenikoBrush::Solid(c), .. } => {
                 assert_eq!(*c, Color::from_rgba8(255, 255, 255, 255), "the second fill must use ITS OWN white, not the gradient's orange leaking through");
             }
-            other => panic!("expected a solid-white FillPath, got {:?}", other),
+            other => panic!("expected a solid-white FillRect, got {:?}", other),
         }
     }
 
@@ -2011,7 +2074,10 @@ mod tests {
             DrawCommand::GlyphRun { transform, .. } => {
                 let c = transform.as_coeffs();
                 assert_eq!(c[4], 30.0);
-                assert!((c[5] - (40.0 + 16.0 * 0.8)).abs() < 1e-6, "Top baseline offset must be added: got {}", c[5]);
+                // Top = the face's real hhea ascent (tiny-skia's fontdue
+                // metric), not the old 0.8·size heuristic.
+                let ascent = uzor::shaper::line_ascent("16px Roboto") as f64;
+                assert!((c[5] - (40.0 + ascent)).abs() < 1e-6, "Top baseline offset must be the hhea ascent: got {} want {}", c[5], 40.0 + ascent);
             }
             other => panic!("expected GlyphRun, got {:?}", other),
         }
@@ -2067,7 +2133,10 @@ mod tests {
         // Layers grow fainter outwards and reach past the box by the blur.
         let DrawCommand::FillRect { rect, .. } = &scene.commands[0] else { panic!("layer is a FillRect") };
         assert!(rect.x0 < 100.0 - 40.0, "outermost layer spreads ~2 sigma: {rect:?}");
-        assert!(matches!(scene.commands[n - 1], DrawCommand::FillPath { .. }), "the box itself last");
+        // The box itself last — now the unified FillRect+radii command
+        // (a cubic round-rect path fills through the same draw path the
+        // legacy fill_rounded_rect emits), not a generic FillPath.
+        assert!(matches!(scene.commands[n - 1], DrawCommand::FillRect { radii: Some(_), .. }), "the box itself last as a rounded FillRect");
         // Coverage built by the layers: ~A deep inside, ~A/2 on the edge, ~0 far out.
         let cov = |layers: &[(KRect, f64, f64)], x: f64| layers.iter().filter(|(r, _, _)| r.x0 <= x).fold(0.0, |c, (_, _, a)| c + (1.0 - c) * a);
         let l = soft_shadow_layers(KRect::new(0.0, 0.0, 400.0, 300.0), 0.0, 80.0, 0.8);

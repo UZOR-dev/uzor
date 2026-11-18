@@ -18,3 +18,12 @@ uzor-urx-image = { workspace = true }
 kurbo         = "0.13"
 peniko        = "0.6"
 metrics       = "0.24"
+
+[dev-dependencies]
+# End-to-end CJK text test: the CPU rasteriser + the opt-in CJK face
+# (feature unification loads it into the shaper's font database too).
+uzor-urx-cpu = { workspace = true, features = ["glyph"] }
+uzor-fonts   = { workspace = true, features = ["cjk"] }
+# Per-primitive raster comparison against the legacy CPU adapter
+# (us kit/legacy primitive unify diagnostics).
+uzor-render-tiny-skia = { workspace = true }
