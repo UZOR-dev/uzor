@@ -177,13 +177,25 @@ fn compare_cmd(args: &[String], out_override: Option<PathBuf>) -> ExitCode {
                     }
                 }
             }
+            "--map" => {
+                i += 1;
+                match args.get(i).map(|s| s.as_str()) {
+                    Some("red") => opts.map = uzor_devtools::compare::MapMode::Red,
+                    Some("thermal") => opts.map = uzor_devtools::compare::MapMode::Thermal,
+                    Some("abs") => opts.map = uzor_devtools::compare::MapMode::Abs,
+                    _ => {
+                        eprintln!("uzor-dev compare: --map needs red|thermal|abs");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
             "--json" => json_out = true,
             other => positional.push(other.to_string()),
         }
         i += 1;
     }
     if positional.len() < 2 {
-        eprintln!("usage: uzor-dev compare <ref.png> <port.png> [out.png] [--tol N] [--region name:x,y,w,h ...] [--json]");
+        eprintln!("usage: uzor-dev compare <ref.png> <port.png> [out.png] [--tol N] [--region name:x,y,w,h ...] [--map red|thermal|abs] [--json]");
         return ExitCode::from(2);
     }
     let Some(out_path) = out_override.or_else(|| positional.get(2).map(PathBuf::from)) else {
@@ -194,14 +206,22 @@ fn compare_cmd(args: &[String], out_override: Option<PathBuf>) -> ExitCode {
         Ok(r) => {
             if json_out {
                 let regions: Map<String, Value> = r.regions.iter().map(|(n, f)| (n.clone(), json!(f))).collect();
+                let stats: Map<String, Value> = r
+                    .region_stats
+                    .iter()
+                    .map(|(n, max, mean)| (n.clone(), json!({"max": max, "mean": mean})))
+                    .collect();
                 println!(
                     "{}",
-                    json!({"width": r.width, "height": r.height, "tol": r.tol, "all": r.all, "regions": regions, "out": out_path.display().to_string()})
+                    json!({"width": r.width, "height": r.height, "tol": r.tol, "all": r.all, "regions": regions, "region_stats": stats, "out": out_path.display().to_string()})
                 );
             } else {
                 println!("all: {:.2}% of pixels differ", r.all * 100.0);
                 for (n, f) in &r.regions {
                     println!("{n}: {:.2}%", f * 100.0);
+                }
+                for (n, max, mean) in &r.region_stats {
+                    println!("{n}: max magnitude {max}, mean {mean:.2}");
                 }
                 println!("composite: {}", out_path.display());
             }
