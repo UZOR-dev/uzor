@@ -29,12 +29,12 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// The methods this core answers.
 pub const METHODS: &[&str] = &[
-    "ping", "windows", "dump-tree", "click", "hover", "focus", "type", "key", "scroll", "screenshot", "state",
+    "ping", "windows", "dump-tree", "click", "hover", "focus", "type", "key", "scroll", "drag", "screenshot", "state",
     "wait-for", "settle", "record", "replay",
 ];
 
 /// Methods a replay may run.
-const REPLAYABLE: &[&str] = &["click", "hover", "focus", "type", "key", "scroll", "wait-for", "settle"];
+const REPLAYABLE: &[&str] = &["click", "hover", "focus", "type", "key", "scroll", "drag", "wait-for", "settle"];
 
 /// How long one host round trip may take.
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -180,6 +180,7 @@ impl Dispatcher {
                 "type" => self.type_text(p).await,
                 "key" => self.key(p).await,
                 "scroll" => self.scroll(p).await,
+                "drag" => self.drag(p).await,
                 "screenshot" => self.screenshot(p).await,
                 "state" => self.state().await,
                 "wait-for" => self.wait_for(p).await,
@@ -301,6 +302,38 @@ impl Dispatcher {
         // The app reads clicks on its next compose; one more turn lets it act.
         self.input(win, vec![]).await?;
         Ok(json!({"id": id, "x": pos.x, "y": pos.y}))
+    }
+
+    /// Press-move-release drag for sliders, scrollbars and tear-off: start at
+    /// `selector` (or x/y), end at a `to` selector or `dx`/`dy` (or x2/y2), with
+    /// `steps` intermediate pointer moves so drag trackers see a real gesture.
+    /// In-app synthetic input (no OS mouse): deterministic and focus-safe.
+    async fn drag(&self, p: &Value) -> R<Value> {
+        let (win, id, start) = self.target(p).await?;
+        let end = if let Some(to) = p.get("to").and_then(Value::as_str) {
+            let (_, _, pos) = self.target(&json!({ "selector": to })).await?;
+            pos
+        } else if let (Some(dx), Some(dy)) = (p.get("dx").and_then(Value::as_f64), p.get("dy").and_then(Value::as_f64)) {
+            Point { x: start.x + dx, y: start.y + dy }
+        } else if let (Some(x2), Some(y2)) = (p.get("x2").and_then(Value::as_f64), p.get("y2").and_then(Value::as_f64)) {
+            Point { x: x2, y: y2 }
+        } else {
+            return Err(RpcError::bad("give \"to\" selector, or \"dx\"/\"dy\", or \"x2\"/\"y2\""));
+        };
+        let steps = p.get("steps").and_then(Value::as_u64).unwrap_or(8).clamp(1, 64) as usize;
+        let button = MouseButton::Left;
+        let mods = ModifierKeys::default();
+        self.input(win, vec![InputEvent::Pointer(PointerInput::Moved { pos: start, mods })]).await?;
+        self.input(win, vec![InputEvent::Pointer(PointerInput::Down { pos: start, button, mods })]).await?;
+        for i in 1..=steps {
+            let t = i as f64 / steps as f64;
+            let pos = Point { x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t };
+            self.input(win, vec![InputEvent::Pointer(PointerInput::Moved { pos, mods })]).await?;
+        }
+        self.input(win, vec![InputEvent::Pointer(PointerInput::Up { pos: end, button, mods })]).await?;
+        // Let the app act on the release (scroll offset / slider value commit).
+        self.input(win, vec![]).await?;
+        Ok(json!({"id": id, "from": {"x": start.x, "y": start.y}, "to": {"x": end.x, "y": end.y}, "steps": steps}))
     }
 
     async fn focus(&self, p: &Value) -> R<Value> {

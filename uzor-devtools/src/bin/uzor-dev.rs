@@ -272,7 +272,7 @@ fn build_params(method: &str, args: &[String]) -> Result<Value, String> {
             }
             None if n == 0 => {
                 let (key, val) = match method {
-                    "click" | "hover" | "focus" | "scroll" => ("selector", Value::String(a.clone())),
+                    "click" | "hover" | "focus" | "scroll" | "drag" => ("selector", Value::String(a.clone())),
                     "type" => ("text", Value::String(a.clone())),
                     "key" => ("key", Value::String(a.clone())),
                     "wait-for" => ("target", Value::String(a.clone())),
