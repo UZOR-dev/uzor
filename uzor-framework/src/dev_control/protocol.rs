@@ -167,13 +167,19 @@ impl Dispatcher {
     fn call<'a>(&'a self, method: &'a str, p: &'a Value) -> Fut<'a, R<Value>> {
         Box::pin(async move {
             match method {
-                "ping" => Ok(json!({
-                    "pong": true,
-                    "app": self.app,
-                    "pid": pid(),
-                    "protocol": PROTOCOL_VERSION,
-                    "methods": METHODS,
-                })),
+                "ping" => {
+                    let mut methods: Vec<String> = METHODS.iter().map(|m| m.to_string()).collect();
+                    if let Ok(AutoReply::DevMethods(extra)) = self.host(AutoCmd::DevMethods).await {
+                        methods.extend(extra.into_iter().map(|(n, _)| n));
+                    }
+                    Ok(json!({
+                        "pong": true,
+                        "app": self.app,
+                        "pid": pid(),
+                        "protocol": PROTOCOL_VERSION,
+                        "methods": methods,
+                    }))
+                },
                 "windows" => self.windows().await,
                 "dump-tree" => self.dump_tree(p).await,
                 "click" => self.click(p).await,
@@ -191,9 +197,18 @@ impl Dispatcher {
                 "settle" => self.settle(p).await,
                 "record" => self.record(p),
                 "replay" => self.replay(p).await,
-                other => Err(RpcError::new("unknown_method", format!("unknown method '{other}'; try one of: {}", METHODS.join(", ")))),
+                other => self.dev_rpc(other, p).await,
             }
         })
+    }
+
+    /// An app-defined method ([`App::dev_rpc`]); unknown to the app = unknown_method.
+    async fn dev_rpc(&self, method: &str, p: &Value) -> R<Value> {
+        match self.host(AutoCmd::DevRpc { method: method.to_string(), params: p.clone() }).await? {
+            AutoReply::DevRpc(Some(Ok(v))) => Ok(v),
+            AutoReply::DevRpc(Some(Err(m))) => Err(RpcError::new("app_error", m)),
+            _ => Err(RpcError::new("unknown_method", format!("unknown method '{method}'; try one of: {}", METHODS.join(", ")))),
+        }
     }
 
     async fn host(&self, cmd: AutoCmd) -> R<AutoReply> {
@@ -680,7 +695,13 @@ impl Dispatcher {
     /// (1 = as recorded, 2 = twice as fast, 0 = no pauses). Masked values
     /// come from `secrets`: an object by field id, or a list in order.
     async fn replay(&self, p: &Value) -> R<Value> {
-        let lines = replay_lines(p.get("events").ok_or_else(|| RpcError::bad("give \"events\" (JSONL text or an array)"))?)?;
+        // App-defined methods may opt into replay (read-only queries); core
+        // replayable methods are always allowed.
+        let extra: Vec<String> = match self.host(AutoCmd::DevMethods).await {
+            Ok(AutoReply::DevMethods(m)) => m.into_iter().filter(|(_, r)| *r).map(|(n, _)| n).collect(),
+            _ => Vec::new(),
+        };
+        let lines = replay_lines(p.get("events").ok_or_else(|| RpcError::bad("give \"events\" (JSONL text or an array)"))?, &extra)?;
         let speed = match p.get("speed") {
             None | Some(Value::Null) => 1.0,
             Some(v) => v.as_f64().filter(|s| *s >= 0.0 && s.is_finite()).ok_or_else(|| RpcError::bad("\"speed\" must be a number >= 0"))?,
@@ -745,7 +766,7 @@ impl Dispatcher {
                     return Err(RpcError::new(e.code, format!("event {i} ({method}): {sel} did not appear: {}", e.message)));
                 }
             }
-            let out = self.call(method, params).await;
+            let out = self.call(method.as_str(), params).await;
             let mut ev = json!({"type": "replay", "index": i, "method": method, "ok": out.is_ok()});
             if let Err(e) = &out {
                 ev["error"] = json!(e.code);
@@ -911,7 +932,7 @@ fn json_subset(want: &Value, have: &Value) -> bool {
 }
 
 /// Parse replay input into (t_ms, method, params), checking each method.
-fn replay_lines(events: &Value) -> R<Vec<(f64, &'static str, Value)>> {
+fn replay_lines(events: &Value, extra: &[String]) -> R<Vec<(f64, String, Value)>> {
     let raw: Vec<Value> = match events {
         Value::String(text) => text
             .lines()
@@ -927,9 +948,11 @@ fn replay_lines(events: &Value) -> R<Vec<(f64, &'static str, Value)>> {
     let mut last_t = 0.0f64;
     for (i, ev) in raw.iter().enumerate() {
         let m = ev.get("method").and_then(Value::as_str).ok_or_else(|| RpcError::bad(format!("event {i}: missing \"method\"")))?;
-        let method = *REPLAYABLE
+        let method = REPLAYABLE
             .iter()
             .find(|r| **r == m)
+            .map(|r| r.to_string())
+            .or_else(|| extra.iter().find(|r| r.as_str() == m).cloned())
             .ok_or_else(|| RpcError::bad(format!("event {i}: '{m}' cannot be replayed (only {})", REPLAYABLE.join(", "))))?;
         let params = ev.get("params").cloned().unwrap_or(Value::Object(Map::new()));
         if !params.is_object() {

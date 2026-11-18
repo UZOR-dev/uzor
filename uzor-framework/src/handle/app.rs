@@ -77,6 +77,24 @@ pub trait App: 'static {
     fn automation_state(&self) -> Option<String> {
         None
     }
+
+    /// App-defined dev-control RPC methods (feature `automation`), advertised by
+    /// `ping` alongside the core methods: `(name, replayable)`. Read-only queries
+    /// should be replayable; state-mutating verbs should not. Default: none.
+    #[cfg(feature = "automation")]
+    fn dev_methods(&self) -> Vec<(String, bool)> {
+        Vec::new()
+    }
+
+    /// Answer an app-defined dev-control method (feature `automation`).
+    /// `None` = the app does not handle `method` (the core reports unknown_method);
+    /// `Some(Err(msg))` = a handled call that failed; `Some(Ok(json))` = the result.
+    /// Must never carry secrets. Default: handles nothing.
+    #[cfg(feature = "automation")]
+    fn dev_rpc(&self, method: &str, params: &serde_json::Value) -> Option<Result<serde_json::Value, String>> {
+        let _ = (method, params);
+        None
+    }
 }
 
 /// Startup door: commands only.

@@ -78,6 +78,15 @@ pub enum AutoCmd {
     },
     /// The app's own state report ([`App::automation_state`]).
     AppState,
+    /// The app-defined dev-control method names ([`App::dev_methods`]).
+    DevMethods,
+    /// An app-defined dev-control RPC call ([`App::dev_rpc`]).
+    DevRpc {
+        /// The method name.
+        method: String,
+        /// Its params object.
+        params: serde_json::Value,
+    },
     /// The host's painted-frame counter, now (forces nothing).
     Frames,
     /// Answer once the host has painted a frame past `after` (its frame
@@ -152,6 +161,10 @@ pub enum AutoReply {
     Shot(AutoShot),
     /// The app's state report (`None`: the app reports nothing).
     State(Option<String>),
+    /// The app-defined dev-control methods (`(name, replayable)`).
+    DevMethods(Vec<(String, bool)>),
+    /// An app-defined dev-control answer (`None`: the app handles no such method).
+    DevRpc(Option<Result<serde_json::Value, String>>),
     /// The painted-frame counter (for [`AutoCmd::Frames`] / [`AutoCmd::Frame`]).
     Frame {
         /// Frames painted so far.
@@ -691,6 +704,8 @@ pub(crate) fn answer_plain<S: Spec, A: App<Spec = S>>(
             None => AutoReply::Error(AutoError::NoWindow),
         },
         AutoCmd::AppState => AutoReply::State(rt.app().automation_state()),
+        AutoCmd::DevMethods => AutoReply::DevMethods(rt.app().dev_methods()),
+        AutoCmd::DevRpc { method, params } => AutoReply::DevRpc(rt.app().dev_rpc(method, params)),
         AutoCmd::Screenshot { win, source: ShotSource::Offscreen } => match resolve_window(rt, *win) {
             Some(w) => match offscreen_shot(rt, w, dpr_of(w), background_of(w)) {
                 Ok(s) => AutoReply::Shot(s),
